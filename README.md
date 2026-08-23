@@ -49,19 +49,15 @@ vendored at `vendor/ghostty-android`. It brings:
 On an Android 15 emulator it renders a 66x43 grid at 60 fps, around 1 ms per frame, with
 bold, dim, italic, underline, reverse video and strikethrough all correct.
 
-What it does not bring is a terminal:
+It runs a shell on a pseudoterminal, so `tty` reports `/dev/pts/0`, `stty size`
+matches the rendered grid, and full-screen programs work in raw mode on the
+alternate screen. Keystrokes reach the process through an `InputConnection` on
+the surface view, which reports `TYPE_NULL` so the IME keeps no editable buffer.
 
-- `MainActivity` composes only the visual-regression test harness. The `TerminalScreen`
-  composable is never instantiated and the exit-test-mode callback is empty.
-- `TerminalSession` spawns `/system/bin/sh` through `ProcessBuilder` and pipes stdio. No
-  pty means no raw mode, no `SIGWINCH` and no `isatty()`, so an interactive TUI cannot run
-  under it.
-- `GhosttyBridge` leaves its JNI initialisation and key encoder disabled, so keystrokes
-  never reach the VT.
-
-Supplying those three is this project's work: a `forkpty()` JNI shim, key encoding through
-`libghostty-vt`, and a process-to-VT feed. Termux's terminal-emulator is the reference for
-the pty.
+Still missing on the terminal side: `SIGWINCH` is delivered but the app does not
+yet re-render on rotation, control and meta are encoded from hardware modifiers
+only, and `GhosttyBridge`'s own key encoder in `libghostty-vt` stays unused in
+favour of a small encoder in the view.
 
 ### Building the renderer
 
@@ -87,4 +83,4 @@ The patched binary is downloaded on-device, not shipped in the APK.
 
 ## Status
 
-The renderer builds and draws. No terminal and no harness yet.
+A working terminal. No harness yet.
