@@ -37,31 +37,49 @@ Primary use is trip planning. Building code is the occasional case, not the desi
 
 ## Terminal
 
-[tapthaker/ghostty-android](https://github.com/tapthaker/ghostty-android) is the candidate
-and it is further along than its own README claims — that README still says "research and
-planning" while the code is at v0.8.1 with:
+The terminal is [nev3rfail/ghostty-android](https://github.com/nev3rfail/ghostty-android),
+a fork of [tapthaker/ghostty-android](https://github.com/tapthaker/ghostty-android),
+vendored at `vendor/ghostty-android`. It brings:
 
-- a GLES renderer written in Zig (glyph atlas, font cache, shaders) over `libghostty-vt`
-- `android/terminal-library` as a separate Gradle module, published as an AAR
+- a GLES renderer written in Zig over `libghostty-vt` (glyph atlas, font cache, shaders)
+- `android/terminal-library` as a Gradle module, publishable as an AAR
 - Android input handling: IME, touch, edge gestures, scroll position preserved across
   reflow
-- a JNI viewport-text API added specifically to detect Claude Code in the terminal
 
-**The gap: no pty.** `TerminalSession` spawns `/system/bin/sh` through `ProcessBuilder` and
-pipes stdio. No tty means no raw mode, no `SIGWINCH`, no `isatty()` — an interactive TUI
-will not run under it. Closing this means a `forkpty()` JNI shim; bionic has `forkpty`,
-and Termux's terminal-emulator is the reference implementation.
+On an Android 15 emulator it renders a 66x43 grid at 60 fps, around 1 ms per frame, with
+bold, dim, italic, underline, reverse video and strikethrough all correct.
 
-Last push to ghostty-android was January 2026. If reviving it costs more than it saves,
-embedding Termux's terminal-emulator instead is the fallback — mature, battle-tested, and
-it already has the pty.
+What it does not bring is a terminal:
+
+- `MainActivity` composes only the visual-regression test harness. The `TerminalScreen`
+  composable is never instantiated and the exit-test-mode callback is empty.
+- `TerminalSession` spawns `/system/bin/sh` through `ProcessBuilder` and pipes stdio. No
+  pty means no raw mode, no `SIGWINCH` and no `isatty()`, so an interactive TUI cannot run
+  under it.
+- `GhosttyBridge` leaves its JNI initialisation and key encoder disabled, so keystrokes
+  never reach the VT.
+
+Supplying those three is this project's work: a `forkpty()` JNI shim, key encoding through
+`libghostty-vt`, and a process-to-VT feed. Termux's terminal-emulator is the reference for
+the pty.
+
+### Building the renderer
+
+`scripts/build-android-nonix.sh <abi>` builds both native libraries. It needs Zig 0.15.2,
+patchelf and an Android NDK. The NDK's host toolchain is detected, so an NDK installed for
+a different host OS works as long as its sysroot is readable. Gradle consumes the result
+with `-PskipNativeBuild`, which fits a split where Zig runs in a Linux environment and
+Gradle runs elsewhere.
 
 ## Open questions
 
 - Compose is the default, not a commitment.
-- Ghostty vs. Termux for the terminal.
-- Whether the `--ide` MCP surface is stable enough to build platform glue on, or whether
-  the preload hook has to carry more of the load.
+- The method surface an IDE must implement for `claude --ide` is not publicly specified.
+  Reverse-engineering it against the CLI is the main risk in the architecture; how much of
+  the platform glue the preload hook has to carry instead depends on what that surface
+  turns out to be.
+- The Claude binary needs the bionic/glibc shim for whichever ABI it targets. x86_64 is no
+  easier than arm64.
 
 ## Distribution
 
@@ -69,4 +87,4 @@ The patched binary is downloaded on-device, not shipped in the APK.
 
 ## Status
 
-Idea stage. No code.
+The renderer builds and draws. No terminal and no harness yet.
