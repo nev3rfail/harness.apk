@@ -54,12 +54,18 @@ matches the rendered grid, and full-screen programs work in raw mode on the
 alternate screen. Keystrokes reach the process through an `InputConnection` on
 the surface view, which reports `TYPE_NULL` so the IME keeps no editable buffer.
 
-Still missing on the terminal side: `SIGWINCH` is delivered but the app does not
-yet re-render on rotation, control and meta are encoded from hardware modifiers
-only, and `GhosttyBridge`'s own key encoder in `libghostty-vt` stays unused in
-favour of a small encoder in the view.
+Control and Alt are offered as sticky modifiers, since a soft keyboard has
+neither, so a foreground program can be interrupted. The surface draws only when
+something changes rather than continuously.
+
+Still missing on the terminal side: rotation is untested, and `libghostty-vt`'s
+own key encoder stays unused in favour of a small encoder in the view.
 
 ### Building the renderer
+
+The renderer requires OpenGL ES 3.1, which every current Android device has but
+the emulator's software rasteriser does not: SwiftShader reports 3.0 and the
+renderer will not initialise on it, so an emulator has to render on the host GPU.
 
 `scripts/build-android-nonix.sh <abi>` builds both native libraries. It needs Zig 0.15.2,
 patchelf and an Android NDK. The NDK's host toolchain is detected, so an NDK installed for
