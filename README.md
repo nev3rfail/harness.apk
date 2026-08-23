@@ -73,6 +73,25 @@ a different host OS works as long as its sysroot is readable. Gradle consumes th
 with `-PskipNativeBuild`, which fits a split where Zig runs in a Linux environment and
 Gradle runs elsewhere.
 
+## Next
+
+1. **Run the agent on the terminal.** Point `TerminalSession` at a Claude Code
+   binary patched with the bionic/glibc shim instead of `/system/bin/sh`. The
+   binary has to match the ABI it runs on, and x86_64 needs the same treatment as
+   arm64. Everything a TUI needs is already in place, so this is a matter of
+   getting a working binary onto the device.
+2. **Register the app as an IDE.** Write a lockfile into `~/.claude/ide/`, stand
+   up an MCP server over WebSocket, and let `claude --ide` connect to it. The
+   method surface an IDE has to implement is not publicly specified, so this
+   starts as reverse engineering against the CLI.
+3. **Turn capabilities into MCP tools.** File viewing and diffs rendered by the
+   app, and content embeds that resolve a request to a native widget or an
+   Activity.
+
+Loose ends worth closing along the way: the renderer's native libraries are only
+built for x86_64 locally, rotation is untested, and the `libghostty-vt` key
+encoder is still unused.
+
 ## Open questions
 
 - Compose is the default, not a commitment.
@@ -89,4 +108,4 @@ The patched binary is downloaded on-device, not shipped in the APK.
 
 ## Status
 
-A working terminal. No harness yet.
+A working terminal on Android. No agent and no harness yet.
