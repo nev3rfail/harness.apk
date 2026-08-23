@@ -6,42 +6,66 @@ An Android-native harness for running Claude Code agents on-device.
 
 Claude Code ships amd64 and arm64 builds. The arm64 build runs on Android once the
 binary is patched with a glibc↔bionic shim — see
-[ferrumclaudepilgrim/claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android).
-This is verified working, not theoretical.
+[ferrumclaudepilgrim/claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android),
+which also overrides Claude's DNS servers via a Bun preload because the shim breaks
+resolution. Verified working.
 
-So: a Jetpack Compose app that hosts a terminal, runs the agent on-device, and adds
-the things a plain terminal can't do.
+Android can already run Claude Code and VS Code. Both are a hassle. That hassle is what
+this project removes.
 
-## Shape
+## Architecture
 
-- **App shell** — Jetpack Compose.
-- **Terminal** — an embedded terminal emulator. Ghostty is the candidate: it has no
-  Android target, so it needs a platform layer and a GLES renderer.
-- **Agent** — the Claude Agent SDK driving the on-device binary. If the SDK can spawn
-  the native TUI directly, use that. Otherwise wrap the harness via
-  `BUN_OPTIONS="--preload our_preloader.js"` and intercept from inside.
+The app is the IDE. Claude runs as `claude --ide` and connects to it.
 
-## Capabilities beyond a terminal
+Claude Code's IDE integration works by discovery: the editor writes a lockfile into
+`~/.claude/ide/` with its port and workspace, stands up an MCP server over WebSocket, and
+the CLI connects as a client and calls into it. So the harness registers as an IDE, and
+every capability the app wants to offer is an MCP tool the agent can call.
 
-- Render markdown as markdown, not as ANSI in a scrollback buffer.
-- Hand URLs to the system: a map link opens a map, a video link opens a player.
-- Embeddings.
+That makes the shell the platform glue:
+
+- **Terminal** — the agent's native TUI, unmodified.
+- **IDE surface** — file viewing and diffs rendered by the app, not by ANSI in a
+  scrollback buffer.
+- **Content embeds** — the agent asks the app to render something, and the app resolves it
+  to a native widget or an Activity. A map link becomes a map. On Android nearly
+  everything is an Activity, so this is mostly intent dispatch.
+- **Bun preload** — `BUN_OPTIONS="--preload ..."` for anything that has to be patched
+  inside the harness process. Confirmed working for env and DNS overrides.
+
+Primary use is trip planning. Building code is the occasional case, not the design center.
+
+## Terminal
+
+[tapthaker/ghostty-android](https://github.com/tapthaker/ghostty-android) is the candidate
+and it is further along than its own README claims — that README still says "research and
+planning" while the code is at v0.8.1 with:
+
+- a GLES renderer written in Zig (glyph atlas, font cache, shaders) over `libghostty-vt`
+- `android/terminal-library` as a separate Gradle module, published as an AAR
+- Android input handling: IME, touch, edge gestures, scroll position preserved across
+  reflow
+- a JNI viewport-text API added specifically to detect Claude Code in the terminal
+
+**The gap: no pty.** `TerminalSession` spawns `/system/bin/sh` through `ProcessBuilder` and
+pipes stdio. No tty means no raw mode, no `SIGWINCH`, no `isatty()` — an interactive TUI
+will not run under it. Closing this means a `forkpty()` JNI shim; bionic has `forkpty`,
+and Termux's terminal-emulator is the reference implementation.
+
+Last push to ghostty-android was January 2026. If reviving it costs more than it saves,
+embedding Termux's terminal-emulator instead is the fallback — mature, battle-tested, and
+it already has the pty.
 
 ## Open questions
 
-Nothing here is settled.
+- Compose is the default, not a commitment.
+- Ghostty vs. Termux for the terminal.
+- Whether the `--ide` MCP surface is stable enough to build platform glue on, or whether
+  the preload hook has to carry more of the load.
 
-- **Compose** is the default, not a commitment.
-- **Ghostty** is a candidate. It cannot target Android as-is; the forks that tried may
-  be dead. Alternatives worth weighing before committing: Termux's terminal-emulator
-  library, or a Compose-native renderer over a VT parser.
-- **Agent SDK vs. native TUI** are two different products. The SDK gives a structured
-  event stream — which is what markdown rendering, URL dispatch, and embeddings actually
-  need. The TUI gives a terminal. Decide which one is the product before building either.
-- **`BUN_OPTIONS` preload** against a Bun single-file executable is unverified. Test it
-  before designing around it.
-- **Distributing a patched binary** inside an APK is a licensing question, not a
-  technical one.
+## Distribution
+
+The patched binary is downloaded on-device, not shipped in the APK.
 
 ## Status
 
