@@ -58,6 +58,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Started before anything else it protects.
+        AgentService.start(this)
+
         val home = filesDir
 
         val tools = Tools(
@@ -112,6 +115,7 @@ class MainActivity : ComponentActivity() {
         session.stop()
         ide.stop()
         panels.stop()
+        AgentService.stop(this)
     }
 
     /**
@@ -138,6 +142,18 @@ private fun HarnessScreen(
     onSurfaceViewCreated: (GhosttyGLSurfaceView) -> Unit,
 ) {
     var view by remember { mutableStateOf<GhosttyGLSurfaceView?>(null) }
+    // spike: with a `capture` file in the home, every byte the agent writes is
+    // kept, so a screen that goes wrong can be replayed.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val capture = remember {
+        val home = context.filesDir
+        if (java.io.File(home, "capture").exists()) {
+            java.io.FileOutputStream(java.io.File(home, "pty.log"), true).buffered()
+        } else {
+            null
+        }
+    }
+
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
     val surface by surfaces.visible.collectAsState()
@@ -166,6 +182,7 @@ private fun HarnessScreen(
                                     cols = cols,
                                     rows = rows,
                                     onOutput = { bytes, length ->
+                                        capture?.run { write(bytes, 0, length); flush() }
                                         created.getRenderer().processInput(bytes, length)
                                     },
                                 )
