@@ -136,20 +136,33 @@ an `@path#L10-20` mention in the prompt. Lines are zero-based; the CLI adds one.
 
 `selection` may be null, and every field but `filePath` is optional.
 
-## What the agent can call, and what it cannot
+## The surface an editor is asked for
 
-Connecting does not make the editor's tools available to the model. The CLI
-exposes exactly two of them as model-callable, by name:
+Six tools are called on an editor. Most of them are driven by the CLI's own
+work rather than chosen by the model:
+
+| Tool | Called by | When |
+|---|---|---|
+| `openDiff` | the CLI | every file edit, and it waits for the person |
+| `close_tab`, `closeAllDiffTabs` | the CLI | around that review |
+| `openFile` | the CLI | before editing a file it is about to change |
+| `getDiagnostics` | the CLI, and the model | around edits, and on request |
+| `set_permission_mode` | the CLI | mode changes, as `skip_all_permission_checks` or `ask` |
+| `executeCode` | the model | on request |
+
+`openFile` carries `filePath`, `preview`, `startText`, `endText`,
+`selectToEndOfLine` and `makeFrontmost`.
+
+Only two of the six are offered to the model, under fixed names:
 
     mcp__ide__executeCode
     mcp__ide__getDiagnostics
 
-Everything else an editor advertises is driven by the CLI itself rather than by
-the model: `openDiff` on a file edit, `close_tab` and `closeAllDiffTabs` around
-it. A tool the CLI has no use for is listed, never called, and the model is told
-it does not exist.
+That is the whole of what the model may choose to call. A tool an editor
+advertises beyond this list is accepted, never called, and the model is told it
+does not exist -- so the IDE channel is where review and diagnostics belong, and
+an MCP server is where anything the agent should reach for on its own belongs,
+surfaced there as `mcp__<server>__<tool>`.
 
-So the IDE channel is the right place for review and diagnostics, and the wrong
-place for anything the agent is meant to reach for on its own. That belongs in an
-MCP server the agent is configured with, where every tool is surfaced as
-`mcp__<server>__<tool>`.
+What the channel does carry is the part that needs a person: `openDiff` is a
+proposal the agent cannot complete alone, and the editor's reply is the answer.

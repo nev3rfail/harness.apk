@@ -253,6 +253,11 @@ class IdeServer(
                 else errorContent("nothing on this device handles $uri")
             }
 
+            // The agent tells the editor which permission mode it is in, so an
+            // editor can say so on screen. Answered because it is part of the
+            // surface; an error here is noise in the agent's log.
+            "set_permission_mode" -> textContent("PERMISSION_MODE_SET")
+
             else -> errorContent("unknown tool: $name")
         }
 
