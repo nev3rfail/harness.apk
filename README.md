@@ -79,7 +79,8 @@ rather than mapped from the APK so there is a real file to execute.
 
 The aarch64 Linux ABI has only the `*at` syscalls, which is exactly the allowlisted set,
 so on a phone there is nothing to translate and the shim only execs. x86_64 needs the
-translation, and x86_64 is the emulator.
+translation, and x86_64 is the emulator. Confirmed both ways: the agent runs unshimmed on
+an arm64 phone and shimmed on an x86_64 emulator.
 
 **Name resolution.** Android resolves names through netd, so a runtime carrying its own
 resolver finds no `/etc/resolv.conf` and falls back to localhost. The shim redirects paths
@@ -99,8 +100,14 @@ separately (see below) and consumed with `-PskipNativeBuild`:
 
 ```sh
 ./gradlew :app:installDebug -PskipNativeBuild
-scripts/stage-claude.sh --prefix /data/data/apk.harness/files/claude
+scripts/stage-claude.sh --abi arm64-v8a --prefix /data/data/apk.harness/files/claude     --loader path/to/ld-musl-aarch64.so.1
 ```
+
+Building the loader for another architecture takes a cross compiler passed as `CC`.
+`zig cc` is not one for this: it is itself a musl toolchain, so building musl with it
+leaves musl's own `memcpy`, `memset` and libm out of the symbol table, and the result
+fails on the device with nothing but `symbol not found`. `--loader` takes one built
+elsewhere; `verify_loader` gates either path on the symbols that go missing.
 
 ## Terminal
 
@@ -151,9 +158,8 @@ environment and Gradle runs elsewhere.
    the Bash tool has no `git` and no `curl`. What the harness offers as MCP tools covers
    part of that; the rest is a decision about how much of a Linux userland to carry.
 
-Loose ends worth closing along the way: the renderer's native libraries are only built for
-x86_64 locally, arm64 staging is untried because Google's emulator refuses an arm64 guest
-on an x86_64 host, and rotation is untested.
+Loose ends worth closing along the way: rotation is untested, and the arm64 loader is a
+prebuilt rather than built from source.
 
 ## Open questions
 
@@ -171,8 +177,8 @@ The agent binary is downloaded and staged on-device, not shipped in the APK.
 
 ## Status
 
-Claude Code runs on the terminal, on Android, rendered by ghostty. The IDE it connects to
-is the app: markdown, files, diffs, maps and intent dispatch, each verified against a
-client that speaks the same protocol the CLI does.
+Claude Code runs on the terminal, on Android, rendered by ghostty -- on an emulator and on
+a phone. The IDE it connects to is the app: markdown, files, diffs, maps and intent
+dispatch, each verified against a client that speaks the same protocol the CLI does.
 
 What is left is an agent that has signed in and can choose to use them.
