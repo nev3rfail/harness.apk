@@ -34,6 +34,16 @@ android {
         debug {
             isDebuggable = true
         }
+        // A channel that keeps working while the other one is being broken.
+        // Its own application id means its own data directory, so it needs its
+        // own staged agent: the musl loader has the prefix compiled in.
+        create("stable") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".stable"
+            versionNameSuffix = "-stable"
+            // The library module has no matching build type.
+            matchingFallbacks += "debug"
+        }
     }
 
     compileOptions {
