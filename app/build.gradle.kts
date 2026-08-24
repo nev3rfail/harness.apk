@@ -9,7 +9,10 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "apk.harness"
+        // Overridable so a throwaway id can be built without editing this file.
+        // Relocating a Termux bootstrap needs a data directory path no longer
+        // than the one compiled into its binaries, which bounds the id's length.
+        applicationId = (findProperty("harnessAppId") as String?) ?: "apk.harness"
         minSdk = 24
         // An app targeting API 29 or later may not execute a file in its own data
         // directory, which is where the agent binary is staged. 28 is the last
