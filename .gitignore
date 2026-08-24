@@ -1,5 +1,5 @@
-# Spike scratch: screenshots, throwaway scripts, local notes
 /spike/
 /build/
+/app/build/
 .gradle/
 local.properties

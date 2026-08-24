@@ -147,13 +147,6 @@ chmod 755 "$binary"
 patchelf --set-interpreter "$PREFIX/$LOADER" "$binary"
 info "interpreter: $(patchelf --print-interpreter "$binary")"
 
-# --- the DNS resolver ---
-# musl reads /etc/resolv.conf, which Android does not have, so the runtime's
-# lookups have no nameserver to reach. Bun loads this through BUN_OPTIONS.
-cat > "$OUT/setdns.js" <<'JS'
-try { require("dns").setServers(["8.8.8.8", "8.8.4.4"]); } catch (e) {}
-JS
-
 printf '%s\n' "$VERSION" > "$OUT/VERSION"
 info "staged in $OUT"
 ls -l "$OUT"

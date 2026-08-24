@@ -18,29 +18,39 @@ and an Android app, and the harness answers all three — see
 
 [ferrumclaudepilgrim/claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android)
 is vendored at `vendor/claude-code-android` as the reference for the same problem solved
-inside Termux, where a full glibc runtime is available from a package manager. It is the
-source of the DNS workaround and of the practice of checking the download against
-Anthropic's published manifest.
+inside Termux, where a full glibc runtime is available from a package manager. Checking the
+download against Anthropic's published manifest is taken from it, as is the observation
+that a runtime carrying its own resolver has to be pointed at a nameserver by hand.
 
 ## Architecture
 
 The app is the IDE. Claude runs as `claude --ide` and connects to it.
 
 Claude Code's IDE integration works by discovery: the editor writes a lockfile into
-`~/.claude/ide/` with its port and workspace, stands up an MCP server over WebSocket, and
-the CLI connects as a client and calls into it. So the harness registers as an IDE, and
-every capability the app wants to offer is an MCP tool the agent can call.
+`~/.claude/ide/` naming its port, stands up an MCP server over WebSocket, and the CLI
+connects as a client. Four methods the CLI calls itself; everything else an editor offers
+is an ordinary MCP tool the model can reach for. That last part is the whole opening: a
+capability the app can render becomes a tool the agent can call.
 
-That makes the shell the platform glue:
+The protocol is not published. What it actually is, read out of the CLI's own bundle, is
+written down in [docs/ide-protocol.md](docs/ide-protocol.md), and `tools/ide-probe.py`
+speaks it well enough to exercise the app without a signed-in agent.
+
+So the shell is the platform glue:
 
 - **Terminal** — the agent's native TUI, unmodified.
-- **IDE surface** — file viewing and diffs rendered by the app, not by ANSI in a
-  scrollback buffer.
-- **Content embeds** — the agent asks the app to render something, and the app resolves it
-  to a native widget or an Activity. A map link becomes a map. On Android nearly
-  everything is an Activity, so this is mostly intent dispatch.
-- **Bun preload** — `BUN_OPTIONS="--preload ..."` for anything that has to be patched
-  inside the harness process.
+- **Documents** — `showMarkdown` renders headings, lists, quotes, code, links and tables
+  as a document instead of as terminal text.
+- **Files and diffs** — `openFile` shows a file; `openDiff` shows a proposed edit and
+  holds the tool call open until the edit is accepted or rejected.
+- **Places** — `showPlace` puts a map on screen, from OpenStreetMap tiles, with no API
+  key and no Play services.
+- **Everything else the phone already does** — `openExternal` hands a URI to the system,
+  so a `geo:` link opens maps and `tel:` opens the dialer. On Android nearly everything is
+  an Activity, so this is mostly intent dispatch.
+
+A panel gets a window of its own, because the terminal renders on a surface composited
+above its own window and nothing drawn there can cover it.
 
 Primary use is trip planning. Building code is the occasional case, not the design center.
 
@@ -80,6 +90,17 @@ resolver for those queries.
 `tools/` holds the programs these conclusions were measured with, and the measurements.
 
 Signing in is the agent's own OAuth flow, run once on the device.
+
+### Building
+
+The app is `:app`; the terminal comes in as `:terminal-library` from the vendored fork, so a
+change there is one build away from running. Native libraries for the renderer are built
+separately (see below) and consumed with `-PskipNativeBuild`:
+
+```sh
+./gradlew :app:installDebug -PskipNativeBuild
+scripts/stage-claude.sh --prefix /data/data/apk.harness/files/claude
+```
 
 ## Terminal
 
@@ -121,12 +142,11 @@ environment and Gradle runs elsewhere.
 
 ## Next
 
-1. **Register the app as an IDE.** Write a lockfile into `~/.claude/ide/`, stand up an MCP
-   server over WebSocket, and let `claude --ide` connect to it. The method surface an IDE
-   has to implement is not publicly specified, so this starts as reverse engineering
-   against the CLI.
-2. **Turn capabilities into MCP tools.** File viewing and diffs rendered by the app, and
-   content embeds that resolve a request to a native widget or an Activity.
+1. **Let the agent drive the surfaces.** Every tool is verified against `ide-probe.py`, but
+   an agent choosing to call them needs a signed-in session, which is a login on the
+   device.
+2. **Send the other direction.** `selection_changed` and `at_mentioned` are implemented and
+   unused: nothing in the app yet lets a person select text or point the agent at a file.
 3. **Give the agent a userland.** Its shell is Android's, which is toybox and no more, so
    the Bash tool has no `git` and no `curl`. What the harness offers as MCP tools covers
    part of that; the rest is a decision about how much of a Linux userland to carry.
@@ -151,5 +171,8 @@ The agent binary is downloaded and staged on-device, not shipped in the APK.
 
 ## Status
 
-Claude Code runs on the terminal, on Android, rendered by ghostty. The harness itself —
-the IDE surface the agent talks to — is not built yet.
+Claude Code runs on the terminal, on Android, rendered by ghostty. The IDE it connects to
+is the app: markdown, files, diffs, maps and intent dispatch, each verified against a
+client that speaks the same protocol the CLI does.
+
+What is left is an agent that has signed in and can choose to use them.
