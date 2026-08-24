@@ -97,6 +97,13 @@ Both are fed from one list, so they cannot drift apart. This sends the agent's l
 public resolvers, which overrides a VPN or a local resolver for those queries and for
 nothing else on the device.
 
+**Two ways in.** The app is both the editor the agent attaches to and a server it is
+configured with, because the two carry different things. The editor channel is what the
+CLI drives as it works -- a diff to review before a file changes, diagnostics around it --
+and of everything an editor offers, the CLI tells the agent only that `getDiagnostics`
+exists. So the panels the agent should reach for on purpose are served over MCP instead,
+where every tool listed is one it may choose. Same implementations, two transports.
+
 `tools/` holds the programs these conclusions were measured with, and the measurements.
 
 Signing in is the agent's own OAuth flow, run once on the device.
@@ -162,8 +169,9 @@ environment and Gradle runs elsewhere.
 
 ## Next
 
-1. **Let the agent drive the surfaces.** Every tool is verified against `ide-probe.py`.
-   What is unobserved is the agent choosing to call them.
+1. **Give the panels somewhere to point.** The agent picks a panel and the app draws it;
+   what a phone still lacks is a way to answer back -- tapping a place on the map, picking
+   one of three options -- which the diff review already shows the shape of.
 2. **Send the other direction.** `selection_changed` and `at_mentioned` are implemented and
    unused: nothing in the app yet lets a person select text or point the agent at a file.
 3. **Give the agent a userland.** Its shell is Android's, which is toybox and no more, so
@@ -190,8 +198,6 @@ The agent binary is downloaded and staged on-device, not shipped in the APK.
 ## Status
 
 Claude Code runs on the terminal, on Android, rendered by ghostty -- on an emulator and on
-a phone, signed in, reaching the API. The IDE it connects to is the app: markdown, files,
-diffs, maps and intent dispatch, each verified against a client that speaks the same
-protocol the CLI does.
-
-What is left is watching the agent choose to use them.
+a phone, signed in, reaching the API. The app is the editor it attaches to and the server
+it calls: a file edit opens a review the agent waits on, and asked for somewhere in
+particular, the agent reaches for the map itself and the phone draws it.

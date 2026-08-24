@@ -1,11 +1,9 @@
 package apk.harness.ide
 
-import android.util.Base64
 import android.util.Log
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.security.SecureRandom
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,19 +25,17 @@ import org.json.JSONObject
  *
  * The agent discovers an editor by reading `<port>.lock` files out of
  * `~/.claude/ide`, then opens a WebSocket to that port and speaks MCP over it.
- * So the app listens on the loopback interface, advertises what it can render as
- * MCP tools, and leaves a lockfile naming the port.
+ * So the app listens on the loopback interface, leaves a lockfile naming the
+ * port, and answers with the editor's half of [Tools].
  *
  * See docs/ide-protocol.md for where the shape of all this comes from.
  */
 class IdeServer(
     private val workspace: File,
     private val lockDirectory: File,
-    private val surfaces: Surfaces,
-    private val openExternal: (String) -> Boolean,
-    private val readFile: (String) -> String,
+    private val endpoint: McpEndpoint,
 ) {
-    private val authToken = newAuthToken()
+    private val authToken = newToken()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lockFile: File? = null
     private var server: Server? = null
@@ -70,7 +66,7 @@ class IdeServer(
                 JSONObject()
                     .put("pid", android.os.Process.myPid())
                     .put("workspaceFolders", JSONArray().put(workspace.absolutePath))
-                    .put("ideName", IDE_NAME)
+                    .put("ideName", APP_NAME)
                     .put("transport", "ws")
                     .put("runningInWindows", false)
                     .put("authToken", authToken)
@@ -153,7 +149,7 @@ class IdeServer(
             // Answering can take arbitrarily long -- a diff waits for a person --
             // so nothing is handled on the socket's own thread.
             scope.launch {
-                val reply = runCatching { dispatch(JSONObject(message)) }
+                val reply = runCatching { endpoint.handle(JSONObject(message)) }
                     .onFailure { Log.e(TAG, "failed to handle a request", it) }
                     .getOrNull()
                 if (reply != null) runCatching { conn.send(reply.toString()) }
@@ -165,237 +161,11 @@ class IdeServer(
         }
     }
 
-    private suspend fun dispatch(request: JSONObject): JSONObject? {
-        val method = request.optString("method")
-        val hasId = request.has("id") && !request.isNull("id")
-        val params = request.optJSONObject("params") ?: JSONObject()
-
-        val result: JSONObject = when (method) {
-            "initialize" -> JSONObject()
-                .put("protocolVersion", params.optString("protocolVersion", PROTOCOL_VERSION))
-                .put("capabilities", JSONObject().put("tools", JSONObject()))
-                .put("serverInfo", JSONObject().put("name", IDE_NAME).put("version", VERSION))
-
-            "ping" -> JSONObject()
-
-            "tools/list" -> JSONObject().put("tools", toolDefinitions())
-
-            "tools/call" -> callTool(
-                params.optString("name"),
-                params.optJSONObject("arguments") ?: JSONObject(),
-            )
-
-            else -> {
-                // Notifications carry no id and want no answer.
-                if (!hasId) return null
-                return JSONObject()
-                    .put("jsonrpc", "2.0")
-                    .put("id", request.get("id"))
-                    .put("error", JSONObject()
-                        .put("code", METHOD_NOT_FOUND)
-                        .put("message", "unknown method: $method"))
-            }
-        }
-
-        if (!hasId) return null
-        return JSONObject()
-            .put("jsonrpc", "2.0")
-            .put("id", request.get("id"))
-            .put("result", result)
-    }
-
-    private suspend fun callTool(name: String, arguments: JSONObject): JSONObject =
-        when (name) {
-            "openDiff" -> openDiff(arguments)
-
-            "close_tab" -> {
-                surfaces.closeTab(arguments.optString("tab_name"))
-                textContent("TAB_CLOSED")
-            }
-
-            "closeAllDiffTabs" -> {
-                surfaces.closeAllTabs()
-                textContent("CLOSED_ALL_DIFF_TABS")
-            }
-
-            // No language server of the app's own, so nothing is ever wrong.
-            "getDiagnostics" -> textContent(JSONArray().toString())
-
-            "openFile" -> {
-                val path = arguments.optString("filePath")
-                val text = runCatching { readFile(path) }
-                    .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                surfaces.show(Surface.FileView(path, text))
-                textContent("Showing $path")
-            }
-
-            "showMarkdown" -> {
-                surfaces.show(Surface.Markdown(
-                    title = arguments.optString("title", "Note"),
-                    text = arguments.optString("markdown"),
-                ))
-                textContent("Rendered on screen")
-            }
-
-            "showPlace" -> {
-                surfaces.show(Surface.Place(
-                    label = arguments.optString("label", "Here"),
-                    latitude = arguments.optDouble("latitude"),
-                    longitude = arguments.optDouble("longitude"),
-                    zoom = arguments.optDouble("zoom", DEFAULT_ZOOM),
-                ))
-                textContent("Showing the map")
-            }
-
-            "openExternal" -> {
-                val uri = arguments.optString("uri")
-                if (openExternal(uri)) textContent("Handed $uri to the system")
-                else errorContent("nothing on this device handles $uri")
-            }
-
-            // The agent tells the editor which permission mode it is in, so an
-            // editor can say so on screen. Answered because it is part of the
-            // surface; an error here is noise in the agent's log.
-            "set_permission_mode" -> textContent("PERMISSION_MODE_SET")
-
-            else -> errorContent("unknown tool: $name")
-        }
-
-    private suspend fun openDiff(arguments: JSONObject): JSONObject {
-        val path = arguments.optString("new_file_path")
-            .ifEmpty { arguments.optString("old_file_path") }
-        val proposed = arguments.optString("new_file_contents")
-        val current = runCatching { readFile(path) }.getOrDefault("")
-
-        val diff = Surface.Diff(
-            tabName = arguments.optString("tab_name", path),
-            path = path,
-            oldText = current,
-            newText = proposed,
-        )
-        surfaces.show(diff)
-
-        // The reply is read positionally: FILE_SAVED means the second block is
-        // the text to use.
-        return when (diff.decision.await()) {
-            DiffDecision.Accepted -> JSONObject().put("content", JSONArray()
-                .put(textBlock("FILE_SAVED"))
-                .put(textBlock(proposed)))
-            DiffDecision.Rejected -> textContent("DIFF_REJECTED")
-        }
-    }
-
-    private fun toolDefinitions(): JSONArray {
-        fun tool(name: String, description: String, properties: JSONObject, required: List<String>) =
-            JSONObject()
-                .put("name", name)
-                .put("description", description)
-                .put("inputSchema", JSONObject()
-                    .put("type", "object")
-                    .put("properties", properties)
-                    .put("required", JSONArray(required)))
-
-        fun string(description: String) =
-            JSONObject().put("type", "string").put("description", description)
-
-        fun number(description: String) =
-            JSONObject().put("type", "number").put("description", description)
-
-        return JSONArray()
-            .put(tool(
-                "openDiff",
-                "Show a proposed edit for review. Waits for the person to accept or reject it.",
-                JSONObject()
-                    .put("old_file_path", string("The file as it stands."))
-                    .put("new_file_path", string("The file being written."))
-                    .put("new_file_contents", string("The proposed contents."))
-                    .put("tab_name", string("A name to close this review by.")),
-                listOf("old_file_path", "new_file_path", "new_file_contents", "tab_name"),
-            ))
-            .put(tool(
-                "close_tab",
-                "Close a review opened with openDiff.",
-                JSONObject().put("tab_name", string("The name the review was opened with.")),
-                listOf("tab_name"),
-            ))
-            .put(tool(
-                "closeAllDiffTabs",
-                "Close every open review.",
-                JSONObject(),
-                emptyList(),
-            ))
-            .put(tool(
-                "getDiagnostics",
-                "Report problems the editor knows about.",
-                JSONObject().put("uri", string("Limit to one file, as a file:// URI.")),
-                emptyList(),
-            ))
-            .put(tool(
-                "openFile",
-                "Show a file to the person, rendered by the app rather than printed to the terminal.",
-                JSONObject().put("filePath", string("Absolute path of the file to show.")),
-                listOf("filePath"),
-            ))
-            .put(tool(
-                "showMarkdown",
-                "Render markdown on screen: headings, lists, tables, links and code all " +
-                    "displayed properly instead of as terminal text. Use this for anything " +
-                    "meant to be read rather than scrolled past -- an itinerary, a summary, " +
-                    "a comparison.",
-                JSONObject()
-                    .put("title", string("A short heading for the panel."))
-                    .put("markdown", string("The markdown to render.")),
-                listOf("markdown"),
-            ))
-            .put(tool(
-                "showPlace",
-                "Show a location on a map on screen. Use this whenever the answer involves " +
-                    "somewhere in particular.",
-                JSONObject()
-                    .put("label", string("What is at this location."))
-                    .put("latitude", number("Degrees north."))
-                    .put("longitude", number("Degrees east."))
-                    .put("zoom", number("Map zoom level; higher is closer, around 15 for a street.")),
-                listOf("latitude", "longitude"),
-            ))
-            .put(tool(
-                "openExternal",
-                "Hand a URI to the device so the right app opens it: a geo: link opens maps, " +
-                    "https: opens a browser, tel: the dialer. Use this to leave the harness " +
-                    "for something the phone already does well.",
-                JSONObject().put("uri", string("The URI to open.")),
-                listOf("uri"),
-            ))
-    }
-
-    private fun textBlock(text: String) =
-        JSONObject().put("type", "text").put("text", text)
-
-    private fun textContent(text: String) =
-        JSONObject().put("content", JSONArray().put(textBlock(text)))
-
-    private fun errorContent(message: String) =
-        JSONObject()
-            .put("content", JSONArray().put(textBlock(message)))
-            .put("isError", true)
-
-    private fun newAuthToken(): String {
-        val bytes = ByteArray(TOKEN_BYTES)
-        SecureRandom().nextBytes(bytes)
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-
     private companion object {
         const val TAG = "IdeServer"
-        const val IDE_NAME = "harness.apk"
         const val IPV4_LOOPBACK = "127.0.0.1"
-        const val VERSION = "0.1.0"
-        const val PROTOCOL_VERSION = "2025-06-18"
         const val AUTH_HEADER = "X-Claude-Code-Ide-Authorization"
-        const val TOKEN_BYTES = 32
         const val CLOSE_TIMEOUT_MS = 1000
         const val POLICY_VIOLATION = 1008
-        const val METHOD_NOT_FOUND = -32601
-        const val DEFAULT_ZOOM = 14.0
     }
 }

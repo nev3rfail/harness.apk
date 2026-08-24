@@ -24,9 +24,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import apk.harness.ide.DiffDecision
+import apk.harness.ide.APP_NAME
 import apk.harness.ide.IdeServer
+import apk.harness.ide.McpEndpoint
+import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
+import apk.harness.ide.Tools
 import apk.harness.ui.HarnessTheme
 import apk.harness.ui.InputToolbar
 import apk.harness.ui.SurfacePanel
@@ -46,6 +50,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var session: TerminalSession
     private lateinit var ide: IdeServer
+    private lateinit var panels: PanelServer
     private val surfaces = Surfaces()
     private var surfaceView: GhosttyGLSurfaceView? = null
 
@@ -55,16 +60,28 @@ class MainActivity : ComponentActivity() {
 
         val home = filesDir
 
+        val tools = Tools(
+            surfaces = surfaces,
+            openExternal = ::openExternally,
+            readFile = { path -> File(path).readText() },
+        )
+
         // The agent finds an editor by reading lockfiles out of its own config
         // directory, so the server has to write into the home the agent is given.
         ide = IdeServer(
             workspace = home,
             lockDirectory = File(home, ".claude/ide"),
-            surfaces = surfaces,
-            openExternal = ::openExternally,
-            readFile = { path -> File(path).readText() },
+            endpoint = McpEndpoint(APP_NAME, tools::editorDefinitions, tools::call),
         )
         ide.start()
+
+        // The panels the agent chooses for itself travel the other way in, as a
+        // server it is configured with rather than an editor it attaches to.
+        panels = PanelServer(
+            workspace = home,
+            endpoint = McpEndpoint(APP_NAME, tools::panelDefinitions, tools::call),
+        )
+        panels.start()
 
         session = Agent(this).session()
 
@@ -94,6 +111,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         session.stop()
         ide.stop()
+        panels.stop()
     }
 
     /**
