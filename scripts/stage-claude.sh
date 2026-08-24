@@ -15,17 +15,18 @@
 #   --prefix   where the staged files will live on the device, baked into the
 #              binary's ELF interpreter
 #   --out      staging directory on this machine
-#   --loader   use this loader instead of building one
+#   --loader   use this loader instead of building one. A loader built anywhere
+#              else reads the real /etc, where Android keeps no resolver, so
+#              name resolution through libc will not work with one.
 #
 # Building for another architecture takes a cross compiler, passed as CC. Note
 # that `zig cc` is not one for this purpose: it is itself a musl toolchain, and
 # building musl with it drops musl's own memcpy, memset and libm in favour of
 # its compiler runtime, leaving a loader that cannot relocate anything. A
-# <target>-linux-gnu-gcc works; so does a prebuilt loader via --loader, which
-# Alpine packages one of:
+# <target>-linux-gnu-gcc works, and is what building here expects:
 #
-#   curl -O https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/aarch64/musl-<ver>.apk
-#   tar -xzf musl-<ver>.apk lib/ld-musl-aarch64.so.1
+#   pacman -S aarch64-linux-gnu-gcc      # Arch, Manjaro
+#   apt install gcc-aarch64-linux-gnu    # Debian, Ubuntu
 set -euo pipefail
 
 MUSL_VERSION=1.2.5
@@ -34,7 +35,7 @@ MUSL_SHA256=a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ABI=x86_64
 VERSION=
-PREFIX=/data/data/com.ghostty.android/files/claude
+PREFIX=/data/data/apk.harness/files/claude
 OUT=$ROOT/build/claude
 SUPPLIED_LOADER=
 # musl's tree is thousands of small files, so it is built on a local filesystem.
@@ -53,8 +54,8 @@ while [ $# -gt 0 ]; do
 done
 
 case $ABI in
-  x86_64)     MUSL_ARCH=x86_64;  PLATFORM=linux-x64-musl ;;
-  arm64-v8a)  MUSL_ARCH=aarch64; PLATFORM=linux-arm64-musl ;;
+  x86_64)     MUSL_ARCH=x86_64;  PLATFORM=linux-x64-musl;   DEFAULT_CC=gcc ;;
+  arm64-v8a)  MUSL_ARCH=aarch64; PLATFORM=linux-arm64-musl; DEFAULT_CC=aarch64-linux-gnu-gcc ;;
   *) echo "unsupported abi: $ABI" >&2; exit 2 ;;
 esac
 
@@ -86,11 +87,21 @@ verify_loader() {
   done
 }
 
+# The loader carries the prefix inside it -- see the /etc patch below -- so a
+# cached one is only good for the prefix it was built for.
+stamp=$CACHE/$MUSL_ARCH/prefix
+cached_loader() {
+  [ -f "$CACHE/$MUSL_ARCH/$LOADER" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$PREFIX" ]
+}
+
 if [ -n "$SUPPLIED_LOADER" ]; then
   verify_loader "$SUPPLIED_LOADER"
   mkdir -p "$CACHE/$MUSL_ARCH"
   cp "$SUPPLIED_LOADER" "$CACHE/$MUSL_ARCH/$LOADER"
-elif [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
+  # A loader built elsewhere reads the real /etc, which on Android is not
+  # writable and holds no resolver.
+  printf '%s' "(supplied)" > "$stamp"
+elif ! cached_loader; then
   tarball=$CACHE/musl-$MUSL_VERSION.tar.gz
   if [ ! -f "$tarball" ]; then
     info "downloading musl $MUSL_VERSION"
@@ -101,8 +112,19 @@ elif [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
   [ "$actual" = "$MUSL_SHA256" ] || {
     echo "musl checksum mismatch: expected $MUSL_SHA256, got $actual" >&2; exit 1; }
 
+  # Extracted fresh every time: the patches below are rewrites, not deletions,
+  # and a tree already carrying one prefix would silently keep it.
   src=$CACHE/musl-$MUSL_VERSION
-  [ -d "$src" ] || tar -xzf "$tarball" -C "$CACHE"
+  rm -rf "$src"
+  tar -xzf "$tarball" -C "$CACHE"
+
+  # musl opens /etc/resolv.conf, /etc/hosts and /etc/services from inside libc,
+  # by way of calls that never reach the PLT -- so nothing outside can redirect
+  # them, and on Android there is nothing at /etc to read. Without a resolver
+  # musl falls back to a nameserver on loopback that nothing answers, and every
+  # name takes its full timeout to fail. Pointing libc at the staged directory
+  # is what makes getaddrinfo work at all, which is the resolver behind fetch.
+  sed -i "s|\"/etc/|\"$PREFIX/etc/|g" "$src"/src/network/*.c
 
   # Android grants an app an allowlist of syscalls that omits the legacy calls
   # bionic never makes, and answers the rest with SECCOMP_RET_KILL_PROCESS. musl
@@ -135,7 +157,7 @@ elif [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
   (cd "$build" && "$src/configure" \
       --target="$MUSL_ARCH-linux-musl" \
       --disable-static \
-      CC="${CC:-gcc}" \
+      CC="${CC:-$DEFAULT_CC}" \
       LDFLAGS="-Wl,--export-dynamic" >configure.log 2>&1 \
     && make -j"$(nproc)" lib/libc.so >build.log 2>&1) \
     || { echo "musl build failed; see $build/{configure,build}.log" >&2; exit 1; }
@@ -144,6 +166,7 @@ elif [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
 
   mkdir -p "$CACHE/$MUSL_ARCH"
   cp "$build/lib/libc.so" "$CACHE/$MUSL_ARCH/$LOADER"
+  printf '%s' "$PREFIX" > "$stamp"
 fi
 cp "$CACHE/$MUSL_ARCH/$LOADER" "$OUT/$LOADER"
 chmod 755 "$OUT/$LOADER"

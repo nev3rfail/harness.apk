@@ -83,10 +83,19 @@ translation, and x86_64 is the emulator. Confirmed both ways: the agent runs uns
 an arm64 phone and shimmed on an x86_64 emulator.
 
 **Name resolution.** Android resolves names through netd, so a runtime carrying its own
-resolver finds no `/etc/resolv.conf` and falls back to localhost. The shim redirects paths
-under `/etc` at a directory the app owns; the app writes the resolver file into it. This
-points the agent's own lookups at public resolvers, which overrides a VPN or a local
-resolver for those queries.
+resolver finds no `/etc/resolv.conf` and falls back to a nameserver on loopback that
+nothing answers. Every lookup then spends its full timeout before failing.
+
+The agent resolves names two ways and both have to be answered. `fetch` -- which is every
+API call -- goes through libc, and libc opens that path from inside itself, by calls that
+never reach the PLT, so nothing outside the library can redirect them. The loader is
+therefore built with the staged directory compiled in, and the app writes the resolver
+file there. The `dns` module goes through the runtime's own c-ares instead, which is named
+directly by a preload the app writes and points `BUN_OPTIONS` at.
+
+Both are fed from one list, so they cannot drift apart. This sends the agent's lookups to
+public resolvers, which overrides a VPN or a local resolver for those queries and for
+nothing else on the device.
 
 `tools/` holds the programs these conclusions were measured with, and the measurements.
 
@@ -100,14 +109,18 @@ separately (see below) and consumed with `-PskipNativeBuild`:
 
 ```sh
 ./gradlew :app:installDebug -PskipNativeBuild
-scripts/stage-claude.sh --abi arm64-v8a --prefix /data/data/apk.harness/files/claude     --loader path/to/ld-musl-aarch64.so.1
+scripts/stage-claude.sh --abi arm64-v8a --prefix /data/data/apk.harness/files/claude
 ```
 
-Building the loader for another architecture takes a cross compiler passed as `CC`.
-`zig cc` is not one for this: it is itself a musl toolchain, so building musl with it
-leaves musl's own `memcpy`, `memset` and libm out of the symbol table, and the result
-fails on the device with nothing but `symbol not found`. `--loader` takes one built
-elsewhere; `verify_loader` gates either path on the symbols that go missing.
+Building the loader for another architecture takes a cross compiler -- `aarch64-linux-gnu-gcc`
+for a phone, overridable as `CC`. `zig cc` is not one for this: it is itself a musl
+toolchain, so building musl with it leaves musl's own `memcpy`, `memset` and libm out of
+the symbol table, and the result fails on the device with nothing but `symbol not found`.
+`verify_loader` gates the build on exactly those symbols.
+
+The prefix is compiled into the loader as well as into the binary's ELF interpreter, since
+that is where libc reads its resolver from, so a loader is only good for the prefix it was
+built for. `--loader` takes one built elsewhere, which runs but resolves no names.
 
 ## Terminal
 
@@ -149,17 +162,16 @@ environment and Gradle runs elsewhere.
 
 ## Next
 
-1. **Let the agent drive the surfaces.** Every tool is verified against `ide-probe.py`, but
-   an agent choosing to call them needs a signed-in session, which is a login on the
-   device.
+1. **Let the agent drive the surfaces.** Every tool is verified against `ide-probe.py`.
+   What is unobserved is the agent choosing to call them.
 2. **Send the other direction.** `selection_changed` and `at_mentioned` are implemented and
    unused: nothing in the app yet lets a person select text or point the agent at a file.
 3. **Give the agent a userland.** Its shell is Android's, which is toybox and no more, so
    the Bash tool has no `git` and no `curl`. What the harness offers as MCP tools covers
    part of that; the rest is a decision about how much of a Linux userland to carry.
 
-Loose ends worth closing along the way: rotation is untested, and the arm64 loader is a
-prebuilt rather than built from source.
+Loose ends worth closing along the way: rotation is untested, and a first run still needs
+its credentials and its onboarding flag placed by hand.
 
 ## Open questions
 
@@ -178,7 +190,8 @@ The agent binary is downloaded and staged on-device, not shipped in the APK.
 ## Status
 
 Claude Code runs on the terminal, on Android, rendered by ghostty -- on an emulator and on
-a phone. The IDE it connects to is the app: markdown, files, diffs, maps and intent
-dispatch, each verified against a client that speaks the same protocol the CLI does.
+a phone, signed in, reaching the API. The IDE it connects to is the app: markdown, files,
+diffs, maps and intent dispatch, each verified against a client that speaks the same
+protocol the CLI does.
 
-What is left is an agent that has signed in and can choose to use them.
+What is left is watching the agent choose to use them.

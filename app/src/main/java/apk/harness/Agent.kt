@@ -33,12 +33,20 @@ class Agent(private val context: Context) {
 
         // Android resolves names through netd rather than through a nameserver
         // in /etc/resolv.conf, so a runtime carrying its own resolver has
-        // nothing to read. The shim redirects /etc at this directory.
+        // nothing to read. This is the directory the loader is built to read
+        // instead, and the one the shim redirects /etc at.
         val etc = File(staged, "etc").apply { mkdirs() }
-        File(etc, "resolv.conf").let { file ->
-            if (!file.exists()) file.writeText(PUBLIC_RESOLVERS)
-        }
+        File(etc, "resolv.conf").writeText(RESOLV_CONF)
         environment["SYSCALL_SHIM_ETC"] = etc.absolutePath
+
+        // The agent is a Bun program, and Bun resolves names two ways: libc for
+        // fetch, and its own c-ares for the dns module. c-ares reads the same
+        // absent /etc/resolv.conf and then falls back to a nameserver on
+        // loopback that nothing answers, so every lookup through it spends its
+        // full timeout before failing. A preload names the resolvers instead.
+        val setdns = File(staged, SETDNS_NAME)
+        setdns.writeText(SETDNS_JS)
+        environment["BUN_OPTIONS"] = "--preload ${setdns.absolutePath}"
 
         val shim = File(context.applicationInfo.nativeLibraryDir, SHIM_NAME)
         val translating = Build.SUPPORTED_ABIS.firstOrNull() == "x86_64" && shim.canExecute()
@@ -71,6 +79,15 @@ class Agent(private val context: Context) {
         const val SHIM_NAME = "libsyscallshim.so"
 
         const val IDE_FLAG = "--ide"
-        const val PUBLIC_RESOLVERS = "nameserver 8.8.8.8\nnameserver 8.8.4.4\n"
+        const val SETDNS_NAME = "setdns.js"
+
+        // Public resolvers, because the ones the device holds are reachable
+        // through netd and not from a socket the agent opens itself. Editing
+        // this list sends the agent's lookups somewhere else; nothing else on
+        // the device is affected.
+        val RESOLVERS = listOf("8.8.8.8", "8.8.4.4")
+        val RESOLV_CONF = RESOLVERS.joinToString("") { "nameserver $it\n" }
+        val SETDNS_JS = RESOLVERS.joinToString(", ") { "\"$it\"" }
+            .let { "try { require(\"dns\").setServers([$it]); } catch (e) {}\n" }
     }
 }
