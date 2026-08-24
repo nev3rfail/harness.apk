@@ -119,7 +119,11 @@ class IdeServer(
     }
 
     private inner class Server : WebSocketServer(
-        InetSocketAddress(InetAddress.getLoopbackAddress(), 0),
+        // The agent dials 127.0.0.1 literally, so the address is spelled out:
+        // this device's loopback resolves to ::1, and a server bound there
+        // refuses the connection without either side reporting a protocol
+        // error. It reads exactly like an editor that was never found.
+        InetSocketAddress(InetAddress.getByName(IPV4_LOOPBACK), 0),
         // The agent asks for the `mcp` subprotocol and expects it echoed back.
         listOf(Draft_6455(emptyList<IExtension>(), listOf<IProtocol>(Protocol("mcp")))),
     ) {
@@ -379,6 +383,7 @@ class IdeServer(
     private companion object {
         const val TAG = "IdeServer"
         const val IDE_NAME = "harness.apk"
+        const val IPV4_LOOPBACK = "127.0.0.1"
         const val VERSION = "0.1.0"
         const val PROTOCOL_VERSION = "2025-06-18"
         const val AUTH_HEADER = "X-Claude-Code-Ide-Authorization"

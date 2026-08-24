@@ -27,12 +27,21 @@ The file is JSON:
 JSON is read as a newline-separated list of workspace folders, which is a legacy
 shape not worth writing.
 
+A lock is only considered when one of its `workspaceFolders` is the agent's
+working directory or an ancestor of it, and when its `pid` is alive -- either the
+agent's own parent or another live process. `CLAUDE_CODE_SSE_PORT` names a port
+directly and skips both checks.
+
 ## Connecting
 
 The CLI opens a WebSocket to `ws://127.0.0.1:<port>` with:
 
 - subprotocol `mcp`
 - header `X-Claude-Code-Ide-Authorization: <authToken>`
+
+The address is that literal IPv4 loopback, not a resolved `localhost`. An editor
+that binds the loopback its platform prefers can end up on `::1`, where the
+connection is refused and the CLI reports no editor at all.
 
 Each text frame is one JSON-RPC 2.0 message. So the editor is an MCP server that
 happens to speak over a socket it opened itself, and the usual `initialize`,
@@ -126,3 +135,21 @@ an `@path#L10-20` mention in the prompt. Lines are zero-based; the CLI adds one.
 ```
 
 `selection` may be null, and every field but `filePath` is optional.
+
+## What the agent can call, and what it cannot
+
+Connecting does not make the editor's tools available to the model. The CLI
+exposes exactly two of them as model-callable, by name:
+
+    mcp__ide__executeCode
+    mcp__ide__getDiagnostics
+
+Everything else an editor advertises is driven by the CLI itself rather than by
+the model: `openDiff` on a file edit, `close_tab` and `closeAllDiffTabs` around
+it. A tool the CLI has no use for is listed, never called, and the model is told
+it does not exist.
+
+So the IDE channel is the right place for review and diagnostics, and the wrong
+place for anything the agent is meant to reach for on its own. That belongs in an
+MCP server the agent is configured with, where every tool is surfaced as
+`mcp__<server>__<tool>`.

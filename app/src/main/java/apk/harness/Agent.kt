@@ -22,6 +22,10 @@ class Agent(private val context: Context) {
             tmp = context.cacheDir.absolutePath,
         ).toMutableMap()
 
+        // Without this the agent finds no shell and disables every tool built on
+        // one, which is most of them.
+        environment["SHELL"] = SHELL
+
         val staged = File(context.filesDir, STAGE_DIRECTORY)
         val binary = File(staged, BINARY_NAME)
         if (!binary.canExecute()) {
@@ -47,6 +51,15 @@ class Agent(private val context: Context) {
         val setdns = File(staged, SETDNS_NAME)
         setdns.writeText(SETDNS_JS)
         environment["BUN_OPTIONS"] = "--preload ${setdns.absolutePath}"
+
+        // The agent's first run asks which account to sign in with, and asks
+        // again on every run until it is told the question has been answered --
+        // whatever credentials it already holds. On a phone there is no reason
+        // to answer it, so the file it looks in is seeded once, and left alone
+        // afterwards because the agent owns it.
+        File(context.filesDir, CONFIG_NAME).let { file ->
+            if (!file.exists()) file.writeText(ONBOARDED)
+        }
 
         val shim = File(context.applicationInfo.nativeLibraryDir, SHIM_NAME)
         val translating = Build.SUPPORTED_ABIS.firstOrNull() == "x86_64" && shim.canExecute()
@@ -80,6 +93,13 @@ class Agent(private val context: Context) {
 
         const val IDE_FLAG = "--ide"
         const val SETDNS_NAME = "setdns.js"
+
+        // Android's own shell, which is toybox: enough for the agent to accept
+        // that it has one.
+        const val SHELL = "/system/bin/sh"
+
+        const val CONFIG_NAME = ".claude.json"
+        const val ONBOARDED = """{"hasCompletedOnboarding":true}"""
 
         // Public resolvers, because the ones the device holds are reachable
         // through netd and not from a socket the agent opens itself. Editing

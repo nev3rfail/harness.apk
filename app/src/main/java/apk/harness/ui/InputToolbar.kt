@@ -40,6 +40,9 @@ fun InputToolbar(
         ) {
             Key("ESC", Modifier.weight(1f)) { onKey(ESCAPE) }
             Key("TAB", Modifier.weight(1f)) { onKey("\t") }
+            // Its own key rather than a Shift that latches: a soft keyboard has
+            // a Shift already, and this is the one combination it cannot send.
+            Key("⇧TAB", Modifier.weight(1f)) { onKey(CSI + "Z") }
             Key("CTRL", Modifier.weight(1f), active = ctrlActive, onClick = onToggleCtrl)
             Key("ALT", Modifier.weight(1f), active = altActive, onClick = onToggleAlt)
             Key("↑", Modifier.weight(1f)) { onKey(CSI + "A") }
