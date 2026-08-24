@@ -7,16 +7,25 @@
 # the whole port is: build one shared library, and point the binary at where it
 # will live on the device.
 #
-# Usage: stage-claude.sh [--abi ABI] [--version X.Y.Z] [--prefix DIR] [--out DIR]
+# Usage: stage-claude.sh [--abi ABI] [--version X.Y.Z] [--prefix DIR]
+#                        [--out DIR] [--loader FILE]
 #
 #   --abi      x86_64 (default) or arm64-v8a
 #   --version  Claude Code version; defaults to the latest on npm
 #   --prefix   where the staged files will live on the device, baked into the
 #              binary's ELF interpreter
 #   --out      staging directory on this machine
+#   --loader   use this loader instead of building one
 #
-# Cross-compiling needs a compiler for the target: pass CC, e.g.
-#   CC="zig cc -target aarch64-linux-musl" scripts/stage-claude.sh --abi arm64-v8a
+# Building for another architecture takes a cross compiler, passed as CC. Note
+# that `zig cc` is not one for this purpose: it is itself a musl toolchain, and
+# building musl with it drops musl's own memcpy, memset and libm in favour of
+# its compiler runtime, leaving a loader that cannot relocate anything. A
+# <target>-linux-gnu-gcc works; so does a prebuilt loader via --loader, which
+# Alpine packages one of:
+#
+#   curl -O https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/aarch64/musl-<ver>.apk
+#   tar -xzf musl-<ver>.apk lib/ld-musl-aarch64.so.1
 set -euo pipefail
 
 MUSL_VERSION=1.2.5
@@ -27,6 +36,7 @@ ABI=x86_64
 VERSION=
 PREFIX=/data/data/com.ghostty.android/files/claude
 OUT=$ROOT/build/claude
+SUPPLIED_LOADER=
 # musl's tree is thousands of small files, so it is built on a local filesystem.
 # Under WSL the repository lives on a 9p mount where that is punishingly slow.
 CACHE=${MUSL_CACHE:-${TMPDIR:-/tmp}/harness-musl}
@@ -37,6 +47,7 @@ while [ $# -gt 0 ]; do
     --version) VERSION=$2; shift 2 ;;
     --prefix) PREFIX=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
+    --loader) SUPPLIED_LOADER=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -57,7 +68,29 @@ done
 mkdir -p "$OUT" "$CACHE"
 
 # --- the loader ---
-if [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
+verify_loader() {
+  # A loader that links and installs cleanly can still be missing the symbol
+  # table, which only shows up on a device as a page of "symbol not found".
+  #
+  # The symbols are read once into a variable rather than piped per symbol:
+  # under `pipefail`, `grep -q` closing the pipe early kills readelf with
+  # SIGPIPE, and a match would report itself as a failure.
+  local symbols
+  symbols=$(readelf --dyn-syms "$1")
+  for symbol in memcpy memset malloc __stack_chk_fail; do
+    grep -q " $symbol\$" <<<"$symbols" || {
+      echo "$1 does not export $symbol; it cannot relocate anything" >&2
+      echo "linked against it" >&2
+      exit 1
+    }
+  done
+}
+
+if [ -n "$SUPPLIED_LOADER" ]; then
+  verify_loader "$SUPPLIED_LOADER"
+  mkdir -p "$CACHE/$MUSL_ARCH"
+  cp "$SUPPLIED_LOADER" "$CACHE/$MUSL_ARCH/$LOADER"
+elif [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
   tarball=$CACHE/musl-$MUSL_VERSION.tar.gz
   if [ ! -f "$tarball" ]; then
     info "downloading musl $MUSL_VERSION"
@@ -94,12 +127,20 @@ if [ ! -f "$CACHE/$MUSL_ARCH/$LOADER" ]; then
   # as a PIE whose entry point is the dynamic linker.
   # CC has to be spelled out: given --target alone, musl's configure goes
   # looking for a <target>-gcc that a native build does not have.
+  #
+  # --export-dynamic has to be spelled out too. Some drivers -- `zig cc` among
+  # them -- drop the dynamic symbol table from the shared libc, which links and
+  # installs perfectly and then fails at run time with a page of
+  # "symbol not found" for every libc function the program wanted.
   (cd "$build" && "$src/configure" \
       --target="$MUSL_ARCH-linux-musl" \
       --disable-static \
-      CC="${CC:-gcc}" >configure.log 2>&1 \
+      CC="${CC:-gcc}" \
+      LDFLAGS="-Wl,--export-dynamic" >configure.log 2>&1 \
     && make -j"$(nproc)" lib/libc.so >build.log 2>&1) \
     || { echo "musl build failed; see $build/{configure,build}.log" >&2; exit 1; }
+
+  verify_loader "$build/lib/libc.so"
 
   mkdir -p "$CACHE/$MUSL_ARCH"
   cp "$build/lib/libc.so" "$CACHE/$MUSL_ARCH/$LOADER"
