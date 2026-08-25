@@ -27,9 +27,9 @@ sealed interface FileKind {
 }
 
 /**
- * Beyond this a file is described rather than drawn. The fence path renders a
- * file as one `AnnotatedString`, where monospace built one small `Text` per line,
- * so the ceiling is lower than it was.
+ * Beyond this a file is described rather than drawn. A fenced file renders as
+ * one `AnnotatedString`, so a large file is one large text layout -- this is
+ * the size past which that stops being drawable.
  */
 const val MAX_DOCUMENT_BYTES: Long = 1L shl 20
 
@@ -104,8 +104,15 @@ fun documentFor(file: File): String {
     val prefix = runCatching {
         file.inputStream().use { stream ->
             val buffer = ByteArray(SNIFF_BYTES)
-            val read = stream.read(buffer)
-            if (read <= 0) ByteArray(0) else buffer.copyOf(read)
+            // read(byte[]) is free to return fewer bytes than are available, so
+            // filling the sniff window takes a loop, not one call.
+            var filled = 0
+            while (filled < buffer.size) {
+                val read = stream.read(buffer, filled, buffer.size - filled)
+                if (read < 0) break
+                filled += read
+            }
+            buffer.copyOf(filled)
         }
     }.getOrElse { return refusalDocument(file.path, size, "Cannot read") }
 

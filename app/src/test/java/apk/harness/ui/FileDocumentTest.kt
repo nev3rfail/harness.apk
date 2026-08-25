@@ -130,6 +130,18 @@ class FileDocumentTest {
     }
 
     @Test
+    fun `a NUL late in the sniff window still classifies as binary`() {
+        val file = folder.newFile("truncated.bin")
+        val sniffBytes = 8000
+        val bytes = ByteArray(sniffBytes + 500) { 'a'.code.toByte() }
+        bytes[sniffBytes - 10] = 0
+        file.writeBytes(bytes)
+
+        val document = documentFor(file)
+        assertTrue(document.contains("Binary"))
+    }
+
+    @Test
     fun `a file over the cap is described rather than read`() {
         val file = folder.newFile("big.txt")
         file.writeText("x".repeat((MAX_DOCUMENT_BYTES + 1).toInt()))
