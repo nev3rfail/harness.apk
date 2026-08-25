@@ -20,7 +20,7 @@ class FileTreeRowsTest {
         folder.newFile("aaa.txt")
         folder.newFolder("zzz")
 
-        val rows = childRows(folder.root, 0, noLinks)
+        val rows = childRows(folder.root, emptyList(), noLinks)
 
         assertEquals(listOf("zzz", "aaa.txt"), rows.map { it.file.name })
         assertTrue(rows[0].isDirectory)
@@ -33,7 +33,7 @@ class FileTreeRowsTest {
         folder.newFile("alpha")
         folder.newFile("Gamma")
 
-        val rows = childRows(folder.root, 0, noLinks)
+        val rows = childRows(folder.root, emptyList(), noLinks)
 
         assertEquals(listOf("alpha", "Beta", "Gamma"), rows.map { it.file.name })
     }
@@ -43,7 +43,7 @@ class FileTreeRowsTest {
         folder.newFile("Readme.md")
         folder.newFile("README.md")
 
-        val rows = childRows(folder.root, 0, noLinks)
+        val rows = childRows(folder.root, emptyList(), noLinks)
 
         assertEquals(listOf("README.md", "Readme.md"), rows.map { it.file.name })
     }
@@ -52,7 +52,7 @@ class FileTreeRowsTest {
     fun `an empty directory yields no rows`() {
         val empty = folder.newFolder("empty")
 
-        val rows = childRows(empty, 0, noLinks)
+        val rows = childRows(empty, emptyList(), noLinks)
 
         assertTrue(rows.isEmpty())
     }
@@ -62,7 +62,7 @@ class FileTreeRowsTest {
         folder.newFile("target.txt")
         val isLink: (File) -> Boolean = { it.name == "target.txt" }
 
-        val rows = childRows(folder.root, 0, isLink)
+        val rows = childRows(folder.root, emptyList(), isLink)
 
         assertTrue(rows[0].isLink)
         assertFalse(rows[0].isDirectory)
@@ -72,16 +72,20 @@ class FileTreeRowsTest {
     fun `dotfiles are listed`() {
         folder.newFile(".gitignore")
 
-        val rows = childRows(folder.root, 0, noLinks)
+        val rows = childRows(folder.root, emptyList(), noLinks)
 
         assertEquals(listOf(".gitignore"), rows.map { it.file.name })
     }
 
     @Test
-    fun `depth is carried onto every child`() {
+    fun `depth and the ancestor chain come from the levels above`() {
         folder.newFile("a")
 
-        assertEquals(4, childRows(folder.root, 4, noLinks).single().depth)
+        val ancestors = listOf(true, false, true, true)
+        val row = childRows(folder.root, ancestors, noLinks).single()
+
+        assertEquals(4, row.depth)
+        assertEquals(ancestors, row.ancestorsContinue)
     }
 
     @Test
@@ -140,5 +144,71 @@ class FileTreeRowsTest {
 
         assertEquals(listOf("one", "two", "three.txt"), rows.map { it.file.name })
         assertEquals(listOf(0, 1, 2), rows.map { it.depth })
+    }
+
+    @Test
+    fun `the last of a directory's children is marked and the others are not`() {
+        folder.newFile("a.txt")
+        folder.newFile("b.txt")
+
+        val rows = childRows(folder.root, emptyList(), noLinks)
+
+        assertFalse(rows[0].isLastSibling)
+        assertTrue(rows[1].isLastSibling)
+    }
+
+    @Test
+    fun `an only child is the last of its siblings`() {
+        folder.newFile("alone.txt")
+
+        assertTrue(childRows(folder.root, emptyList(), noLinks).single().isLastSibling)
+    }
+
+    @Test
+    fun `a directory with a sibling below it continues for the rows inside it`() {
+        val one = folder.newFolder("one")
+        File(one, "inside.txt").writeText("x")
+        folder.newFile("z.txt")
+
+        val rows = visibleRows(folder.root, setOf(one.path), noLinks)
+
+        assertEquals(listOf("one", "inside.txt", "z.txt"), rows.map { it.file.name })
+        assertEquals(listOf(true), rows[1].ancestorsContinue)
+    }
+
+    @Test
+    fun `the last directory does not continue for the rows inside it`() {
+        val last = folder.newFolder("last")
+        File(last, "inside.txt").writeText("x")
+
+        val rows = visibleRows(folder.root, setOf(last.path), noLinks)
+
+        assertEquals(listOf(false), rows[1].ancestorsContinue)
+    }
+
+    @Test
+    fun `the ancestor chain grows one entry per level`() {
+        val one = folder.newFolder("one")
+        val two = File(one, "two").also { it.mkdir() }
+        File(two, "three.txt").writeText("x")
+
+        val rows = visibleRows(folder.root, setOf(one.path, two.path), noLinks)
+
+        assertEquals(emptyList<Boolean>(), rows[0].ancestorsContinue)
+        assertEquals(listOf(false), rows[1].ancestorsContinue)
+        assertEquals(listOf(false, false), rows[2].ancestorsContinue)
+        assertEquals(listOf(0, 1, 2), rows.map { it.depth })
+    }
+
+    @Test
+    fun `a row following a collapsed directory carries no ancestors`() {
+        folder.newFolder("shut").also { File(it, "unseen.txt").writeText("x") }
+        folder.newFile("after.txt")
+
+        val rows = visibleRows(folder.root, emptySet(), noLinks)
+
+        assertEquals(listOf("shut", "after.txt"), rows.map { it.file.name })
+        assertEquals(emptyList<Boolean>(), rows[1].ancestorsContinue)
+        assertTrue(rows[1].isLastSibling)
     }
 }
