@@ -35,18 +35,27 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * What a symbolic link points at, as the link writes it, or null when the path
- * is not a link.
+ * Whether a path is a symbolic link and what it points at, as the link writes
+ * it, or null when the path is not a link.
  *
  * `Os.lstat` rather than `Files.isSymbolicLink`, which needs API 26 against a
  * `minSdk` of 24 with no desugaring, and rather than comparing canonical to
  * absolute paths, which calls every path under a linked ancestor a link. The
  * `readlink` runs only once the `lstat` has said there is a link to read, so a
  * directory of ordinary files costs one call an entry.
+ *
+ * The two calls fail apart. The `lstat` alone answers whether there is a link,
+ * so a `readlink` that fails -- a delete racing the walk -- gives a link with
+ * an unknown target rather than an ordinary entry. `File.isDirectory` resolves
+ * through a link, so an entry that stopped being a link would become a
+ * directory the tree opens, and a link back to an ancestor would be a cycle.
  */
-fun symbolicLinkTarget(file: File): String? = runCatching {
-    if (OsConstants.S_ISLNK(Os.lstat(file.path).st_mode)) Os.readlink(file.path) else null
-}.getOrNull()
+fun symbolicLink(file: File): SymbolicLink? {
+    val isLink = runCatching { OsConstants.S_ISLNK(Os.lstat(file.path).st_mode) }
+        .getOrDefault(false)
+    if (!isLink) return null
+    return SymbolicLink(runCatching { Os.readlink(file.path) }.getOrNull())
+}
 
 /**
  * The project's files, as rows that open and close.
@@ -65,7 +74,7 @@ fun FileTree(
     // Off the composition thread: a directory in the Gradle cache has thousands
     // of children, and this runs again on every change to the open set.
     val rows by produceState(initialValue = emptyList<TreeRow>(), root, expanded) {
-        value = withContext(Dispatchers.IO) { visibleRows(root, expanded, ::symbolicLinkTarget) }
+        value = withContext(Dispatchers.IO) { visibleRows(root, expanded, ::symbolicLink) }
     }
 
     MaterialSurface(

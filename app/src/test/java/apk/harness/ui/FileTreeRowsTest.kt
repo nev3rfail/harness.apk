@@ -15,7 +15,7 @@ class FileTreeRowsTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private val noLinks: (File) -> String? = { null }
+    private val noLinks: (File) -> SymbolicLink? = { null }
 
     @Test
     fun `directories come before files`() {
@@ -62,7 +62,8 @@ class FileTreeRowsTest {
     @Test
     fun `a link to a file is marked as a link, not a directory`() {
         folder.newFile("target.txt")
-        val links: (File) -> String? = { file -> "elsewhere.txt".takeIf { file.name == "target.txt" } }
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "target.txt") SymbolicLink("elsewhere.txt") else null }
 
         val rows = childRows(folder.root, emptyList(), links)
 
@@ -119,12 +120,29 @@ class FileTreeRowsTest {
     fun `a link to a directory is never expanded`() {
         val target = folder.newFolder("target")
         File(target, "inside.txt").writeText("x")
-        val links: (File) -> String? = { file -> "elsewhere".takeIf { file.name == "target" } }
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "target") SymbolicLink("elsewhere") else null }
 
         val rows = visibleRows(folder.root, setOf(target.path), links)
 
         assertEquals(listOf("target"), rows.map { it.file.name })
         assertTrue(rows[0].isLink)
+    }
+
+    @Test
+    fun `a link whose target cannot be read is still a link and is never expanded`() {
+        val target = folder.newFolder("target")
+        File(target, "inside.txt").writeText("x")
+        // What a readlink that loses the race returns: the lstat saw a link,
+        // the read of it found nothing to report.
+        val unreadable: (File) -> SymbolicLink? =
+            { file -> if (file.name == "target") SymbolicLink(null) else null }
+
+        val rows = visibleRows(folder.root, setOf(target.path), unreadable)
+
+        assertEquals(listOf("target"), rows.map { it.file.name })
+        assertTrue(rows[0].isLink)
+        assertNull(rows[0].linkTarget)
     }
 
     @Test
@@ -206,7 +224,8 @@ class FileTreeRowsTest {
     fun `a relative target is read against the link's own directory`() {
         val sub = folder.newFolder("sub")
         File(sub, "link").writeText("x")
-        val links: (File) -> String? = { file -> "sibling.txt".takeIf { file.name == "link" } }
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "link") SymbolicLink("sibling.txt") else null }
 
         val row = childRows(sub, emptyList(), links).single()
 
@@ -216,7 +235,8 @@ class FileTreeRowsTest {
     @Test
     fun `an absolute target is left as it is written`() {
         folder.newFile("link")
-        val links: (File) -> String? = { file -> "/etc/hosts".takeIf { file.name == "link" } }
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "link") SymbolicLink("/etc/hosts") else null }
 
         val row = childRows(folder.root, emptyList(), links).single()
 
@@ -235,8 +255,9 @@ class FileTreeRowsTest {
         val outer = folder.newFolder("outer")
         val inner = File(outer, "inner").also { it.mkdir() }
         Files.createSymbolicLink(File(inner, "up").toPath(), File("..").toPath())
-        val links: (File) -> String? = { file ->
-            runCatching { Files.readSymbolicLink(file.toPath()).toString() }.getOrNull()
+        val links: (File) -> SymbolicLink? = { file ->
+            runCatching { SymbolicLink(Files.readSymbolicLink(file.toPath()).toString()) }
+                .getOrNull()
         }
 
         val rows = visibleRows(

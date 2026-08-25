@@ -3,15 +3,29 @@ package apk.harness.ui
 import java.io.File
 
 /**
+ * An entry that is a symbolic link, together with what it points at.
+ *
+ * [target] is what the link writes, and null when there is a link but its
+ * target could not be read. The two answers are separate because a lookup that
+ * fails on the second must not retract the first: a link with no readable
+ * target is still a link, and an entry that stops being a link is descended
+ * into.
+ */
+data class SymbolicLink(val target: String?)
+
+/**
  * One row of the tree.
  *
  * A link is marked rather than followed, which is what keeps a cycle out of the
  * tree without tracking visited inodes -- and this app's own home contains one,
  * because the rootfs home is a link back to it.
  *
- * [linkTarget] is what a link points at, written out against the link's own
- * directory when the link gives it relatively, and null for every row that is
- * not a link. It names the target; it is not a step toward it.
+ * [isLink] is the answer to whether the row is a link, and the only thing the
+ * walk consults. [linkTarget] is what that link points at, written out against
+ * the link's own directory when the link gives it relatively; it is null for a
+ * row that is not a link and equally for a link whose target could not be read,
+ * so it says nothing about [isLink]. It names the target; it is not a step
+ * toward it.
  *
  * [ancestorsContinue] and [isLastSibling] are the row's place in the hierarchy:
  * one entry per level above the row, outermost first, saying whether that
@@ -39,28 +53,29 @@ data class TreeRow(
  * they are opened.
  *
  * The depth is the length of [ancestorsContinue] rather than a parameter of its
- * own, so a row's indentation and its guides are read from one value. A link is
- * known the same way: [linkTarget] answers with what the entry points at, or
- * null when it points at nothing, so being a link and having a target cannot
- * disagree.
+ * own, so a row's indentation and its guides are read from one value.
+ *
+ * [symbolicLink] decides whether an entry is a link, and names the target as a
+ * second answer within that one: a link whose target cannot be read is a link
+ * with nothing to name, never an ordinary entry.
  */
 fun childRows(
     directory: File,
     ancestorsContinue: List<Boolean>,
-    linkTarget: (File) -> String?,
+    symbolicLink: (File) -> SymbolicLink?,
 ): List<TreeRow> {
     val entries = directory.listFiles() ?: return emptyList()
     val ordered = entries
         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }, { it.name }))
     return ordered.mapIndexed { index, entry ->
-        val target = linkTarget(entry)
+        val link = symbolicLink(entry)
         TreeRow(
             file = entry,
             depth = ancestorsContinue.size,
             isDirectory = entry.isDirectory,
-            isLink = target != null,
-            linkTarget = target?.let { written -> targetPath(entry, written) },
-            unreadable = entry.isDirectory && target == null && entry.listFiles() == null,
+            isLink = link != null,
+            linkTarget = link?.target?.let { written -> targetPath(entry, written) },
+            unreadable = entry.isDirectory && link == null && entry.listFiles() == null,
             ancestorsContinue = ancestorsContinue,
             isLastSibling = index == ordered.lastIndex,
         )
@@ -90,12 +105,12 @@ private fun targetPath(link: File, written: String): String =
 fun visibleRows(
     root: File,
     expanded: Set<String>,
-    linkTarget: (File) -> String?,
+    symbolicLink: (File) -> SymbolicLink?,
 ): List<TreeRow> {
     val rows = mutableListOf<TreeRow>()
 
     fun walk(directory: File, ancestorsContinue: List<Boolean>) {
-        childRows(directory, ancestorsContinue, linkTarget).forEach { row ->
+        childRows(directory, ancestorsContinue, symbolicLink).forEach { row ->
             rows += row
             // A link is drawn as a link, so an expanded link stays closed.
             if (row.isDirectory && !row.isLink && !row.unreadable &&
