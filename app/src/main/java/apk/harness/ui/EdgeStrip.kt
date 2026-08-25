@@ -59,13 +59,15 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                         bounds.right.toInt(),
                         bounds.bottom.toInt(),
                     )
-                    // Layout runs on every frame of the keyboard's
-                    // animation and the rectangle is the same one throughout,
-                    // so it goes to the system only once it has moved. The
-                    // comparison is against what the view holds rather than a
-                    // copy kept here, so a registration the framework lets go
-                    // of is posted again.
-                    if (rect != view.systemGestureExclusionRects.firstOrNull()) {
+                    // Layout runs on every frame of the keyboard's animation
+                    // and the rectangle is the same one throughout, so it goes
+                    // to the system only once it has moved. The comparison is
+                    // against the list the view holds because the strip owns
+                    // this view's exclusion rects outright -- the write
+                    // replaces them all -- so there is no second copy in
+                    // composition state to drift from what is registered.
+                    val registered = view.systemGestureExclusionRects
+                    if (registered.size != 1 || registered[0] != rect) {
                         view.systemGestureExclusionRects = listOf(rect)
                     }
                 }
