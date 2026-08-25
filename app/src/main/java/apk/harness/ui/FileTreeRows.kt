@@ -58,6 +58,13 @@ data class TreeRow(
  * [symbolicLink] decides whether an entry is a link, and names the target as a
  * second answer within that one: a link whose target cannot be read is a link
  * with nothing to name, never an ordinary entry.
+ *
+ * Every entry is asked for its kind and its link once, before the sort, and the
+ * answers are carried through it. `java.io.File` holds no attributes, so each
+ * `isDirectory` is a fresh `stat`; sorting on the live call would put two of
+ * them in every one of a sort's N log N comparisons, and a directory of a few
+ * thousand entries would spend an order of magnitude more syscalls ordering
+ * itself than reading itself.
  */
 fun childRows(
     directory: File,
@@ -66,21 +73,30 @@ fun childRows(
 ): List<TreeRow> {
     val entries = directory.listFiles() ?: return emptyList()
     val ordered = entries
-        .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }, { it.name }))
+        .map { entry -> Child(entry, entry.isDirectory, symbolicLink(entry)) }
+        .sortedWith(
+            compareBy({ !it.isDirectory }, { it.file.name.lowercase() }, { it.file.name }),
+        )
     return ordered.mapIndexed { index, entry ->
-        val link = symbolicLink(entry)
         TreeRow(
-            file = entry,
+            file = entry.file,
             depth = ancestorsContinue.size,
             isDirectory = entry.isDirectory,
-            isLink = link != null,
-            linkTarget = link?.target?.let { written -> targetPath(entry, written) },
-            unreadable = entry.isDirectory && link == null && entry.listFiles() == null,
+            isLink = entry.link != null,
+            linkTarget = entry.link?.target?.let { written -> targetPath(entry.file, written) },
+            unreadable = entry.isDirectory && entry.link == null &&
+                entry.file.listFiles() == null,
             ancestorsContinue = ancestorsContinue,
             isLastSibling = index == ordered.lastIndex,
         )
     }
 }
+
+/**
+ * A directory entry with the two answers about it that cost a syscall, asked
+ * once and held: whether it is a directory, and its link if it is one.
+ */
+private class Child(val file: File, val isDirectory: Boolean, val link: SymbolicLink?)
 
 /**
  * A link's target as the link writes it, made absolute against the directory
