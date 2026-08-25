@@ -69,9 +69,14 @@ class MainActivity : ComponentActivity() {
         val tools = Tools(
             surfaces = surfaces,
             openExternal = ::openExternally,
-            // The one reader, so openFile shows what a tree row shows: fenced,
-            // and refused before the read when it should not be drawn at all.
-            readFile = { path -> documentFor(File(path)) },
+            // Raw bytes for a diff to line up against the proposed text; a
+            // missing or unreadable file throws, which is the "no before text"
+            // case a diff needs to detect rather than mask with a placeholder.
+            readFile = { path -> File(path).readText() },
+            // The same file as a document: fenced when it is source, or a
+            // refusal string in place of content that should not be drawn --
+            // binary, oversized, or unreadable. What a tree row shows.
+            readDocument = { path -> documentFor(File(path)) },
         )
 
         // The agent finds an editor by reading lockfiles out of its own config

@@ -22,6 +22,7 @@ class Tools(
     private val surfaces: Surfaces,
     private val openExternal: (String) -> Boolean,
     private val readFile: (String) -> String,
+    private val readDocument: (String) -> String,
 ) {
 
     fun editorDefinitions(): JSONArray = JSONArray()
@@ -117,7 +118,7 @@ class Tools(
 
             "openFile", "show_file_document_panel" -> {
                 val path = arguments.optString("filePath")
-                val text = runCatching { readFile(path) }
+                val text = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
                 surfaces.show(Surface.FileView(path, text))
                 textContent("Showing $path")
