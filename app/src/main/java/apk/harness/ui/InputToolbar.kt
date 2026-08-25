@@ -48,6 +48,7 @@ fun InputToolbar(
             Key("ALT", Modifier.weight(1f), active = altActive, onClick = onToggleAlt)
             Key("↑", Modifier.weight(1f)) { onKey(CSI + "A") }
             Key("↓", Modifier.weight(1f)) { onKey(CSI + "B") }
+            Key("←", Modifier.weight(1f)) { onKey(CURSOR_LEFT) }
             Key("📋", Modifier.weight(1f), onClick = onPaste)
             Key("⌨", Modifier.weight(1f), onClick = onShowKeyboard)
         }
@@ -80,3 +81,6 @@ private val KeyPadding = androidx.compose.foundation.layout.PaddingValues(
 // has to survive a copy through a file.
 private val ESCAPE = 27.toChar().toString()
 private val CSI = ESCAPE + "["
+
+// Cursor-left, for the soft keyboard's missing arrow keys: ESC [ D.
+private val CURSOR_LEFT = CSI + "D"
