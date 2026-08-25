@@ -10,8 +10,9 @@ android {
 
     defaultConfig {
         // Overridable so a throwaway id can be built without editing this file.
-        // Relocating a Termux bootstrap needs a data directory path no longer
-        // than the one compiled into its binaries, which bounds the id's length.
+        // Relocating a Termux bootstrap needs a prefix no longer than the one
+        // compiled into its binaries -- 31 bytes, which an eleven-character id
+        // affords by naming the directory below it in four.
         applicationId = (findProperty("harnessAppId") as String?) ?: "apk.harness"
         minSdk = 24
         // An app targeting API 29 or later may not execute a file in its own data
@@ -37,12 +38,11 @@ android {
         debug {
             isDebuggable = true
         }
-        // A channel that keeps working while the other one is being broken.
-        // Its own application id means its own data directory, so it needs its
-        // own staged agent: the musl loader has the prefix compiled in.
+        // The channel that keeps working while the other one is being broken.
+        // It carries the plain application id, because it is the one a userland
+        // has to fit under; the channel that iterates takes the other name.
         create("stable") {
             initWith(getByName("debug"))
-            applicationIdSuffix = ".stable"
             versionNameSuffix = "-stable"
             // The library module has no matching build type.
             matchingFallbacks += "debug"
@@ -72,6 +72,16 @@ android {
             // shim there is a program to execute, not a library to load.
             useLegacyPackaging = true
         }
+    }
+}
+
+// A build type carries a suffix, not an application id of its own, and the
+// channel that iterates is not a suffix of the channel that has to keep
+// working. Left alone when an id is given on the command line, so a throwaway
+// build still gets the one it asked for.
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        if (findProperty("harnessAppId") == null) variant.applicationId.set("dev.harness")
     }
 }
 
