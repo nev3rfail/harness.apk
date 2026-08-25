@@ -244,6 +244,25 @@ class FileTreeRowsTest {
     }
 
     @Test
+    fun `a target that points nowhere is carried as written`() {
+        folder.newFile("link")
+        // Nothing on this path exists, and the path is not in normal form.
+        val dangling = "/nowhere/at/../all/gone.txt"
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "link") SymbolicLink(dangling) else null }
+
+        val row = childRows(folder.root, emptyList(), links).single()
+
+        // The target is a name the link writes, not a path the tree resolves:
+        // nothing stats it, nothing walks it, nothing normalises it. A row
+        // whose target had been checked for existence would be dropped or hold
+        // null here, and one built with canonicalFile would have eaten the
+        // parent segment.
+        assertTrue(row.isLink)
+        assertEquals(dangling, row.linkTarget)
+    }
+
+    @Test
     fun `a row that is not a link has no target`() {
         folder.newFile("plain.txt")
 
