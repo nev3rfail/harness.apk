@@ -1,4 +1,5 @@
-/spike/
+/spike/*
+!/spike/*.md
 /build/
 /app/build/
 .gradle/
