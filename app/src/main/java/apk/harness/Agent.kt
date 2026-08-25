@@ -26,6 +26,13 @@ class Agent(private val context: Context) {
         // one, which is most of them.
         environment["SHELL"] = SHELL
 
+        // A URL is drawn as a hyperlink only for a terminal the agent believes
+        // supports them, and it recognises this one by nothing. This is ghostty's
+        // terminal, hyperlinks work, and a tap on one hands the URL to the phone.
+        // That is how a login is completed here: the agent cannot open a browser
+        // itself, so it prints the authorization URL and someone taps it.
+        environment["FORCE_HYPERLINK"] = "1"
+
         val staged = File(context.filesDir, STAGE_DIRECTORY)
         val binary = File(staged, BINARY_NAME)
         if (!binary.canExecute()) {

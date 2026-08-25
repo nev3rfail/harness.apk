@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun InputToolbar(
     onKey: (String) -> Unit,
+    onPaste: () -> Unit,
     onShowKeyboard: () -> Unit,
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
@@ -47,6 +48,7 @@ fun InputToolbar(
             Key("ALT", Modifier.weight(1f), active = altActive, onClick = onToggleAlt)
             Key("↑", Modifier.weight(1f)) { onKey(CSI + "A") }
             Key("↓", Modifier.weight(1f)) { onKey(CSI + "B") }
+            Key("📋", Modifier.weight(1f), onClick = onPaste)
             Key("⌨", Modifier.weight(1f), onClick = onShowKeyboard)
         }
     }

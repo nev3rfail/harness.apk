@@ -1,6 +1,8 @@
 package apk.harness
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -95,6 +97,9 @@ class MainActivity : ComponentActivity() {
                     session = session,
                     surfaces = surfaces,
                     onSurfaceViewCreated = { surfaceView = it },
+                    openLink = { openExternally(it) },
+                    copyText = ::copyToClipboard,
+                    pasteText = ::clipboardAsInput,
                 )
             }
         }
@@ -123,6 +128,33 @@ class MainActivity : ComponentActivity() {
      * for anything the app has no business drawing itself: a `geo:` link is a
      * map application, `tel:` is the dialer.
      */
+    /**
+     * Puts text on the device clipboard. The system announces the copy itself
+     * from Android 13 on, so nothing is drawn here.
+     */
+    private fun copyToClipboard(text: String) {
+        getSystemService(ClipboardManager::class.java)
+            ?.setPrimaryClip(ClipData.newPlainText(APP_NAME, text))
+    }
+
+    /**
+     * The clipboard as terminal input. Control characters are dropped rather
+     * than typed: a pasted newline is Enter, so it would run whatever the paste
+     * happens to contain, and nothing else in that range has any business
+     * arriving from outside the terminal.
+     *
+     * ponytail: one line at a time. Multi-line pastes want bracketed paste,
+     * which means asking the terminal whether the program turned it on.
+     */
+    private fun clipboardAsInput(): String {
+        val clip = getSystemService(ClipboardManager::class.java)?.primaryClip ?: return ""
+        if (clip.itemCount == 0) return ""
+        val text = clip.getItemAt(0).coerceToText(this).toString()
+        return text.lines().joinToString(" ") { line ->
+            line.filter { it.code in 0x20..0x7E || it.code > 0x7F }
+        }
+    }
+
     private fun openExternally(uri: String): Boolean = try {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -140,6 +172,9 @@ private fun HarnessScreen(
     session: TerminalSession,
     surfaces: Surfaces,
     onSurfaceViewCreated: (GhosttyGLSurfaceView) -> Unit,
+    openLink: (String) -> Unit,
+    copyText: (String) -> Unit,
+    pasteText: () -> String,
 ) {
     var view by remember { mutableStateOf<GhosttyGLSurfaceView?>(null) }
     // spike: with a `capture` file in the home, every byte the agent writes is
@@ -193,12 +228,17 @@ private fun HarnessScreen(
                             override fun onKeyboardOverlayProgress(offset: Float, maxOffset: Float) {}
 
                             override fun onKeyboardOverlayStateChanged(expanded: Boolean) {}
+
+                            override fun onHyperlinkClicked(uri: String) = openLink(uri)
+
+                            override fun onTextSelected(text: String) = copyText(text)
                         })
                     }
                 },
             )
             InputToolbar(
                 onKey = { session.write(it) },
+                onPaste = { pasteText().takeIf { text -> text.isNotEmpty() }?.let(session::write) },
                 onShowKeyboard = { view?.showKeyboard() },
                 onToggleCtrl = {
                     ctrlActive = !ctrlActive
