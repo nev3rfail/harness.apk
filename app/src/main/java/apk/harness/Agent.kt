@@ -24,7 +24,23 @@ class Agent(private val context: Context) {
 
         // Without this the agent finds no shell and disables every tool built on
         // one, which is most of them.
-        environment["SHELL"] = SHELL
+        environment["SHELL"] = ANDROID_SHELL
+
+        // A userland, if one is staged, is where the agent's tools should look
+        // first: it is the difference between toybox and a shell with git.
+        //
+        // Spelled from the package name rather than taken from `dataDir`, which
+        // reports the same directory as `/data/user/0/...`. That spelling is two
+        // bytes longer, and the tree's prefix has to fit inside the one Termux
+        // compiled into it, so `/data/data` is the only spelling it can carry.
+        // Two spellings of one directory is the comparison risk the byte budget
+        // exists to avoid. A profile whose data lives elsewhere finds no
+        // userland here and falls back to the shell Android has.
+        val userland = File("/data/data/${context.packageName}", USERLAND_PREFIX)
+        if (File(userland, BASH_PATH).canExecute()) {
+            environment["PATH"] = "${File(userland, "bin")}:${environment["PATH"]}"
+            environment["SHELL"] = shellWrapper(userland).absolutePath
+        }
 
         // A URL is drawn as a hyperlink only for a terminal the agent believes
         // supports them, and it recognises this one by nothing. This is ghostty's
@@ -88,6 +104,38 @@ class Agent(private val context: Context) {
         }
     }
 
+    /**
+     * A script that execs the userland's bash, which the agent is handed as its
+     * shell.
+     *
+     * The indirection is what `termux-exec` costs. That library is how
+     * `#!/usr/bin/env` resolves on a device with no `/usr`, and it works by
+     * being preloaded into whatever runs the script -- but it is bionic, and the
+     * agent is musl, so preloading it into the agent fails to relocate against a
+     * libc that has no `__register_atfork`. The preload can only be named on the
+     * far side of the exec, which means a file.
+     */
+    private fun shellWrapper(userland: File): File {
+        val rootfs = userland.parentFile!!
+        val script = File(context.filesDir, SHELL_NAME)
+        script.writeText(
+            listOf(
+                "#!$ANDROID_SHELL",
+                "export PREFIX=$userland",
+                "export TERMUX__PREFIX=$userland",
+                "export TERMUX__ROOTFS=$rootfs",
+                "export TERMUX_APP__DATA_DIR=${rootfs.parent}",
+                // Carried here as well as in the agent's environment, so that
+                // the shell finds the userland's programs whoever ran it.
+                "export PATH=$userland/bin:\$PATH",
+                "export LD_PRELOAD=$userland/lib/$TERMUX_EXEC",
+                "exec $userland/$BASH_PATH \"\$@\"",
+            ).joinToString("\n", postfix = "\n")
+        )
+        script.setExecutable(true)
+        return script
+    }
+
     private companion object {
         const val STAGE_DIRECTORY = "claude"
         const val BINARY_NAME = "claude"
@@ -101,9 +149,17 @@ class Agent(private val context: Context) {
         const val IDE_FLAG = "--ide"
         const val SETDNS_NAME = "setdns.js"
 
-        // Android's own shell, which is toybox: enough for the agent to accept
-        // that it has one.
-        const val SHELL = "/system/bin/sh"
+        // Android's own shell, which is toybox. What the agent gets when no
+        // userland is staged.
+        const val ANDROID_SHELL = "/system/bin/sh"
+
+        // A relocated Termux tree, whose prefix has to be the same length as the
+        // one it was built for -- so the directory below the app's is named in
+        // four characters, and the applicationId spends the byte instead.
+        const val USERLAND_PREFIX = "root/usr"
+        const val BASH_PATH = "bin/bash"
+        const val SHELL_NAME = "shell"
+        const val TERMUX_EXEC = "libtermux-exec-ld-preload.so"
 
         const val CONFIG_NAME = ".claude.json"
         const val ONBOARDED = """{"hasCompletedOnboarding":true}"""
