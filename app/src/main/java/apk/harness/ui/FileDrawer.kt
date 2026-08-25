@@ -74,7 +74,15 @@ fun FileDrawer(
 
     Dialog(
         onDismissRequest = { closing = true },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            // The window reaches the system bars, so the drawer is full height
+            // and the scrim covers them: a tap beside the status bar is a way
+            // out like any other. Clearing the bar is then the content's own
+            // job, and FileTree does it -- insetting the window as well would
+            // leave the drawer a status bar short at the top.
+            decorFitsSystemWindows = false,
+        ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // A sibling behind the drawer rather than a parent around it: a
