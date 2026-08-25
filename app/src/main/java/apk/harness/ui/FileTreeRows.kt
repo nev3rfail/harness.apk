@@ -59,6 +59,12 @@ data class TreeRow(
  * second answer within that one: a link whose target cannot be read is a link
  * with nothing to name, never an ordinary entry.
  *
+ * A subdirectory is marked unreadable on `canRead`, one `access` call, rather
+ * than on a listing that comes back null: the marker asks whether the operator
+ * may open the row, and a full open/getdents/close on every directory child
+ * costs more than the sort it sits beside. A link is not asked at all, so
+ * nothing is statted through it.
+ *
  * Every entry is asked for its kind and its link once, before the sort, and the
  * answers are carried through it. `java.io.File` holds no attributes, so each
  * `isDirectory` is a fresh `stat`; sorting on the live call would put two of
@@ -85,7 +91,7 @@ fun childRows(
             isLink = child.link != null,
             linkTarget = child.link?.target,
             unreadable = child.isDirectory && child.link == null &&
-                child.file.listFiles() == null,
+                !child.file.canRead(),
             ancestorsContinue = ancestorsContinue,
             isLastSibling = index == ordered.lastIndex,
         )

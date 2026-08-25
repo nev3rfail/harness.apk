@@ -105,6 +105,28 @@ class FileTreeRowsTest {
     }
 
     @Test
+    fun `a readable directory is not marked`() {
+        folder.newFolder("open").also { File(it, "inside.txt").writeText("x") }
+
+        assertFalse(childRows(folder.root, emptyList(), noLinks).single().unreadable)
+    }
+
+    @Test
+    fun `a link is never asked whether it can be read`() {
+        val locked = folder.newFolder("locked")
+        locked.setReadable(false)
+        val links: (File) -> SymbolicLink? =
+            { file -> if (file.name == "locked") SymbolicLink("elsewhere") else null }
+
+        val row = childRows(folder.root, emptyList(), links).single()
+
+        // The row is a link, and the marker would have had to reach through it
+        // to say otherwise.
+        assertTrue(row.isLink)
+        assertFalse(row.unreadable)
+    }
+
+    @Test
     fun `only expanded directories contribute children`() {
         val open = folder.newFolder("open")
         File(open, "inside.txt").writeText("x")
