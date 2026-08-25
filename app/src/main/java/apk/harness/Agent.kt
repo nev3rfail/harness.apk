@@ -90,14 +90,14 @@ class Agent(private val context: Context) {
         return if (translating) {
             TerminalSession(
                 command = shim.absolutePath,
-                argv = listOf(shim.absolutePath, binary.absolutePath, IDE_FLAG),
+                argv = listOf(shim.absolutePath, binary.absolutePath, IDE_FLAG, CONTINUE_FLAG),
                 environment = environment,
                 cwd = context.filesDir.absolutePath,
             )
         } else {
             TerminalSession(
                 command = binary.absolutePath,
-                argv = listOf(binary.absolutePath, IDE_FLAG),
+                argv = listOf(binary.absolutePath, IDE_FLAG, CONTINUE_FLAG),
                 environment = environment,
                 cwd = context.filesDir.absolutePath,
             )
@@ -147,6 +147,12 @@ class Agent(private val context: Context) {
         const val SHIM_NAME = "libsyscallshim.so"
 
         const val IDE_FLAG = "--ide"
+
+        // The Activity dies on a configuration change and under memory pressure,
+        // and the transcript outlives it. Continuing the most recent conversation
+        // in the working directory is what makes a respawn invisible. Not
+        // --resume, which without a session id asks which one.
+        const val CONTINUE_FLAG = "--continue"
         const val SETDNS_NAME = "setdns.js"
 
         // Android's own shell, which is toybox. What the agent gets when no
