@@ -42,7 +42,7 @@ import kotlinx.coroutines.withContext
  * `minSdk` of 24 with no desugaring, and rather than comparing canonical to
  * absolute paths, which calls every path under a linked ancestor a link. The
  * `readlink` runs only once the `lstat` has said there is a link to read, so a
- * directory of ordinary files costs one call an entry as before.
+ * directory of ordinary files costs one call an entry.
  */
 fun symbolicLinkTarget(file: File): String? = runCatching {
     if (OsConstants.S_ISLNK(Os.lstat(file.path).st_mode)) Os.readlink(file.path) else null
