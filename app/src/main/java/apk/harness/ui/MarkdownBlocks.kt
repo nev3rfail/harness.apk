@@ -7,6 +7,10 @@ package apk.harness.ui
  * element types also carries the contents of list items, so overriding it eats
  * text that should have been drawn. Lifting tables out of the source first
  * leaves the renderer with only what it already does well.
+ *
+ * A fenced region is prose from end to end. A file wrapped in a fence to be
+ * shown as itself may contain anything, pipes included, and none of it is a
+ * table.
  */
 sealed interface MarkdownBlock {
     data class Prose(val text: String) : MarkdownBlock
@@ -24,11 +28,30 @@ fun markdownBlocks(source: String): List<MarkdownBlock> {
     }
 
     var index = 0
-    while (index < lines.size) {
-        val header = lines[index]
-        val separator = lines.getOrNull(index + 1)
+    var fence: Fence? = null
 
-        if (isRow(header) && separator != null && isSeparator(separator)) {
+    while (index < lines.size) {
+        val line = lines[index]
+        val open = fence
+
+        // Inside a fence every line is prose, rows included, until the fence closes.
+        if (open != null) {
+            prose.append(line).append('\n')
+            if (closesFence(line, open)) fence = null
+            index++
+            continue
+        }
+
+        val opened = opensFence(line)
+        if (opened != null) {
+            fence = opened
+            prose.append(line).append('\n')
+            index++
+            continue
+        }
+
+        val separator = lines.getOrNull(index + 1)
+        if (isRow(line) && separator != null && isSeparator(separator)) {
             flushProse()
             var cursor = index + 2
             val rows = mutableListOf<List<String>>()
@@ -36,10 +59,10 @@ fun markdownBlocks(source: String): List<MarkdownBlock> {
                 rows += cells(lines[cursor])
                 cursor++
             }
-            blocks += MarkdownBlock.Table(cells(header), rows)
+            blocks += MarkdownBlock.Table(cells(line), rows)
             index = cursor
         } else {
-            prose.append(header).append('\n')
+            prose.append(line).append('\n')
             index++
         }
     }
@@ -65,3 +88,22 @@ private fun cells(line: String): List<String> = split(line.trim()).map { it.trim
 
 private fun split(row: String): List<String> =
     row.removePrefix("|").removeSuffix("|").split('|')
+
+/** An open fence: the character that opened it, and how many of them. */
+private data class Fence(val marker: Char, val length: Int)
+
+/** A run of three or more backticks or tildes, indented no more than three spaces. */
+private fun opensFence(line: String): Fence? {
+    val body = line.trimStart()
+    if (line.length - body.length > 3) return null
+    val marker = body.firstOrNull() ?: return null
+    if (marker != '`' && marker != '~') return null
+    val run = body.takeWhile { it == marker }.length
+    return if (run >= 3) Fence(marker, run) else null
+}
+
+/** A closing fence carries no info string, so the line is nothing but its marker. */
+private fun closesFence(line: String, fence: Fence): Boolean {
+    val body = line.trim()
+    return body.length >= fence.length && body.all { it == fence.marker }
+}
