@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
@@ -127,6 +128,12 @@ private const val GuideAlpha = 0.35f
 // text, in the colour the tree already uses for what it will not open.
 private val TargetFontSize = 11.sp
 
+// The most of a row the target may claim. Around twenty-one characters at
+// [TargetFontSize], which is under half the usable width of the narrowest
+// screen this runs on, so the name keeps the larger share of every row while a
+// short target shrinks to fit and hands the rest back. Tunable.
+private val TargetMaxWidth = 140.dp
+
 // Named Entry rather than Row: a composable called Row in this file would shadow
 // the layout Row that anything added here reaches for next.
 @Composable
@@ -192,10 +199,10 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
         Spacer(modifier = Modifier.width(IconGap))
         Text(
             text = row.file.name,
-            // Weighted like the target beside it, so a long name gives ground
-            // instead of taking the row: an unweighted name measures against
-            // the full width first and can leave the target nothing at all,
-            // which loses the arrow along with the target.
+            // The only weighted child, so it measures against whatever the
+            // target leaves and takes all of it: an unweighted name would
+            // measure first against the full width and could leave the target
+            // nothing at all, losing the arrow along with it.
             modifier = Modifier.weight(1f, fill = false),
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
@@ -205,8 +212,11 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
             else MaterialTheme.colorScheme.onSurface,
         )
         // Where the link points, after the name it points from. Dimmed and
-        // smaller, and given only what the name leaves: the row is the file's,
-        // and the target is a note about it.
+        // smaller, and capped rather than weighted: an unweighted child is
+        // measured before the name, so it takes only the width it needs up to
+        // [TargetMaxWidth] and the name takes everything else. Weighting both
+        // instead would split the remaining width in half whatever the target
+        // measured, because a weighted child's slack is not handed on.
         //
         // The target as the link writes it: a relative target reads as the step
         // it is, and an absolute one reads as the path it names. Both are the
@@ -216,7 +226,7 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
             Spacer(modifier = Modifier.width(IconGap))
             Text(
                 text = "→ " + target,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.widthIn(max = TargetMaxWidth),
                 fontFamily = FontFamily.Monospace,
                 fontSize = TargetFontSize,
                 maxLines = 1,
