@@ -192,6 +192,11 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
         Spacer(modifier = Modifier.width(IconGap))
         Text(
             text = row.file.name,
+            // Weighted like the target beside it, so a long name gives ground
+            // instead of taking the row: an unweighted name measures against
+            // the full width first and can leave the target nothing at all,
+            // which loses the arrow along with the target.
+            modifier = Modifier.weight(1f, fill = false),
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
             maxLines = 1,
@@ -202,10 +207,15 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
         // Where the link points, after the name it points from. Dimmed and
         // smaller, and given only what the name leaves: the row is the file's,
         // and the target is a note about it.
+        //
+        // The target's last segment rather than the path it sits on. A row this
+        // narrow cannot hold a path, and an ellipsis trims the tail, which is
+        // the segment that says anything -- the leading directories are shared
+        // by every target here.
         row.linkTarget?.let { target ->
             Spacer(modifier = Modifier.width(IconGap))
             Text(
-                text = "→ $target",
+                text = "→ " + File(target).name.ifEmpty { target },
                 modifier = Modifier.weight(1f, fill = false),
                 fontFamily = FontFamily.Monospace,
                 fontSize = TargetFontSize,
