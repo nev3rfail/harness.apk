@@ -12,10 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
@@ -26,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -224,9 +222,12 @@ private fun HarnessScreen(
         // The status bar inset lives here, so the terminal's first line is never
         // under the bar when the bar is showing.
         Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
-            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // The strip overlays the terminal's right edge and is declared
+            // after it, so a drag starting there reaches the strip rather
+            // than the surface underneath.
+            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
                 AndroidView(
-                    modifier = Modifier.fillMaxHeight().weight(1f),
+                    modifier = Modifier.fillMaxSize(),
                     factory = { context ->
                         GhosttyGLSurfaceView(context).also { created ->
                             view = created
@@ -269,7 +270,10 @@ private fun HarnessScreen(
                         }
                     },
                 )
-                DrawerEdgeStrip(onOpen = { drawerOpen = true })
+                DrawerEdgeStrip(
+                    onOpen = { drawerOpen = true },
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                )
             }
             InputToolbar(
                 onKey = { session.write(it) },

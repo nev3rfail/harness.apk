@@ -2,20 +2,15 @@ package apk.harness.ui
 
 import android.graphics.Rect
 import android.os.Build
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -27,24 +22,17 @@ import androidx.compose.ui.unit.dp
 // it is the smallest strip a drag can start in reliably. Tunable.
 private val StripWidth = 24.dp
 
-// The handle: visible enough to be looked for, quiet enough not to be content.
-private val HandleWidth = 3.dp
-private val HandleMargin = 8.dp
-private const val HandleAlpha = 0.30f
-
 // Leftward travel that counts as a pull rather than a stray touch. Tunable.
 private val PullThreshold = 20.dp
 
 /**
- * The strip along the right edge that opens the file drawer.
+ * The band along the terminal's right edge that opens the file drawer.
  *
- * It occupies a column of its own beside the terminal rather than a band over
- * it: the terminal's surface is composited above this window, so a handle
- * inside its bounds would be behind it, and a strip overlapping it would take
- * every touch that began in its width from the terminal's own gestures.
- *
- * An edge gesture nobody has been told about cannot be found by trying it, so
- * the strip carries a visible handle whether or not the drawer is open.
+ * It overlays the terminal rather than drawing anything: the terminal's
+ * surface is composited above this window, so nothing drawn here would be
+ * visible over it. Declared after the terminal in its parent, the strip
+ * claims a drag that starts within its width before the surface underneath
+ * ever sees it.
  */
 @Composable
 fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
@@ -85,17 +73,5 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                     travel.floatValue = 0f
                 },
             ),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(HandleWidth)
-                .fillMaxHeight()
-                .padding(vertical = HandleMargin)
-                .background(
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = HandleAlpha),
-                    shape = RoundedCornerShape(HandleWidth / 2),
-                ),
-        )
-    }
+    )
 }
