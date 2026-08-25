@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,10 +35,10 @@ import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
+import apk.harness.ui.FileDrawer
 import apk.harness.ui.FileTree
 import apk.harness.ui.HarnessTheme
 import apk.harness.ui.InputToolbar
-import apk.harness.ui.ProjectHeader
 import apk.harness.ui.SurfacePanel
 import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
@@ -209,18 +210,16 @@ private fun HarnessScreen(
     var altActive by remember { mutableStateOf(false) }
     val surface by surfaces.visible.collectAsState()
 
-    var treeOpen by remember { mutableStateOf(false) }
+    var drawerOpen by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
         // The terminal stays mounted underneath: a panel is a look at something,
         // not a change of screen, and the agent keeps running behind it.
-        Column(modifier = Modifier.fillMaxSize().imePadding()) {
-            ProjectHeader(
-                project = root.name,
-                onOpenTree = { treeOpen = true },
-            )
+        // The status bar inset lives here, so the terminal's first line is never
+        // under the bar when the bar is showing.
+        Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
             AndroidView(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 factory = { context ->
@@ -298,15 +297,12 @@ private fun HarnessScreen(
             }
         }
 
-        // Its own dialog rather than a Surface. Surfaces holds one surface and
-        // abandons the last, and abandoning a diff rejects it -- so routing the
-        // tree through it would answer for the agent every time the operator
+        // A drawer of its own rather than a Surface. Surfaces holds one surface
+        // and abandons the last, and abandoning a diff rejects it -- so routing
+        // the tree through it would answer for the agent every time the operator
         // opened a file.
-        if (treeOpen) {
-            Dialog(
-                onDismissRequest = { treeOpen = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
+        if (drawerOpen) {
+            FileDrawer(onClosed = { drawerOpen = false }) { close ->
                 FileTree(
                     root = root,
                     expanded = expanded,
@@ -323,7 +319,7 @@ private fun HarnessScreen(
                             surfaces.show(Surface.FileView(file.path, document))
                         }
                     },
-                    onDismiss = { treeOpen = false },
+                    onDismiss = close,
                 )
             }
         }
