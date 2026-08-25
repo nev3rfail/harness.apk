@@ -3,4 +3,9 @@
 /build/
 /app/build/
 .gradle/
+.kotlin/
 local.properties
+
+# Signing material must never reach a repo that becomes public.
+*.keystore
+*.jks
