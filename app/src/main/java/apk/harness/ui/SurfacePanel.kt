@@ -100,7 +100,7 @@ private fun Surface.subtitle(): String? = when (this) {
 }
 
 @Composable
-private fun Header(title: String, subtitle: String?, onDismiss: () -> Unit) {
+internal fun Header(title: String, subtitle: String?, onDismiss: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

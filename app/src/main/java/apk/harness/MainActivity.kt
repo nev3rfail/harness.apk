@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -33,14 +34,19 @@ import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
+import apk.harness.ui.FileTree
 import apk.harness.ui.HarnessTheme
 import apk.harness.ui.InputToolbar
+import apk.harness.ui.ProjectHeader
 import apk.harness.ui.SurfacePanel
 import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
 import com.ghostty.android.renderer.TerminalEventListener
 import com.ghostty.android.terminal.TerminalSession
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The harness.
@@ -104,6 +110,7 @@ class MainActivity : ComponentActivity() {
                 HarnessScreen(
                     session = session,
                     surfaces = surfaces,
+                    root = home,
                     onSurfaceViewCreated = { surfaceView = it },
                     openLink = { openExternally(it) },
                     copyText = { text -> runOnUiThread { copyToClipboard(text) } },
@@ -179,6 +186,7 @@ class MainActivity : ComponentActivity() {
 private fun HarnessScreen(
     session: TerminalSession,
     surfaces: Surfaces,
+    root: File,
     onSurfaceViewCreated: (GhosttyGLSurfaceView) -> Unit,
     openLink: (String) -> Unit,
     copyText: (String) -> Unit,
@@ -201,10 +209,18 @@ private fun HarnessScreen(
     var altActive by remember { mutableStateOf(false) }
     val surface by surfaces.visible.collectAsState()
 
+    var treeOpen by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(emptySet<String>()) }
+    val scope = rememberCoroutineScope()
+
     Box(modifier = Modifier.fillMaxSize()) {
         // The terminal stays mounted underneath: a panel is a look at something,
         // not a change of screen, and the agent keeps running behind it.
         Column(modifier = Modifier.fillMaxSize().imePadding()) {
+            ProjectHeader(
+                project = root.name,
+                onOpenTree = { treeOpen = true },
+            )
             AndroidView(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 factory = { context ->
@@ -278,6 +294,36 @@ private fun HarnessScreen(
                     surface = shown,
                     onDecide = { diff, decision -> surfaces.decide(diff, decision) },
                     onDismiss = surfaces::dismiss,
+                )
+            }
+        }
+
+        // Its own dialog rather than a Surface. Surfaces holds one surface and
+        // abandons the last, and abandoning a diff rejects it -- so routing the
+        // tree through it would answer for the agent every time the operator
+        // opened a file.
+        if (treeOpen) {
+            Dialog(
+                onDismissRequest = { treeOpen = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                FileTree(
+                    root = root,
+                    expanded = expanded,
+                    onToggle = { file ->
+                        expanded =
+                            if (file.path in expanded) expanded - file.path
+                            else expanded + file.path
+                    },
+                    // A click handler runs on the main thread, and this reads up
+                    // to a mebibyte. The panel opens when the document is built.
+                    onPick = { file ->
+                        scope.launch {
+                            val document = withContext(Dispatchers.IO) { documentFor(file) }
+                            surfaces.show(Surface.FileView(file.path, document))
+                        }
+                    },
+                    onDismiss = { treeOpen = false },
                 )
             }
         }
