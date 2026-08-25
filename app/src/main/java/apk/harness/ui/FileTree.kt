@@ -4,11 +4,14 @@ import android.system.Os
 import android.system.OsConstants
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
@@ -18,8 +21,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
@@ -85,29 +93,91 @@ fun FileTree(
     }
 }
 
+// One level of indentation. The smallest step that still keeps two adjacent
+// guide lines apart, so a row's own guide reads as belonging to its icon
+// rather than to the level beside it.
+private val IndentStep = 12.dp
+
+// The horizontal run from a row's guide to its icon, and the hair of space
+// after it, so the guide and the icon read as one unit.
+private val GuideStub = 5.dp
+private val GuideGap = 2.dp
+private val IconGap = 6.dp
+
+// Structure rather than content: the outline colour, well under full strength.
+private const val GuideAlpha = 0.35f
+
 // Named Entry rather than Row: a composable called Row in this file would shadow
 // the layout Row that anything added here reaches for next.
 @Composable
 private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
-    val marker = when {
-        row.unreadable -> "✕"
-        row.isLink -> "→"
-        row.isDirectory && isOpen -> "▾"
-        row.isDirectory -> "▸"
-        else -> " "
+    val icon = when {
+        row.unreadable -> "🚫"
+        row.isLink -> "🔗"
+        row.isDirectory && isOpen -> "📂"
+        row.isDirectory -> "📁"
+        else -> "📄"
     }
-    val suffix = if (row.unreadable) "  (cannot read)" else ""
+    val guide = MaterialTheme.colorScheme.outline.copy(alpha = GuideAlpha)
 
-    Text(
-        text = "${" ".repeat(row.depth * 2)}$marker ${row.file.name}$suffix",
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        fontFamily = FontFamily.Monospace,
-        fontSize = 13.sp,
-        maxLines = 1,
-        color = if (row.unreadable) MaterialTheme.colorScheme.onSurfaceVariant
-        else MaterialTheme.colorScheme.onSurface,
-    )
+            // Behind the content and before the padding, so the lines are
+            // painted across the indentation the padding creates.
+            .drawBehind {
+                val step = IndentStep.toPx()
+                val middle = size.height / 2f
+                // A level above this row draws a full-height line when its
+                // directory has a sibling still to come, and nothing when it
+                // does not -- that blank space is what ends a subtree.
+                row.ancestorsContinue.forEachIndexed { level, continues ->
+                    if (continues) {
+                        val x = (level + 0.5f) * step
+                        drawLine(
+                            color = guide,
+                            start = Offset(x, 0f),
+                            end = Offset(x, size.height),
+                            strokeWidth = Stroke.HairlineWidth,
+                        )
+                    }
+                }
+                // The row's own level: down to the middle always, on to the
+                // bottom only when a sibling follows. Stopping at the middle
+                // is what draws the elbow under the last child.
+                val own = (row.depth + 0.5f) * step
+                drawLine(
+                    color = guide,
+                    start = Offset(own, 0f),
+                    end = Offset(own, if (row.isLastSibling) middle else size.height),
+                    strokeWidth = Stroke.HairlineWidth,
+                )
+                drawLine(
+                    color = guide,
+                    start = Offset(own, middle),
+                    end = Offset(own + GuideStub.toPx(), middle),
+                    strokeWidth = Stroke.HairlineWidth,
+                )
+            }
+            .padding(
+                start = IndentStep * (row.depth + 0.5f) + GuideStub + GuideGap,
+                end = 12.dp,
+                top = 10.dp,
+                bottom = 10.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = icon, fontSize = 13.sp)
+        Spacer(modifier = Modifier.width(IconGap))
+        Text(
+            text = row.file.name,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (row.unreadable) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.onSurface,
+        )
+    }
 }
