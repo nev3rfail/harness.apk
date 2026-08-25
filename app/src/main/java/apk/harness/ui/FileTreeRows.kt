@@ -77,15 +77,15 @@ fun childRows(
         .sortedWith(
             compareBy({ !it.isDirectory }, { it.file.name.lowercase() }, { it.file.name }),
         )
-    return ordered.mapIndexed { index, entry ->
+    return ordered.mapIndexed { index, child ->
         TreeRow(
-            file = entry.file,
+            file = child.file,
             depth = ancestorsContinue.size,
-            isDirectory = entry.isDirectory,
-            isLink = entry.link != null,
-            linkTarget = entry.link?.target,
-            unreadable = entry.isDirectory && entry.link == null &&
-                entry.file.listFiles() == null,
+            isDirectory = child.isDirectory,
+            isLink = child.link != null,
+            linkTarget = child.link?.target,
+            unreadable = child.isDirectory && child.link == null &&
+                child.file.listFiles() == null,
             ancestorsContinue = ancestorsContinue,
             isLastSibling = index == ordered.lastIndex,
         )
