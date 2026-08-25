@@ -46,9 +46,9 @@ fun InputToolbar(
             Key("⇧TAB", Modifier.weight(1f)) { onKey(CSI + "Z") }
             Key("CTRL", Modifier.weight(1f), active = ctrlActive, onClick = onToggleCtrl)
             Key("ALT", Modifier.weight(1f), active = altActive, onClick = onToggleAlt)
+            Key("←", Modifier.weight(1f)) { onKey(CURSOR_LEFT) }
             Key("↑", Modifier.weight(1f)) { onKey(CSI + "A") }
             Key("↓", Modifier.weight(1f)) { onKey(CSI + "B") }
-            Key("←", Modifier.weight(1f)) { onKey(CURSOR_LEFT) }
             Key("📋", Modifier.weight(1f), onClick = onPaste)
             Key("⌨", Modifier.weight(1f), onClick = onShowKeyboard)
         }
