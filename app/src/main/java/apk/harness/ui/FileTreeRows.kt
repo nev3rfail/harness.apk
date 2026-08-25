@@ -28,7 +28,7 @@ data class TreeRow(
 fun childRows(directory: File, depth: Int, isLink: (File) -> Boolean): List<TreeRow> {
     val entries = directory.listFiles() ?: return emptyList()
     return entries
-        .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+        .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }, { it.name }))
         .map { entry ->
             val link = isLink(entry)
             TreeRow(

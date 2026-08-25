@@ -39,6 +39,36 @@ class FileTreeRowsTest {
     }
 
     @Test
+    fun `names differing only in case break the tie on the exact name`() {
+        folder.newFile("Readme.md")
+        folder.newFile("README.md")
+
+        val rows = childRows(folder.root, 0, noLinks)
+
+        assertEquals(listOf("README.md", "Readme.md"), rows.map { it.file.name })
+    }
+
+    @Test
+    fun `an empty directory yields no rows`() {
+        val empty = folder.newFolder("empty")
+
+        val rows = childRows(empty, 0, noLinks)
+
+        assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun `a link to a file is marked as a link, not a directory`() {
+        folder.newFile("target.txt")
+        val isLink: (File) -> Boolean = { it.name == "target.txt" }
+
+        val rows = childRows(folder.root, 0, isLink)
+
+        assertTrue(rows[0].isLink)
+        assertFalse(rows[0].isDirectory)
+    }
+
+    @Test
     fun `dotfiles are listed`() {
         folder.newFile(".gitignore")
 
