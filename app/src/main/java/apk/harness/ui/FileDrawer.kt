@@ -1,8 +1,9 @@
 package apk.harness.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -43,10 +44,10 @@ private const val ScrimAlpha = 0.35f
  * the terminal. A dialog gets a window of its own.
  *
  * The dialog outlives the request to close it by the length of the animation,
- * so the drawer is seen leaving. [onClosed] fires when the slide has finished
- * and the caller can drop this from the composition; the [content] receives the
- * same close, so the scrim, the back action and the content's own way out all
- * play it.
+ * so the drawer is seen leaving. [onClosed] fires when the panel and the scrim
+ * have both finished and the caller can drop this from the composition; the
+ * [content] receives the same close, so the scrim, the back action and the
+ * content's own way out all play it.
  */
 @Composable
 fun FileDrawer(
@@ -60,14 +61,17 @@ fun FileDrawer(
     val slide = remember { MutableTransitionState(false) }
     slide.targetState = !closing
 
-    // The scrim fades on the panel's own tween, from an explicit zero: an
-    // overlay that arrives at full strength reads as the drawer appearing,
-    // whatever the panel beside it is doing.
-    val scrim = remember { Animatable(0f) }
-    LaunchedEffect(slide.targetState) {
-        scrim.animateTo(if (slide.targetState) ScrimAlpha else 0f, tween(SlideMillis))
-    }
+    // One transition drives the panel and the scrim, so the two begin on the
+    // same frame and land on the same one. The scrim fades from an explicit
+    // zero: an overlay that arrives at full strength reads as the drawer
+    // appearing, whatever the panel beside it is doing.
+    val transition = rememberTransition(slide)
+    val scrimAlpha by transition.animateFloat(
+        transitionSpec = { tween(SlideMillis) },
+    ) { open -> if (open) ScrimAlpha else 0f }
 
+    // Idle is the transition's, so it covers the scrim's fade as well as the
+    // panel's slide: the dialog stays until both have finished.
     LaunchedEffect(closing, slide.currentState, slide.isIdle) {
         if (closing && slide.isIdle && !slide.currentState) onClosed()
     }
@@ -94,15 +98,15 @@ fun FileDrawer(
                     // The alpha is read in the draw lambda rather than in a
                     // background colour, so a frame of the fade redraws the
                     // scrim rather than recomposing the drawer.
-                    .drawBehind { drawRect(Color.Black, alpha = scrim.value) }
+                    .drawBehind { drawRect(Color.Black, alpha = scrimAlpha) }
                     .clickable(
                         // No ripple: the scrim is a way out, not a control.
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) { closing = true },
             )
-            AnimatedVisibility(
-                visibleState = slide,
+            transition.AnimatedVisibility(
+                visible = { open -> open },
                 modifier = Modifier.align(Alignment.CenterEnd),
                 enter = slideInHorizontally(animationSpec = tween(SlideMillis)) { width -> width },
                 exit = slideOutHorizontally(animationSpec = tween(SlideMillis)) { width -> width },
