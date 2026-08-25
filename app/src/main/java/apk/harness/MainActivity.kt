@@ -98,7 +98,7 @@ class MainActivity : ComponentActivity() {
                     surfaces = surfaces,
                     onSurfaceViewCreated = { surfaceView = it },
                     openLink = { openExternally(it) },
-                    copyText = ::copyToClipboard,
+                    copyText = { text -> runOnUiThread { copyToClipboard(text) } },
                     pasteText = ::clipboardAsInput,
                 )
             }
@@ -219,6 +219,11 @@ private fun HarnessScreen(
                                     onOutput = { bytes, length ->
                                         capture?.run { write(bytes, 0, length); flush() }
                                         created.getRenderer().processInput(bytes, length)
+                                        // The agent asks for the clipboard with
+                                        // OSC 52, which arrives in its output
+                                        // rather than through a tool.
+                                        created.getRenderer().takeClipboardWrite()
+                                            ?.let(copyText)
                                     },
                                 )
                             }
