@@ -1,11 +1,11 @@
 package apk.harness.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -28,8 +29,9 @@ import androidx.compose.ui.window.DialogProperties
 // remainder to be an obvious way out.
 private const val DrawerWidthFraction = 0.86f
 
-// Long enough to be seen as a slide, short enough not to be waited on.
-private const val SlideMillis = 220
+// Long enough that the slide is sampled at several positions even when the
+// terminal is holding the frame rate down, short enough not to be waited on.
+private const val SlideMillis = 400
 
 private const val ScrimAlpha = 0.35f
 
@@ -58,6 +60,14 @@ fun FileDrawer(
     val slide = remember { MutableTransitionState(false) }
     slide.targetState = !closing
 
+    // The scrim fades on the panel's own tween, from an explicit zero: an
+    // overlay that arrives at full strength reads as the drawer appearing,
+    // whatever the panel beside it is doing.
+    val scrim = remember { Animatable(0f) }
+    LaunchedEffect(slide.targetState) {
+        scrim.animateTo(if (slide.targetState) ScrimAlpha else 0f, tween(SlideMillis))
+    }
+
     LaunchedEffect(closing, slide.currentState, slide.isIdle) {
         if (closing && slide.isIdle && !slide.currentState) onClosed()
     }
@@ -73,7 +83,10 @@ fun FileDrawer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = ScrimAlpha))
+                    // The alpha is read in the draw lambda rather than in a
+                    // background colour, so a frame of the fade redraws the
+                    // scrim rather than recomposing the drawer.
+                    .drawBehind { drawRect(Color.Black, alpha = scrim.value) }
                     .clickable(
                         // No ripple: the scrim is a way out, not a control.
                         interactionSource = remember { MutableInteractionSource() },
