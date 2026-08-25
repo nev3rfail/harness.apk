@@ -28,7 +28,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import apk.harness.ide.DiffDecision
 import apk.harness.ide.APP_NAME
 import apk.harness.ide.IdeServer
 import apk.harness.ide.McpEndpoint
