@@ -35,14 +35,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Whether a path is a symbolic link.
+ * What a symbolic link points at, as the link writes it, or null when the path
+ * is not a link.
  *
  * `Os.lstat` rather than `Files.isSymbolicLink`, which needs API 26 against a
  * `minSdk` of 24 with no desugaring, and rather than comparing canonical to
- * absolute paths, which calls every path under a linked ancestor a link.
+ * absolute paths, which calls every path under a linked ancestor a link. The
+ * `readlink` runs only once the `lstat` has said there is a link to read, so a
+ * directory of ordinary files costs one call an entry as before.
  */
-fun isSymbolicLink(file: File): Boolean =
-    runCatching { OsConstants.S_ISLNK(Os.lstat(file.path).st_mode) }.getOrDefault(false)
+fun symbolicLinkTarget(file: File): String? = runCatching {
+    if (OsConstants.S_ISLNK(Os.lstat(file.path).st_mode)) Os.readlink(file.path) else null
+}.getOrNull()
 
 /**
  * The project's files, as rows that open and close.
@@ -61,7 +65,7 @@ fun FileTree(
     // Off the composition thread: a directory in the Gradle cache has thousands
     // of children, and this runs again on every change to the open set.
     val rows by produceState(initialValue = emptyList<TreeRow>(), root, expanded) {
-        value = withContext(Dispatchers.IO) { visibleRows(root, expanded, ::isSymbolicLink) }
+        value = withContext(Dispatchers.IO) { visibleRows(root, expanded, ::symbolicLinkTarget) }
     }
 
     MaterialSurface(
@@ -109,6 +113,10 @@ private val IconGap = 6.dp
 
 // Structure rather than content: the outline colour, well under full strength.
 private const val GuideAlpha = 0.35f
+
+// A note beside the name rather than a second name: smaller than the row's own
+// text, in the colour the tree already uses for what it will not open.
+private val TargetFontSize = 11.sp
 
 // Named Entry rather than Row: a composable called Row in this file would shadow
 // the layout Row that anything added here reaches for next.
@@ -182,5 +190,20 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
             color = if (row.unreadable) MaterialTheme.colorScheme.onSurfaceVariant
             else MaterialTheme.colorScheme.onSurface,
         )
+        // Where the link points, after the name it points from. Dimmed and
+        // smaller, and given only what the name leaves: the row is the file's,
+        // and the target is a note about it.
+        row.linkTarget?.let { target ->
+            Spacer(modifier = Modifier.width(IconGap))
+            Text(
+                text = "→ $target",
+                modifier = Modifier.weight(1f, fill = false),
+                fontFamily = FontFamily.Monospace,
+                fontSize = TargetFontSize,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

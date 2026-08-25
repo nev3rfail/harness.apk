@@ -1,8 +1,10 @@
 package apk.harness.ui
 
 import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -13,7 +15,7 @@ class FileTreeRowsTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private val noLinks: (File) -> Boolean = { false }
+    private val noLinks: (File) -> String? = { null }
 
     @Test
     fun `directories come before files`() {
@@ -60,9 +62,9 @@ class FileTreeRowsTest {
     @Test
     fun `a link to a file is marked as a link, not a directory`() {
         folder.newFile("target.txt")
-        val isLink: (File) -> Boolean = { it.name == "target.txt" }
+        val links: (File) -> String? = { file -> "elsewhere.txt".takeIf { file.name == "target.txt" } }
 
-        val rows = childRows(folder.root, emptyList(), isLink)
+        val rows = childRows(folder.root, emptyList(), links)
 
         assertTrue(rows[0].isLink)
         assertFalse(rows[0].isDirectory)
@@ -117,9 +119,9 @@ class FileTreeRowsTest {
     fun `a link to a directory is never expanded`() {
         val target = folder.newFolder("target")
         File(target, "inside.txt").writeText("x")
-        val isLink: (File) -> Boolean = { it.name == "target" }
+        val links: (File) -> String? = { file -> "elsewhere".takeIf { file.name == "target" } }
 
-        val rows = visibleRows(folder.root, setOf(target.path), isLink)
+        val rows = visibleRows(folder.root, setOf(target.path), links)
 
         assertEquals(listOf("target"), rows.map { it.file.name })
         assertTrue(rows[0].isLink)
@@ -198,6 +200,56 @@ class FileTreeRowsTest {
         assertEquals(listOf(false), rows[1].ancestorsContinue)
         assertEquals(listOf(false, false), rows[2].ancestorsContinue)
         assertEquals(listOf(0, 1, 2), rows.map { it.depth })
+    }
+
+    @Test
+    fun `a relative target is read against the link's own directory`() {
+        val sub = folder.newFolder("sub")
+        File(sub, "link").writeText("x")
+        val links: (File) -> String? = { file -> "sibling.txt".takeIf { file.name == "link" } }
+
+        val row = childRows(sub, emptyList(), links).single()
+
+        assertEquals(sub.path + "/sibling.txt", row.linkTarget)
+    }
+
+    @Test
+    fun `an absolute target is left as it is written`() {
+        folder.newFile("link")
+        val links: (File) -> String? = { file -> "/etc/hosts".takeIf { file.name == "link" } }
+
+        val row = childRows(folder.root, emptyList(), links).single()
+
+        assertEquals("/etc/hosts", row.linkTarget)
+    }
+
+    @Test
+    fun `a row that is not a link has no target`() {
+        folder.newFile("plain.txt")
+
+        assertNull(childRows(folder.root, emptyList(), noLinks).single().linkTarget)
+    }
+
+    @Test
+    fun `a link to its own ancestor is named rather than descended into`() {
+        val outer = folder.newFolder("outer")
+        val inner = File(outer, "inner").also { it.mkdir() }
+        Files.createSymbolicLink(File(inner, "up").toPath(), File("..").toPath())
+        val links: (File) -> String? = { file ->
+            runCatching { Files.readSymbolicLink(file.toPath()).toString() }.getOrNull()
+        }
+
+        val rows = visibleRows(
+            folder.root,
+            setOf(outer.path, inner.path, File(inner, "up").path),
+            links,
+        )
+
+        // The link is a row and an end: descending would list `inner` again
+        // through it, and the walk would climb the same two names forever.
+        assertEquals(listOf("outer", "inner", "up"), rows.map { it.file.name })
+        assertTrue(rows[2].isLink)
+        assertEquals(inner.path + "/..", rows[2].linkTarget)
     }
 
     @Test
