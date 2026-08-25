@@ -30,9 +30,9 @@ import androidx.compose.ui.window.DialogProperties
 // remainder to be an obvious way out.
 private const val DrawerWidthFraction = 0.86f
 
-// Long enough that the slide is sampled at several positions even when the
-// terminal is holding the frame rate down, short enough not to be waited on.
-private const val SlideMillis = 400
+// Long enough that the slide reads as a movement with a direction, short
+// enough that opening the drawer is not something to wait through.
+private const val SlideMillis = 300
 
 private const val ScrimAlpha = 0.35f
 
