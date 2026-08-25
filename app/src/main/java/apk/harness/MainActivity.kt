@@ -12,7 +12,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
@@ -35,6 +38,7 @@ import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
+import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.FileDrawer
 import apk.harness.ui.FileTree
 import apk.harness.ui.HarnessTheme
@@ -220,50 +224,53 @@ private fun HarnessScreen(
         // The status bar inset lives here, so the terminal's first line is never
         // under the bar when the bar is showing.
         Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize().weight(1f),
-                factory = { context ->
-                    GhosttyGLSurfaceView(context).also { created ->
-                        view = created
-                        onSurfaceViewCreated(created)
-                        created.onModifiersConsumed = {
-                            ctrlActive = false
-                            altActive = false
-                        }
-                        created.setEventListener(object : TerminalEventListener {
-                            override fun onSurfaceReady(cols: Int, rows: Int) {
-                                if (session.isRunning.value) {
-                                    session.resize(cols, rows)
-                                    return
-                                }
-                                session.start(
-                                    cols = cols,
-                                    rows = rows,
-                                    onOutput = { bytes, length ->
-                                        capture?.run { write(bytes, 0, length); flush() }
-                                        created.getRenderer().processInput(bytes, length)
-                                        // The agent asks for the clipboard with
-                                        // OSC 52, which arrives in its output
-                                        // rather than through a tool.
-                                        created.getRenderer().takeClipboardWrite()
-                                            ?.let(copyText)
-                                    },
-                                )
+            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                AndroidView(
+                    modifier = Modifier.fillMaxHeight().weight(1f),
+                    factory = { context ->
+                        GhosttyGLSurfaceView(context).also { created ->
+                            view = created
+                            onSurfaceViewCreated(created)
+                            created.onModifiersConsumed = {
+                                ctrlActive = false
+                                altActive = false
                             }
+                            created.setEventListener(object : TerminalEventListener {
+                                override fun onSurfaceReady(cols: Int, rows: Int) {
+                                    if (session.isRunning.value) {
+                                        session.resize(cols, rows)
+                                        return
+                                    }
+                                    session.start(
+                                        cols = cols,
+                                        rows = rows,
+                                        onOutput = { bytes, length ->
+                                            capture?.run { write(bytes, 0, length); flush() }
+                                            created.getRenderer().processInput(bytes, length)
+                                            // The agent asks for the clipboard with
+                                            // OSC 52, which arrives in its output
+                                            // rather than through a tool.
+                                            created.getRenderer().takeClipboardWrite()
+                                                ?.let(copyText)
+                                        },
+                                    )
+                                }
 
-                            override fun onInput(bytes: ByteArray) = session.write(bytes)
+                                override fun onInput(bytes: ByteArray) = session.write(bytes)
 
-                            override fun onKeyboardOverlayProgress(offset: Float, maxOffset: Float) {}
+                                override fun onKeyboardOverlayProgress(offset: Float, maxOffset: Float) {}
 
-                            override fun onKeyboardOverlayStateChanged(expanded: Boolean) {}
+                                override fun onKeyboardOverlayStateChanged(expanded: Boolean) {}
 
-                            override fun onHyperlinkClicked(uri: String) = openLink(uri)
+                                override fun onHyperlinkClicked(uri: String) = openLink(uri)
 
-                            override fun onTextSelected(text: String) = copyText(text)
-                        })
-                    }
-                },
-            )
+                                override fun onTextSelected(text: String) = copyText(text)
+                            })
+                        }
+                    },
+                )
+                DrawerEdgeStrip(onOpen = { drawerOpen = true })
+            }
             InputToolbar(
                 onKey = { session.write(it) },
                 onPaste = { pasteText().takeIf { text -> text.isNotEmpty() }?.let(session::write) },
