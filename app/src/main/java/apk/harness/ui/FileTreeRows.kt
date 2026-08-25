@@ -21,11 +21,11 @@ data class SymbolicLink(val target: String?)
  * because the rootfs home is a link back to it.
  *
  * [isLink] is the answer to whether the row is a link, and the only thing the
- * walk consults. [linkTarget] is what that link points at, written out against
- * the link's own directory when the link gives it relatively; it is null for a
- * row that is not a link and equally for a link whose target could not be read,
- * so it says nothing about [isLink]. It names the target; it is not a step
- * toward it.
+ * walk consults. [linkTarget] is what that link points at, exactly as the link
+ * writes it; it is null for a row that is not a link and equally for a link
+ * whose target could not be read, so it says nothing about [isLink]. It names
+ * the target; it is not a step toward it, and nothing resolves, normalises or
+ * stats it.
  *
  * [ancestorsContinue] and [isLastSibling] are the row's place in the hierarchy:
  * one entry per level above the row, outermost first, saying whether that
@@ -83,7 +83,7 @@ fun childRows(
             depth = ancestorsContinue.size,
             isDirectory = entry.isDirectory,
             isLink = entry.link != null,
-            linkTarget = entry.link?.target?.let { written -> targetPath(entry.file, written) },
+            linkTarget = entry.link?.target,
             unreadable = entry.isDirectory && entry.link == null &&
                 entry.file.listFiles() == null,
             ancestorsContinue = ancestorsContinue,
@@ -97,18 +97,6 @@ fun childRows(
  * once and held: whether it is a directory, and its link if it is one.
  */
 private class Child(val file: File, val isDirectory: Boolean, val link: SymbolicLink?)
-
-/**
- * A link's target as the link writes it, made absolute against the directory
- * the link is in when it is written relatively.
- *
- * String work over the two paths, and nothing more: `canonicalFile` would walk
- * to the far end of the link, and not walking it is the whole point of marking
- * a link. A target naming an ancestor stays written as it was reached, `..` and
- * all, because tidying it up is another walk.
- */
-private fun targetPath(link: File, written: String): String =
-    if (written.startsWith("/")) written else File(link.parentFile, written).path
 
 /**
  * The rows on screen for a root and the set of directories the operator has

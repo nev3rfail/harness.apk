@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -221,7 +222,7 @@ class FileTreeRowsTest {
     }
 
     @Test
-    fun `a relative target is read against the link's own directory`() {
+    fun `a relative target is carried as the link writes it`() {
         val sub = folder.newFolder("sub")
         File(sub, "link").writeText("x")
         val links: (File) -> SymbolicLink? =
@@ -229,7 +230,7 @@ class FileTreeRowsTest {
 
         val row = childRows(sub, emptyList(), links).single()
 
-        assertEquals(sub.path + "/sibling.txt", row.linkTarget)
+        assertEquals("sibling.txt", row.linkTarget)
     }
 
     @Test
@@ -251,15 +252,17 @@ class FileTreeRowsTest {
         val links: (File) -> SymbolicLink? =
             { file -> if (file.name == "link") SymbolicLink(dangling) else null }
 
-        val row = childRows(folder.root, emptyList(), links).single()
+        val rows = childRows(folder.root, emptyList(), links)
 
         // The target is a name the link writes, not a path the tree resolves:
         // nothing stats it, nothing walks it, nothing normalises it. A row
         // whose target had been checked for existence would be dropped or hold
         // null here, and one built with canonicalFile would have eaten the
         // parent segment.
-        assertTrue(row.isLink)
-        assertEquals(dangling, row.linkTarget)
+        assertEquals(1, rows.size)
+        assertTrue(rows[0].isLink)
+        assertNotNull(rows[0].linkTarget)
+        assertEquals(dangling, rows[0].linkTarget)
     }
 
     @Test
@@ -289,7 +292,7 @@ class FileTreeRowsTest {
         // through it, and the walk would climb the same two names forever.
         assertEquals(listOf("outer", "inner", "up"), rows.map { it.file.name })
         assertTrue(rows[2].isLink)
-        assertEquals(inner.path + "/..", rows[2].linkTarget)
+        assertEquals("..", rows[2].linkTarget)
     }
 
     @Test

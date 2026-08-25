@@ -208,14 +208,14 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
         // smaller, and given only what the name leaves: the row is the file's,
         // and the target is a note about it.
         //
-        // The target's last segment rather than the path it sits on. A row this
-        // narrow cannot hold a path, and an ellipsis trims the tail, which is
-        // the segment that says anything -- the leading directories are shared
-        // by every target here.
+        // The target as the link writes it: a relative target reads as the step
+        // it is, and an absolute one reads as the path it names. Both are the
+        // string `readlink` returned, which is the only form the operator can
+        // check against the link itself.
         row.linkTarget?.let { target ->
             Spacer(modifier = Modifier.width(IconGap))
             Text(
-                text = "→ " + File(target).name.ifEmpty { target },
+                text = "→ " + target,
                 modifier = Modifier.weight(1f, fill = false),
                 fontFamily = FontFamily.Monospace,
                 fontSize = TargetFontSize,
