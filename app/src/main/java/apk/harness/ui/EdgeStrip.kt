@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInRoot
@@ -41,6 +42,9 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
     // Read only inside the drag callbacks, so accumulating it recomposes
     // nothing.
     val travel = remember { mutableFloatStateOf(0f) }
+    // The rectangle the system has already been told about. Read only inside
+    // the layout callback, so holding it recomposes nothing.
+    val posted = remember { mutableStateOf<Rect?>(null) }
 
     Box(
         modifier = modifier
@@ -53,14 +57,19 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 // leaves both edges to the app already.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val bounds = coordinates.boundsInRoot()
-                    view.systemGestureExclusionRects = listOf(
-                        Rect(
-                            bounds.left.toInt(),
-                            bounds.top.toInt(),
-                            bounds.right.toInt(),
-                            bounds.bottom.toInt(),
-                        ),
+                    val rect = Rect(
+                        bounds.left.toInt(),
+                        bounds.top.toInt(),
+                        bounds.right.toInt(),
+                        bounds.bottom.toInt(),
                     )
+                    // Layout runs on every frame of the keyboard's
+                    // animation and the rectangle is the same one throughout,
+                    // so it goes to the system only once it has moved.
+                    if (rect != posted.value) {
+                        posted.value = rect
+                        view.systemGestureExclusionRects = listOf(rect)
+                    }
                 }
             }
             .draggable(
