@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInRoot
@@ -42,9 +41,6 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
     // Read only inside the drag callbacks, so accumulating it recomposes
     // nothing.
     val travel = remember { mutableFloatStateOf(0f) }
-    // The rectangle the system has already been told about. Read only inside
-    // the layout callback, so holding it recomposes nothing.
-    val posted = remember { mutableStateOf<Rect?>(null) }
 
     Box(
         modifier = modifier
@@ -65,9 +61,11 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                     )
                     // Layout runs on every frame of the keyboard's
                     // animation and the rectangle is the same one throughout,
-                    // so it goes to the system only once it has moved.
-                    if (rect != posted.value) {
-                        posted.value = rect
+                    // so it goes to the system only once it has moved. The
+                    // comparison is against what the view holds rather than a
+                    // copy kept here, so a registration the framework lets go
+                    // of is posted again.
+                    if (rect != view.systemGestureExclusionRects.firstOrNull()) {
                         view.systemGestureExclusionRects = listOf(rect)
                     }
                 }
