@@ -82,9 +82,7 @@ fun FileTree(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.surface,
     ) {
-        // The one place the status bar inset is applied: the drawer's window
-        // reaches the bars so its scrim can cover them, which leaves the tree
-        // to keep its own first row clear of the bar.
+        // The tree keeps its own first row clear of the status bar.
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
             Header(title = root.name, subtitle = root.path, onDismiss = onDismiss)
             HorizontalDivider()
