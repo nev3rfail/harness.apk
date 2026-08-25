@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
@@ -116,7 +118,23 @@ fun FileDrawer(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(DrawerWidthFraction)
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
+                        // The panel stays composed and hit-testable for the
+                        // whole of its exit. A row tapped in that window still
+                        // opens a file, and opening one abandons the surface
+                        // before it -- which answers a diff the agent is
+                        // waiting on as rejected. From the moment the drawer is
+                        // asked to leave, its taps stop here, on the initial
+                        // pass, before any row sees them.
+                        .pointerInput(closing) {
+                            if (!closing) return@pointerInput
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent(PointerEventPass.Initial)
+                                        .changes.forEach { change -> change.consume() }
+                                }
+                            }
+                        },
                 ) {
                     content { closing = true }
                 }
