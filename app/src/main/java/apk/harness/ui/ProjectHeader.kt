@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -16,16 +17,17 @@ import androidx.compose.ui.unit.dp
 /**
  * The row above the terminal: which project is open, and the way into its files.
  *
- * A row rather than an edge pull, because both screen edges belong to the system
- * back gesture, and rather than another key, because the input row is full at
- * nine. It is also the only place the current workspace is named at all.
+ * The row clears the system status bar, which is drawn over the content area
+ * when it is visible. It names the current workspace, which nothing else on
+ * the screen does.
  */
 @Composable
 fun ProjectHeader(project: String, onOpenTree: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = 44.dp, bottom = 8.dp),
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
