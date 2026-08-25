@@ -25,7 +25,7 @@ fun ProjectHeader(project: String, onOpenTree: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 44.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
