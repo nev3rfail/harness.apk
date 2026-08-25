@@ -36,6 +36,7 @@ import apk.harness.ide.Tools
 import apk.harness.ui.HarnessTheme
 import apk.harness.ui.InputToolbar
 import apk.harness.ui.SurfacePanel
+import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
 import com.ghostty.android.renderer.TerminalEventListener
 import com.ghostty.android.terminal.TerminalSession
@@ -68,7 +69,9 @@ class MainActivity : ComponentActivity() {
         val tools = Tools(
             surfaces = surfaces,
             openExternal = ::openExternally,
-            readFile = { path -> File(path).readText() },
+            // The one reader, so openFile shows what a tree row shows: fenced,
+            // and refused before the read when it should not be drawn at all.
+            readFile = { path -> documentFor(File(path)) },
         )
 
         // The agent finds an editor by reading lockfiles out of its own config

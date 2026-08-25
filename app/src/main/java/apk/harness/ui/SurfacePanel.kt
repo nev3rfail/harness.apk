@@ -68,7 +68,7 @@ fun SurfacePanel(
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
                 when (surface) {
                     is Surface.Diff -> DiffBody(surface)
-                    is Surface.FileView -> Monospace(surface.text)
+                    is Surface.FileView -> Prose(surface.text)
                     is Surface.Markdown -> Prose(surface.text)
                     is Surface.Place -> Map(surface)
                 }
