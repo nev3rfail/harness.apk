@@ -80,11 +80,13 @@ fun FileDrawer(
         onDismissRequest = { closing = true },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            // The window reaches the system bars, so the drawer is full height
-            // and the scrim covers them: a tap beside the status bar is a way
-            // out like any other. Clearing the bar is then the content's own
-            // job, and FileTree does it -- insetting the window as well would
-            // leave the drawer a status bar short at the top.
+            // The drawer is meant to run the display's full height with its
+            // scrim over the system bars, so a tap beside the status bar is a
+            // way out like any other. Keeping the first row clear of the bar is
+            // then the content's own job and FileTree does it; insetting here
+            // as well would leave the drawer a status bar short at the top.
+            // Whether the dialog's window is itself inset is the platform's
+            // answer on the running device rather than this flag's.
             decorFitsSystemWindows = false,
         ),
     ) {
