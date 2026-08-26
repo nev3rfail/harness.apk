@@ -56,10 +56,24 @@ Primary use is trip planning. Building code is the occasional case, not the desi
 
 ## Running the agent
 
-`scripts/stage-claude.sh` produces what the device needs: it builds the musl loader from
-source, downloads the matching Claude Code build, checks it against Anthropic's manifest,
-and sets the binary's ELF interpreter to where the loader will live on the device. Staged
-files go in the app's own directory; nothing is shipped in the APK.
+The app installs the agent itself, behind the same screen that installs the userland. The
+version is pinned in `AgentSource.kt`; the checksum and the byte count come from that
+release's manifest at install time, since a release's manifest never changes.
+
+The binary is proprietary and is not redistributed. The musl loader is ours and ships in
+the APK as `libmuslloader.so`, one per ABI, and is copied into the app's own directory
+because that copy has to be written to.
+
+**The loader is run as a program, not named as an interpreter.** A musl binary asks for
+`/lib/ld-musl-<arch>.so.1`, which Android has no `/lib` for. Pointing its `PT_INTERP` at a
+loader in the data directory means writing 55 bytes where the original holds 24, so the
+file grows and the download's checksum stops describing it. musl's dynamic linker also
+runs directly -- `ld-musl-<arch>.so.1 <program> [args]` -- so nothing patches the binary:
+it is stored exactly as it arrived, its checksum keeps describing it, and it needs no
+execute bit, because the loader opens it for reading. Measured both ways, aarch64 on a
+phone and x86_64 on an emulator.
+
+`scripts/stage-claude.sh` still builds the loader, and is the only thing that does.
 
 Three platform facts make the difference between that binary existing and running.
 
@@ -90,8 +104,13 @@ The agent resolves names two ways and both have to be answered. `fetch` -- which
 API call -- goes through libc, and libc opens that path from inside itself, by calls that
 never reach the PLT, so nothing outside the library can redirect them. The loader is
 therefore built with the staged directory compiled in, and the app writes the resolver
-file there. The `dns` module goes through the runtime's own c-ares instead, which is named
-directly by a preload the app writes and points `BUN_OPTIONS` at.
+file there. Every channel's application id is the same eleven characters, so the staged
+copy of the loader is retargeted byte for byte at whichever one is running. The `dns`
+module goes through the runtime's own c-ares instead, which is named directly by a preload
+the app writes and points `BUN_OPTIONS` at.
+
+On x86_64 the tracer redirects `/etc` at the syscall boundary, which covers libc's own
+opens, so that loader carries no compiled-in path and the retarget finds nothing to do.
 
 Both are fed from one list, so they cannot drift apart. This sends the agent's lookups to
 public resolvers, which overrides a VPN or a local resolver for those queries and for
@@ -116,8 +135,10 @@ separately (see below) and consumed with `-PskipNativeBuild`:
 
 ```sh
 ./gradlew :app:installDebug -PskipNativeBuild
-scripts/stage-claude.sh --abi arm64-v8a --prefix /data/data/apk.harness/files/claude
 ```
+
+That is the whole build. The installed app downloads the userland and the agent on its
+first launch, so nothing has to be staged by hand.
 
 Building the loader for another architecture takes a cross compiler -- `aarch64-linux-gnu-gcc`
 for a phone, overridable as `CC`. `zig cc` is not one for this: it is itself a musl
@@ -125,9 +146,26 @@ toolchain, so building musl with it leaves musl's own `memcpy`, `memset` and lib
 the symbol table, and the result fails on the device with nothing but `symbol not found`.
 `verify_loader` gates the build on exactly those symbols.
 
-The prefix is compiled into the loader as well as into the binary's ELF interpreter, since
-that is where libc reads its resolver from, so a loader is only good for the prefix it was
-built for. `--loader` takes one built elsewhere, which runs but resolves no names.
+The prefix is compiled into the loader, since that is where libc reads its resolver from.
+A loader is good for any application id of the same length, which is every channel here,
+because the staged copy is retargeted. `--loader` takes one built elsewhere, which runs
+but resolves no names.
+
+## How the agent is started
+
+Three shell scripts in the app's own directory, staged from the APK's assets when absent
+and left alone when present, so the invocation changes without a build:
+
+- `launcher.sh` assembles the platform and execs `agent.sh`
+- `agent.sh` names the command, its flags, and the Bun preload
+- `shell.sh` is what the agent is handed as `$SHELL`
+
+None of them spells an absolute path. Everything they need arrives as `HARNESS_*` in the
+pty environment, so one copy serves every channel and a diff against the asset shows
+exactly what was changed on a device. Deleting one restores the shipped copy on the next
+launch.
+
+The agent's own updater is switched off: the staged binary is the one the app verified.
 
 ## Terminal
 
