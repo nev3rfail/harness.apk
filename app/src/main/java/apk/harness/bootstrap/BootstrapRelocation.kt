@@ -54,6 +54,49 @@ fun rewriteManifests(dpkgInfo: File, applicationId: String): Int {
     return changed
 }
 
+/**
+ * Retargets the musl loader's compiled-in paths at [applicationId], in place,
+ * and returns how many occurrences changed.
+ *
+ * musl opens `/etc/resolv.conf`, `/etc/hosts` and `/etc/services` from inside
+ * libc, through calls that never reach the PLT, so nothing outside the library
+ * can redirect them. The loader is built with those paths rewritten to sit under
+ * one application id; every channel's id is the same eleven characters, so the
+ * copy staged for another one is the same bytes with the name swapped.
+ *
+ * A loader that carries no such path -- the one whose architecture has a syscall
+ * tracer to redirect `/etc` instead -- reports nothing changed, which is not an
+ * error.
+ */
+fun retargetLoader(image: ByteArray, applicationId: String): Int {
+    require(applicationId.length == ID_LENGTH) {
+        "an application id of $ID_LENGTH characters is needed to retarget the " +
+            "loader; '$applicationId' has ${applicationId.length}"
+    }
+    val old = "$ANDROID_DATA/$LOADER_ID".encodeToByteArray()
+    val new = "$ANDROID_DATA/$applicationId".encodeToByteArray()
+    var found = 0
+    var at = 0
+    while (at + old.size <= image.size) {
+        if (!image.regionMatches(at, old)) {
+            at++
+            continue
+        }
+        new.copyInto(image, at)
+        found++
+        at += old.size
+    }
+    return found
+}
+
+private fun ByteArray.regionMatches(at: Int, other: ByteArray): Boolean {
+    for (index in other.indices) if (this[at + index] != other[index]) return false
+    return true
+}
+
 private const val TERMUX_DATA = "/data/data/com.termux"
 private const val ANDROID_DATA = "/data/data"
 private const val ID_LENGTH = 11
+
+// The application id the shipped loader's paths were compiled against.
+private const val LOADER_ID = "apk.harness"

@@ -15,12 +15,22 @@ sealed interface BootstrapProgress {
     data class Linking(val made: Int, val total: Int) : BootstrapProgress
     data class Relocating(val pair: Int, val of: Int) : BootstrapProgress
     data object Configuring : BootstrapProgress
+    data object Resolving : BootstrapProgress
+    data class FetchingAgent(val bytes: Long, val total: Long) : BootstrapProgress
+    data object StagingAgent : BootstrapProgress
     data object Done : BootstrapProgress
     data class Failed(val reason: String) : BootstrapProgress
 }
 
+/** True while [progress] is a phase of the agent half rather than the userland's. */
+fun installingAgent(progress: BootstrapProgress?): Boolean = when (progress) {
+    BootstrapProgress.Resolving, BootstrapProgress.StagingAgent -> true
+    is BootstrapProgress.FetchingAgent -> true
+    else -> false
+}
+
 /**
- * Installs a Termux userland into the app's own data directory.
+ * Installs what the app runs: a Termux userland, and the agent on top of it.
  *
  * The tree is extracted still naming `com.termux` and relocated in place against
  * this app's id, so one archive serves every channel. The relocator is a program
@@ -36,59 +46,26 @@ sealed interface BootstrapProgress {
  */
 class Bootstrap(private val context: Context) {
 
-    // Spelled from the package name rather than taken from `dataDir`, which
-    // reports the same directory as `/data/user/0/...`. That spelling is two
-    // bytes longer, and the tree's prefix has to fit inside the one Termux
-    // compiled into it, so `/data/data` is the only spelling it can carry. It is
-    // also the spelling `Agent` looks for a userland under.
-    private val data = File("/data/data/${context.packageName}")
-    private val rootfs = File(data, "root")
-    private val prefix = File(rootfs, "usr")
+    private val agent = AgentStage(context)
 
-    fun isInstalled(): Boolean = File(prefix, BASH_PATH).canExecute()
+    // One spelling of these paths, shared with the half that runs the agent:
+    // the tree is relocated to what the scripts will name, and two spellings of
+    // one directory is the comparison risk the byte budget exists to avoid.
+    private val data = agent.data
+    private val rootfs = agent.rootfs
+    private val prefix = agent.prefix
+
+    fun isInstalled(): Boolean = hasUserland() && agent.isStaged()
+
+    private fun hasUserland(): Boolean = File(prefix, BASH_PATH).canExecute()
 
     suspend fun install(onProgress: (BootstrapProgress) -> Unit) = withContext(Dispatchers.IO) {
         try {
-            val abi = Build.SUPPORTED_ABIS.first()
-            val release = releaseFor(abi) ?: error("no bootstrap for $abi")
-            val pairs = relocationPairs(context.packageName)
-
-            val archive = fetchVerified(
-                source = { openRelease(release) },
-                release = release,
-                into = context.cacheDir,
-            ) { onProgress(BootstrapProgress.Downloading(it, release.bytes)) }
-
-            prefix.mkdirs()
-            val entries = extractArchive(archive.inputStream(), prefix) {
-                onProgress(BootstrapProgress.Extracting(it, EXPECTED_ENTRIES))
-            }
-            // Checked here rather than at the end: an archive that unpacked to
-            // nothing relocates and configures without complaint, and the only
-            // symptom left to report would be a missing bash.
-            check(entries > 0) { "${archive.name} unpacked no entries" }
-
-            val links = parseSymlinks(readSymlinks(archive))
-            onProgress(BootstrapProgress.Linking(0, links.size))
-            val made = replaySymlinks(links, prefix)
-            onProgress(BootstrapProgress.Linking(made, links.size))
-
-            // The relocator's symlink pass repoints the absolute targets, and a
-            // target is a string in the link's own inode rather than bytes in a
-            // file -- so the links have to exist before it runs. `SYMLINKS.txt`
-            // names them relative to the prefix, and names some of their targets
-            // absolutely under `com.termux`, apt's keyring among them.
-            pairs.forEachIndexed { index, pair ->
-                onProgress(BootstrapProgress.Relocating(index + 1, pairs.size))
-                relocate(rootfs, pair)
-            }
-            rewriteManifests(File(prefix, DPKG_INFO), context.packageName)
-
-            onProgress(BootstrapProgress.Configuring)
-            configure()
+            if (!hasUserland()) installUserland(onProgress)
+            agent.install(onProgress)
             onProgress(
                 if (isInstalled()) BootstrapProgress.Done
-                else BootstrapProgress.Failed("$BASH_PATH is not in the installed tree")
+                else BootstrapProgress.Failed("the install finished without a runnable agent")
             )
         } catch (cancelled: CancellationException) {
             // An abandoned install, not a failed one: drawing an error over a
@@ -98,6 +75,48 @@ class Bootstrap(private val context: Context) {
         } catch (e: Exception) {
             onProgress(BootstrapProgress.Failed(e.message ?: e.toString()))
         }
+    }
+
+    private fun installUserland(onProgress: (BootstrapProgress) -> Unit) {
+        val abi = Build.SUPPORTED_ABIS.first()
+        val release = releaseFor(abi) ?: error("no bootstrap for $abi")
+        val pairs = relocationPairs(context.packageName)
+
+        val archive = fetchVerified(
+            source = { openRelease(release) },
+            name = release.asset,
+            checksum = release.sha256,
+            into = context.cacheDir,
+        ) { onProgress(BootstrapProgress.Downloading(it, release.bytes)) }
+
+        prefix.mkdirs()
+        val entries = extractArchive(archive.inputStream(), prefix) {
+            onProgress(BootstrapProgress.Extracting(it, EXPECTED_ENTRIES))
+        }
+        // Checked here rather than at the end: an archive that unpacked to
+        // nothing relocates and configures without complaint, and the only
+        // symptom left to report would be a missing bash.
+        check(entries > 0) { "${archive.name} unpacked no entries" }
+
+        val links = parseSymlinks(readSymlinks(archive))
+        onProgress(BootstrapProgress.Linking(0, links.size))
+        val made = replaySymlinks(links, prefix)
+        onProgress(BootstrapProgress.Linking(made, links.size))
+
+        // The relocator's symlink pass repoints the absolute targets, and a
+        // target is a string in the link's own inode rather than bytes in a
+        // file -- so the links have to exist before it runs. `SYMLINKS.txt`
+        // names them relative to the prefix, and names some of their targets
+        // absolutely under `com.termux`, apt's keyring among them.
+        pairs.forEachIndexed { index, pair ->
+            onProgress(BootstrapProgress.Relocating(index + 1, pairs.size))
+            relocate(rootfs, pair)
+        }
+        rewriteManifests(File(prefix, DPKG_INFO), context.packageName)
+
+        onProgress(BootstrapProgress.Configuring)
+        configure()
+        check(hasUserland()) { "$BASH_PATH is not in the installed tree" }
     }
 
     /** The archive's symlink list, read on a second pass over the zip. */

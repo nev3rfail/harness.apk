@@ -20,9 +20,13 @@ it are worth holding on to:
 - **`$PREFIX` is not `/usr`.** It is `root/usr` inside the app's data directory.
   Absolute paths from documentation and from memory will be wrong. Ask the shell
   where something is rather than assuming.
-- **`apt install <package>` works** and reaches Termux's repository. Every
-  archive is rewritten on the way in, so an install costs about twice the usual
-  time. Install what you need; do not install what you merely might need.
+- **`apt install <package>` works, and needs no privileges.** The userland is a
+  Termux bootstrap and carries only what that includes -- `bash`, `coreutils`,
+  `curl`, `apt` and `dpkg`. Anything else is one `apt install` away, `git`
+  included, from Termux's own repository, so the versions are whatever it
+  serves. Every archive is rewritten on the way in, so an install costs about
+  twice the usual time. Install what you need; do not install what you merely
+  might need.
 
 ## What this device cannot do
 
@@ -34,14 +38,18 @@ These fail quietly or confusingly rather than with a clear error.
 2. **There is no root.** No `sudo`, no service manager, no port below 1024.
 3. **Nothing outside the app's own directory is writable**, including
    `/tmp`, `/etc` and `/usr`. `$TMPDIR` is where temporary files go.
-4. **Your own updater cannot help you.** The binary it fetches is built for a
-   loader this device does not have. Leave the installed version alone; it is
-   staged deliberately.
+4. **Your own updater is switched off.** The app downloaded and verified the
+   binary you are running, and the one your updater would fetch expects a loader
+   this device does not have. `DISABLE_AUTOUPDATER=1` is set for that reason.
 
-**`apt` works, and needs no privileges.** The userland is a Termux bootstrap and
-carries only what that includes -- `bash`, `coreutils`, `curl`, `apt` and `dpkg`.
-Anything else is one `apt install` away, `git` included. Packages come from
-Termux's own repository, so the versions are whatever it serves.
+## How you were started
+
+`launcher.sh` in your home directory assembles the environment and runs
+`agent.sh`, which runs you. `shell.sh` is what you are handed as `$SHELL`. All
+three are ordinary shell scripts the app staged and will not overwrite, so
+reading them is how you find out what your environment actually is. The paths
+they use arrive as `HARNESS_*` variables. Changing one changes the next launch;
+deleting one restores the shipped copy.
 
 ## How to behave here
 

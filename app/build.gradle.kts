@@ -127,6 +127,9 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     testImplementation("junit:junit:4.13.2")
+    // A real implementation on the test classpath. The one in android.jar is a
+    // stub that throws, so a manifest parsed in production would be untested.
+    testImplementation("org.json:json:20250517")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

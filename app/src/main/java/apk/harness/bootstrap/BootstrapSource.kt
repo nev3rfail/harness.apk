@@ -64,8 +64,9 @@ fun openRelease(release: BootstrapRelease): InputStream {
 }
 
 /**
- * Puts [release] in [into] and returns it, reading from [source] only when what
- * is already there does not match, and reporting bytes copied to [onProgress].
+ * Puts a file named [name] in [into] and returns it, reading from [source] only
+ * when what is already there does not hash to [checksum], and reporting bytes
+ * copied to [onProgress].
  *
  * The download lands beside the destination and is renamed once verified, so an
  * interrupted fetch never looks like a finished one.
@@ -76,15 +77,16 @@ fun openRelease(release: BootstrapRelease): InputStream {
  */
 fun fetchVerified(
     source: () -> InputStream,
-    release: BootstrapRelease,
+    name: String,
+    checksum: String,
     into: File,
     onProgress: (Long) -> Unit,
 ): File {
-    val destination = File(into, release.asset)
-    if (destination.isFile && sha256(destination) == release.sha256) return destination
+    val destination = File(into, name)
+    if (destination.isFile && sha256(destination) == checksum) return destination
 
     into.mkdirs()
-    val partial = File(into, "${release.asset}.tmp")
+    val partial = File(into, "$name.tmp")
     var copied = 0L
     try {
         source().use { input ->
@@ -100,8 +102,8 @@ fun fetchVerified(
             }
         }
         val actual = sha256(partial)
-        check(actual == release.sha256) {
-            "${release.asset} checksum mismatch: expected ${release.sha256}, got $actual"
+        check(actual == checksum) {
+            "$name checksum mismatch: expected $checksum, got $actual"
         }
         destination.delete()
         check(partial.renameTo(destination)) { "could not rename ${partial.name}" }

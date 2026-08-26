@@ -18,9 +18,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import apk.harness.bootstrap.BootstrapProgress
+import apk.harness.bootstrap.installingAgent
 
 /**
- * The first run, which is a download and a rewrite of ninety-odd megabytes.
+ * The first run, which is a userland downloaded and rewritten, and an agent
+ * downloaded on top of it.
  *
  * This replaces the terminal rather than covering it, so it is a screen and not
  * a dialog the way the panels are: a panel needs its own window because the
@@ -59,7 +61,9 @@ fun BootstrapScreen(progress: BootstrapProgress?, onRetry: () -> Unit) {
 @Composable
 private fun Working(progress: BootstrapProgress?) {
     val (label, fraction) = describe(progress)
-    Text("Preparing the userland", style = MaterialTheme.typography.titleMedium)
+    val title =
+        if (installingAgent(progress)) "Installing the agent" else "Preparing the userland"
+    Text(title, style = MaterialTheme.typography.titleMedium)
     Text(
         label,
         style = MaterialTheme.typography.bodySmall,
@@ -86,7 +90,7 @@ private fun Working(progress: BootstrapProgress?) {
 @Composable
 private fun Failure(reason: String) {
     Text(
-        "Could not prepare the userland",
+        "Could not finish the install",
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.error,
     )
@@ -113,6 +117,11 @@ private fun describe(progress: BootstrapProgress?): Pair<String, Float?> = when 
     is BootstrapProgress.Relocating ->
         "rewriting paths, pass ${progress.pair} of ${progress.of}" to null
     BootstrapProgress.Configuring -> "configuring the package manager" to null
+    BootstrapProgress.Resolving -> "looking up the release" to null
+    is BootstrapProgress.FetchingAgent ->
+        "${progress.bytes / 1_000_000} of ${progress.total / 1_000_000} MB" to
+            fraction(progress.bytes, progress.total)
+    BootstrapProgress.StagingAgent -> "staging the loader and the scripts" to null
     BootstrapProgress.Done -> "ready" to 1f
     // Drawn by Failure, which is what this is never asked about.
     is BootstrapProgress.Failed -> progress.reason to null

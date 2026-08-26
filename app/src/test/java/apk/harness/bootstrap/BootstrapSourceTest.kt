@@ -43,10 +43,9 @@ class BootstrapSourceTest {
 
     @Test
     fun `a verified download is renamed into place and progress is reported`() {
-        val release = BootstrapRelease("t.zip", hiSha, hi.size.toLong())
         val into = folder.newFolder("cache")
         var last = 0L
-        val got = fetchVerified({ ByteArrayInputStream(hi) }, release, into) { last = it }
+        val got = fetchVerified({ ByteArrayInputStream(hi) }, "t.zip", hiSha, into) { last = it }
         assertEquals(File(into, "t.zip"), got)
         assertEquals("hi", got.readText())
         assertEquals(hi.size.toLong(), last)
@@ -55,10 +54,9 @@ class BootstrapSourceTest {
 
     @Test
     fun `a mismatched checksum leaves nothing behind`() {
-        val release = BootstrapRelease("t.zip", "0".repeat(64), hi.size.toLong())
         val into = folder.newFolder("cache")
         val thrown = try {
-            fetchVerified({ ByteArrayInputStream(hi) }, release, into) {}
+            fetchVerified({ ByteArrayInputStream(hi) }, "t.zip", "0".repeat(64), into) {}
             null
         } catch (e: IllegalStateException) {
             e
@@ -70,10 +68,9 @@ class BootstrapSourceTest {
 
     @Test
     fun `an archive already present and correct is not fetched again`() {
-        val release = BootstrapRelease("t.zip", hiSha, hi.size.toLong())
         val into = folder.newFolder("cache")
         File(into, "t.zip").writeBytes(hi)
-        val got = fetchVerified({ error("must not be fetched") }, release, into) {}
+        val got = fetchVerified({ error("must not be fetched") }, "t.zip", hiSha, into) {}
         assertEquals("hi", got.readText())
     }
 }

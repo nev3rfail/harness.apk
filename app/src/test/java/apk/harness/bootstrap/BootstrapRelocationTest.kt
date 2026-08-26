@@ -1,8 +1,11 @@
 package apk.harness.bootstrap
 
 import java.io.File
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -99,5 +102,41 @@ class BootstrapRelocationTest {
         val info = folder.newFolder("info")
         File(info, "bash.md5sums").writeText("abc  /data/data/com.termux\n")
         assertEquals(0, rewriteManifests(info, "apk.harness"))
+    }
+
+    @Test
+    fun `the loader's compiled-in paths move to this channel`() {
+        // Two occurrences with something between them and a trailing byte, so a
+        // pass that stopped at the first or ran past the last would show.
+        val image = (
+            "\u0000/data/data/apk.harness/files/claude/etc/resolv.conf\u0000" +
+                "/data/data/apk.harness/files/claude/etc/hosts\u0000"
+            ).encodeToByteArray()
+        val found = retargetLoader(image, "dev.harness")
+        assertEquals(2, found)
+        val text = image.decodeToString()
+        assertTrue(text, text.contains("/data/data/dev.harness/files/claude/etc/resolv.conf"))
+        assertTrue(text, text.contains("/data/data/dev.harness/files/claude/etc/hosts"))
+        assertFalse(text, text.contains("apk.harness"))
+    }
+
+    @Test
+    fun `a loader with no compiled-in path is left alone`() {
+        val image = "\u0000/etc/resolv.conf\u0000".encodeToByteArray()
+        val before = image.copyOf()
+        assertEquals(0, retargetLoader(image, "dev.harness"))
+        assertArrayEquals(before, image)
+    }
+
+    @Test
+    fun `retargeting the loader needs an eleven-character id`() {
+        val image = "/data/data/apk.harness/x".encodeToByteArray()
+        val thrown = try {
+            retargetLoader(image, "com.example.long")
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+        assertTrue("$thrown", thrown != null)
     }
 }

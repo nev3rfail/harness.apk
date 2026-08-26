@@ -1,182 +1,48 @@
 package apk.harness
 
 import android.content.Context
-import android.os.Build
+import apk.harness.bootstrap.AgentStage
 import com.ghostty.android.terminal.TerminalSession
-import java.io.File
 
 /**
- * What the agent binary needs from the platform in order to be a Linux program
- * on Android.
+ * The session the terminal runs.
  *
- * The binary itself is staged into the app's own directory by
- * `scripts/stage-claude.sh`. What is assembled here is the rest: a home it may
- * write, a resolver it can read, and on x86_64 a tracer that rewrites the
- * syscalls the sandbox refuses. With nothing staged, this is a shell.
+ * What the agent needs from the platform is assembled by `launcher.sh` on the
+ * device rather than here, so the invocation can be changed without a build. This
+ * hands that script the paths it needs and starts it. With nothing staged, this
+ * is a shell.
  */
 class Agent(private val context: Context) {
 
+    private val stage = AgentStage(context)
+
     fun session(): TerminalSession {
         val environment = TerminalSession.defaultEnvironment(
-            home = context.filesDir.absolutePath,
-            tmp = context.cacheDir.absolutePath,
+            home = stage.home.absolutePath,
+            tmp = stage.tmp.absolutePath,
         ).toMutableMap()
+        environment += stage.environment()
 
-        // Without this the agent finds no shell and disables every tool built on
-        // one, which is most of them.
-        environment["SHELL"] = ANDROID_SHELL
-
-        // A userland, if one is staged, is where the agent's tools should look
-        // first: it is the difference between toybox and a shell with git.
-        //
-        // Spelled from the package name rather than taken from `dataDir`, which
-        // reports the same directory as `/data/user/0/...`. That spelling is two
-        // bytes longer, and the tree's prefix has to fit inside the one Termux
-        // compiled into it, so `/data/data` is the only spelling it can carry.
-        // Two spellings of one directory is the comparison risk the byte budget
-        // exists to avoid. A profile whose data lives elsewhere finds no
-        // userland here and falls back to the shell Android has.
-        val userland = File("/data/data/${context.packageName}", USERLAND_PREFIX)
-        if (File(userland, BASH_PATH).canExecute()) {
-            environment["PATH"] = "${File(userland, "bin")}:${environment["PATH"]}"
-            environment["SHELL"] = shellWrapper(userland).absolutePath
-        }
-
-        // A URL is drawn as a hyperlink only for a terminal the agent believes
-        // supports them, and it recognises this one by nothing. This is ghostty's
-        // terminal, hyperlinks work, and a tap on one hands the URL to the phone.
-        // That is how a login is completed here: the agent cannot open a browser
-        // itself, so it prints the authorization URL and someone taps it.
-        environment["FORCE_HYPERLINK"] = "1"
-
-        val staged = File(context.filesDir, STAGE_DIRECTORY)
-        val binary = File(staged, BINARY_NAME)
-        if (!binary.canExecute()) {
+        if (!stage.isStaged()) {
+            // Android's own shell, which is toybox.
+            environment["SHELL"] = ANDROID_SHELL
             return TerminalSession(
                 environment = environment,
-                cwd = context.filesDir.absolutePath,
+                cwd = stage.home.absolutePath,
             )
         }
 
-        // Android resolves names through netd rather than through a nameserver
-        // in /etc/resolv.conf, so a runtime carrying its own resolver has
-        // nothing to read. This is the directory the loader is built to read
-        // instead, and the one the shim redirects /etc at.
-        val etc = File(staged, "etc").apply { mkdirs() }
-        File(etc, "resolv.conf").writeText(RESOLV_CONF)
-        environment["SYSCALL_SHIM_ETC"] = etc.absolutePath
-
-        // The agent is a Bun program, and Bun resolves names two ways: libc for
-        // fetch, and its own c-ares for the dns module. c-ares reads the same
-        // absent /etc/resolv.conf and then falls back to a nameserver on
-        // loopback that nothing answers, so every lookup through it spends its
-        // full timeout before failing. A preload names the resolvers instead.
-        val setdns = File(staged, SETDNS_NAME)
-        setdns.writeText(SETDNS_JS)
-        environment["BUN_OPTIONS"] = "--preload ${setdns.absolutePath}"
-
-        // The agent's first run asks which account to sign in with, and asks
-        // again on every run until it is told the question has been answered --
-        // whatever credentials it already holds. On a phone there is no reason
-        // to answer it, so the file it looks in is seeded once, and left alone
-        // afterwards because the agent owns it.
-        File(context.filesDir, CONFIG_NAME).let { file ->
-            if (!file.exists()) file.writeText(ONBOARDED)
-        }
-
-        val shim = File(context.applicationInfo.nativeLibraryDir, SHIM_NAME)
-        val translating = Build.SUPPORTED_ABIS.firstOrNull() == "x86_64" && shim.canExecute()
-
-        return if (translating) {
-            TerminalSession(
-                command = shim.absolutePath,
-                argv = listOf(shim.absolutePath, binary.absolutePath, IDE_FLAG, CONTINUE_FLAG),
-                environment = environment,
-                cwd = context.filesDir.absolutePath,
-            )
-        } else {
-            TerminalSession(
-                command = binary.absolutePath,
-                argv = listOf(binary.absolutePath, IDE_FLAG, CONTINUE_FLAG),
-                environment = environment,
-                cwd = context.filesDir.absolutePath,
-            )
-        }
-    }
-
-    /**
-     * A script that execs the userland's bash, which the agent is handed as its
-     * shell.
-     *
-     * The indirection is what `termux-exec` costs. That library is how
-     * `#!/usr/bin/env` resolves on a device with no `/usr`, and it works by
-     * being preloaded into whatever runs the script -- but it is bionic, and the
-     * agent is musl, so preloading it into the agent fails to relocate against a
-     * libc that has no `__register_atfork`. The preload can only be named on the
-     * far side of the exec, which means a file.
-     */
-    private fun shellWrapper(userland: File): File {
-        val rootfs = userland.parentFile!!
-        val script = File(context.filesDir, SHELL_NAME)
-        script.writeText(
-            listOf(
-                "#!$ANDROID_SHELL",
-                "export PREFIX=$userland",
-                "export TERMUX__PREFIX=$userland",
-                "export TERMUX__ROOTFS=$rootfs",
-                "export TERMUX_APP__DATA_DIR=${rootfs.parent}",
-                // Carried here as well as in the agent's environment, so that
-                // the shell finds the userland's programs whoever ran it.
-                "export PATH=$userland/bin:\$PATH",
-                "export LD_PRELOAD=$userland/lib/$TERMUX_EXEC",
-                "exec $userland/$BASH_PATH \"\$@\"",
-            ).joinToString("\n", postfix = "\n")
+        // Run by a shell rather than executed, so nothing here depends on the
+        // launcher keeping an execute bit an editor on the device could take.
+        return TerminalSession(
+            command = ANDROID_SHELL,
+            argv = listOf(ANDROID_SHELL, stage.launcher.absolutePath),
+            environment = environment,
+            cwd = stage.home.absolutePath,
         )
-        script.setExecutable(true)
-        return script
     }
 
     private companion object {
-        const val STAGE_DIRECTORY = "claude"
-        const val BINARY_NAME = "claude"
-
-        // The aarch64 Linux ABI has only the *at syscalls, which is what the
-        // seccomp policy allows, so the shim only translates on x86_64. It ships
-        // as a native library because that directory stays executable whatever
-        // the app targets.
-        const val SHIM_NAME = "libsyscallshim.so"
-
-        const val IDE_FLAG = "--ide"
-
-        // The Activity dies on a configuration change and under memory pressure,
-        // and the transcript outlives it. Continuing the most recent conversation
-        // in the working directory is what makes a respawn invisible. Not
-        // --resume, which without a session id asks which one.
-        const val CONTINUE_FLAG = "--continue"
-        const val SETDNS_NAME = "setdns.js"
-
-        // Android's own shell, which is toybox. What the agent gets when no
-        // userland is staged.
         const val ANDROID_SHELL = "/system/bin/sh"
-
-        // A relocated Termux tree, whose prefix has to be the same length as the
-        // one it was built for -- so the directory below the app's is named in
-        // four characters, and the applicationId spends the byte instead.
-        const val USERLAND_PREFIX = "root/usr"
-        const val BASH_PATH = "bin/bash"
-        const val SHELL_NAME = "shell"
-        const val TERMUX_EXEC = "libtermux-exec-ld-preload.so"
-
-        const val CONFIG_NAME = ".claude.json"
-        const val ONBOARDED = """{"hasCompletedOnboarding":true}"""
-
-        // Public resolvers, because the ones the device holds are reachable
-        // through netd and not from a socket the agent opens itself. Editing
-        // this list sends the agent's lookups somewhere else; nothing else on
-        // the device is affected.
-        val RESOLVERS = listOf("8.8.8.8", "8.8.4.4")
-        val RESOLV_CONF = RESOLVERS.joinToString("") { "nameserver $it\n" }
-        val SETDNS_JS = RESOLVERS.joinToString(", ") { "\"$it\"" }
-            .let { "try { require(\"dns\").setServers([$it]); } catch (e) {}\n" }
     }
 }
