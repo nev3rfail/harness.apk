@@ -151,6 +151,10 @@ class MainActivity : ComponentActivity() {
                             progress = null
                             attempt++
                         },
+                        // Past the screen without an agent. The session falls
+                        // back to a shell on its own when nothing is staged, so
+                        // this needs to change nothing but the gate.
+                        onSkip = { progress = BootstrapProgress.Done },
                     )
                 }
             }

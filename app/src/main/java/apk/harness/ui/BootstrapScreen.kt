@@ -33,7 +33,11 @@ import apk.harness.bootstrap.installingAgent
  * A [progress] of null is the install not having reported anything yet.
  */
 @Composable
-fun BootstrapScreen(progress: BootstrapProgress?, onRetry: () -> Unit) {
+fun BootstrapScreen(
+    progress: BootstrapProgress?,
+    onRetry: () -> Unit,
+    onSkip: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -50,6 +54,12 @@ fun BootstrapScreen(progress: BootstrapProgress?, onRetry: () -> Unit) {
                 // costs only what the last attempt did not finish.
                 TextButton(onClick = onRetry, modifier = Modifier.padding(top = 24.dp)) {
                     Text("Try again")
+                }
+                // A device that cannot reach the agent's host would otherwise
+                // have no terminal at all, where before it had a shell. This is
+                // the way back to one.
+                TextButton(onClick = onSkip) {
+                    Text("Open a shell instead")
                 }
             } else {
                 Working(progress)
