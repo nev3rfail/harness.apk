@@ -4,6 +4,9 @@
 .kotlin/
 local.properties
 
+# AGP's native build directory, per ABI and per variant.
+.cxx/
+
 # Signing material must never reach a repo that becomes public.
 *.keystore
 *.jks

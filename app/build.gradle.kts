@@ -7,6 +7,8 @@ plugins {
 android {
     namespace = "apk.harness"
     compileSdk = 35
+    // The revision terminal-library pins, so AGP consumes one NDK for both.
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         // Overridable so a throwaway id can be built without editing this file.
@@ -23,7 +25,9 @@ android {
         versionName = "0.1.0"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            // An ABI with no renderer dies loading its native library, and the
+            // renderer is built for these two.
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 
@@ -71,6 +75,16 @@ android {
             // straight out of the APK leaves that directory empty, and the syscall
             // shim there is a program to execute, not a library to load.
             useLegacyPackaging = true
+        }
+    }
+
+    // The prefix relocator. It is built here rather than beside the Zig
+    // libraries, because that build is skipped whenever -PskipNativeBuild is
+    // passed and the ordinary loop always passes it.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 }
