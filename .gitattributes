@@ -1,5 +1,14 @@
-# Keep every text file LF in the working tree, so the repository behaves the same
-# when cloned on Windows.
+# A CRLF shell script makes the kernel look for an interpreter named /bin/sh\r,
+# and apt reports that as "Could not exec dpkg!" rather than as a line ending.
+# Files here reach a device, so the ending is declared rather than left to the
+# checkout.
 * text=auto eol=lf
 
+*.jar binary
+*.zip binary
+*.so binary
 *.png binary
+*.keystore binary
+
+gradlew text eol=lf
+gradlew.bat text eol=crlf
