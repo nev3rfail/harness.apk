@@ -113,6 +113,9 @@ class MainActivity : ComponentActivity() {
                     session = session,
                     surfaces = surfaces,
                     root = home,
+                    // Zero at this boundary means "unasked": the renderer leaves the
+                    // terminal library its own default rather than disabling history.
+                    scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
                     onSurfaceViewCreated = { surfaceView = it },
                     openLink = { openExternally(it) },
                     copyText = { text -> runOnUiThread { copyToClipboard(text) } },
@@ -189,6 +192,7 @@ private fun HarnessScreen(
     session: TerminalSession,
     surfaces: Surfaces,
     root: File,
+    scrollbackBytes: Long,
     onSurfaceViewCreated: (GhosttyGLSurfaceView) -> Unit,
     openLink: (String) -> Unit,
     copyText: (String) -> Unit,
@@ -228,7 +232,10 @@ private fun HarnessScreen(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
-                        GhosttyGLSurfaceView(context).also { created ->
+                        GhosttyGLSurfaceView(
+                            context,
+                            maxScrollbackBytes = scrollbackBytes,
+                        ).also { created ->
                             view = created
                             onSurfaceViewCreated(created)
                             created.onModifiersConsumed = {
