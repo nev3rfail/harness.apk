@@ -28,6 +28,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import apk.harness.bootstrap.Bootstrap
+import apk.harness.bootstrap.BootstrapProgress
 import apk.harness.ide.APP_NAME
 import apk.harness.ide.IdeServer
 import apk.harness.ide.McpEndpoint
@@ -35,6 +37,7 @@ import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
+import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.FileDrawer
 import apk.harness.ui.FileTree
@@ -59,7 +62,9 @@ import kotlinx.coroutines.withContext
  */
 class MainActivity : ComponentActivity() {
 
-    private lateinit var session: TerminalSession
+    // Built once the userland is installed rather than in onCreate, so it is
+    // absent while the install runs.
+    private var session: TerminalSession? = null
     private lateinit var ide: IdeServer
     private lateinit var panels: PanelServer
     private val surfaces = Surfaces()
@@ -104,23 +109,50 @@ class MainActivity : ComponentActivity() {
         )
         panels.start()
 
-        session = Agent(this).session()
+        val bootstrap = Bootstrap(this)
 
         enableEdgeToEdge()
         setContent {
             HarnessTheme {
-                HarnessScreen(
-                    session = session,
-                    surfaces = surfaces,
-                    root = home,
-                    // Zero at this boundary means "unasked": the renderer leaves the
-                    // terminal library its own default rather than disabling history.
-                    scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
-                    onSurfaceViewCreated = { surfaceView = it },
-                    openLink = { openExternally(it) },
-                    copyText = { text -> runOnUiThread { copyToClipboard(text) } },
-                    pasteText = ::clipboardAsInput,
-                )
+                var progress by remember {
+                    mutableStateOf<BootstrapProgress?>(
+                        if (bootstrap.isInstalled()) BootstrapProgress.Done else null
+                    )
+                }
+                // Bumped to run the install again. Every step is idempotent, so a
+                // second attempt costs only what the first one did not finish.
+                var attempt by remember { mutableStateOf(0) }
+                LaunchedEffect(attempt) {
+                    if (progress != BootstrapProgress.Done) bootstrap.install { progress = it }
+                }
+                if (progress == BootstrapProgress.Done) {
+                    // Built here rather than in onCreate: session() probes for a
+                    // userland once, so a session made before the install is a
+                    // session that never sees it.
+                    val started = remember {
+                        Agent(this@MainActivity).session().also { session = it }
+                    }
+                    HarnessScreen(
+                        session = started,
+                        surfaces = surfaces,
+                        root = home,
+                        // Zero at this boundary means "unasked": the renderer leaves the
+                        // terminal library its own default rather than disabling history.
+                        scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
+                        onSurfaceViewCreated = { surfaceView = it },
+                        openLink = { openExternally(it) },
+                        copyText = { text -> runOnUiThread { copyToClipboard(text) } },
+                        pasteText = ::clipboardAsInput,
+                    )
+                } else {
+                    BootstrapScreen(
+                        progress = progress,
+                        onRetry = {
+                            progress = null
+                            attempt++
+                        },
+                    )
+                }
             }
         }
     }
@@ -137,7 +169,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        session.stop()
+        session?.stop()
         ide.stop()
         panels.stop()
         AgentService.stop(this)

@@ -2,12 +2,14 @@ package apk.harness.bootstrap
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.file.FileSystems
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -73,6 +75,33 @@ class BootstrapArchiveTest {
         val into = folder.newFolder("usr")
         assertEquals(0, extractArchive(ByteArrayInputStream(bytes.toByteArray()), into) {})
         assertFalse(File(into, SYMLINKS_NAME).exists())
+    }
+
+    @Test
+    fun `a program comes out executable and a data file does not`() {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { zip ->
+            for (name in listOf("bin/bash", "libexec/repack", "lib/apt/methods/http", "share/doc/readme")) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write("x".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        // NTFS reports every readable file as executable, so the negative half of
+        // this cannot hold there. Skipped rather than left to pass vacuously.
+        assumeTrue(
+            "needs a filesystem that records an execute bit",
+            FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+        )
+        val into = folder.newFolder("usr")
+        extractArchive(ByteArrayInputStream(bytes.toByteArray()), into) {}
+        // A zip keeps the mode in its external attributes and ZipInputStream does
+        // not report it, so without setting this every one of these arrives
+        // unrunnable and the tree has no shell.
+        assertTrue(File(into, "bin/bash").canExecute())
+        assertTrue(File(into, "libexec/repack").canExecute())
+        assertTrue(File(into, "lib/apt/methods/http").canExecute())
+        assertFalse(File(into, "share/doc/readme").canExecute())
     }
 
     @Test

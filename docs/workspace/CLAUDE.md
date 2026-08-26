@@ -14,7 +14,7 @@ keep working, `dev.harness` is where things are broken on purpose.
 ## The shell
 
 Your shell is bash from a relocated Termux userland, not Android's toybox, so
-`git`, `grep`, `sed`, `awk` and the rest behave as you expect. Two things about
+`grep`, `sed`, `awk` and the rest behave as you expect. Two things about
 it are worth holding on to:
 
 - **`$PREFIX` is not `/usr`.** It is `root/usr` inside the app's data directory.
@@ -37,6 +37,11 @@ These fail quietly or confusingly rather than with a clear error.
 4. **Your own updater cannot help you.** The binary it fetches is built for a
    loader this device does not have. Leave the installed version alone; it is
    staged deliberately.
+
+**`apt` works, and needs no privileges.** The userland is a Termux bootstrap and
+carries only what that includes -- `bash`, `coreutils`, `curl`, `apt` and `dpkg`.
+Anything else is one `apt install` away, `git` included. Packages come from
+Termux's own repository, so the versions are whatever it serves.
 
 ## How to behave here
 

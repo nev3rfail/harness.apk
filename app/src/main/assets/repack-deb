@@ -1,0 +1,154 @@
+#!/bin/sh
+# Stand in for dpkg so that Termux .deb archives install into this app's prefix.
+#
+# A Termux .deb is rooted at the absolute Termux path -- its payload is
+# ./data/data/com.termux/files/usr/... -- and its binaries carry that path in
+# DT_RUNPATH, in shebangs and in compiled-in defaults. Installed unchanged into
+# another app it writes nothing and resolves nothing.
+#
+# So every archive is rewritten on the way past: the payload is moved to this
+# app's data directory and the same substitution the bootstrap was relocated
+# with is applied to every file in it. The substitution is byte-for-byte,
+# because a shorter string in a stripped binary's .rodata cannot be shifted and
+# a longer one cannot be represented at all. The prefix as a whole is what has
+# to fit, not the app data directory: a directory one byte longer than Termux's
+# is paid for by the rootfs directory below it being one byte shorter.
+#
+# Install it as apt's dpkg, which is the single point every apt entry point
+# goes through, so nothing has to be remembered at a call site:
+#
+#   cp repack-deb.sh $PREFIX/libexec/repack-deb
+#   chmod 755 $PREFIX/libexec/repack-deb
+#   echo 'Dir::Bin::dpkg "'$PREFIX'/libexec/repack-deb";' \
+#     > $PREFIX/etc/apt/apt.conf.d/99-repack
+#
+# It lives outside $PREFIX/bin on purpose: nothing owns $PREFIX/libexec, so an
+# upgrade of the dpkg package cannot overwrite it. A `dpkg -i` typed by hand
+# still bypasses it; run this instead.
+set -e
+
+OLD_APPDIR=/data/data/com.termux
+OLD_ROOTFS=$OLD_APPDIR/files
+OLD_CACHE=$OLD_APPDIR/cache
+
+# Where this app's prefix is, taken from where this script was invoked from,
+# so the script itself carries no path.
+self=$0
+case $self in */*) : ;; *) self=$(command -v "$self") ;; esac
+PREFIX=${PREFIX:-$(cd "$(dirname "$self")/.." && pwd)}
+export PATH=$PREFIX/bin:$PATH
+export LC_ALL=C
+
+rootfs=${PREFIX%/*}
+appdir=${rootfs%/*}
+
+# Every replacement is byte-for-byte, and a short one is padded with slashes,
+# which the kernel and the linker collapse. An app data directory longer than
+# Termux's still fits, because the byte comes out of the component below it:
+# the rootfs directory is named to length, and so is the cache directory. The
+# bare data directory then has nothing left to give and is passed over. It
+# appears in termux-exec's compiled defaults, which the environment overrides.
+pairs=
+add_pair() {
+  p=$2
+  while [ ${#p} -lt ${#1} ]; do p="$p/"; done
+  [ ${#p} -eq ${#1} ] || return 0
+  pairs="${pairs:+$pairs }$1=$p"
+}
+
+# The cache directory is this app's to name, so it is named to fit.
+cache_name=$(echo cache | cut -c1-$(( ${#OLD_CACHE} - ${#appdir} - 1 )))
+
+add_pair "$OLD_ROOTFS" "$rootfs"
+add_pair "$OLD_CACHE" "$appdir/$cache_name"
+add_pair "$OLD_APPDIR" "$appdir"
+
+case " $pairs" in
+  *" $OLD_ROOTFS="*) ;;
+  *) echo "repack-deb: '$rootfs' is ${#rootfs} bytes; '$OLD_ROOTFS' is" \
+       "${#OLD_ROOTFS}." >&2
+     echo "repack-deb: a longer path cannot replace a shorter one in place." >&2
+     exit 1 ;;
+esac
+
+script=
+for pair in $pairs; do
+  script="${script:+$script;}s|${pair%%=*}|${pair#*=}|g"
+done
+
+real=$PREFIX/bin/dpkg.real
+[ -x "$real" ] || real=$PREFIX/bin/dpkg
+
+work=${TMPDIR:-$PREFIX/tmp}/repack-deb.$$
+trap 'rm -rf "$work"' EXIT INT TERM
+mkdir -p "$work"
+
+repack() {
+  in=$1
+  out=$work/$(basename "$in")
+  d=$work/u
+  rm -rf "$d"
+  dpkg-deb -R "$in" "$d"
+
+  if [ -d "$d$OLD_ROOTFS" ]; then
+    mkdir -p "$(dirname "$d$rootfs")"
+    mv "$d$OLD_ROOTFS" "$d$rootfs"
+    rmdir -p "$(dirname "$d$OLD_ROOTFS")" 2>/dev/null || true
+  fi
+
+  find "$d" -type f -print0 | xargs -0 -r sed -i "$script"
+
+  # Maintainer scripts arrive 0700 and dpkg-deb refuses anything outside
+  # 0555..0775.
+  for s in preinst postinst prerm postrm config triggers; do
+    [ -f "$d/DEBIAN/$s" ] && chmod 755 "$d/DEBIAN/$s"
+  done
+
+  # The payload changed, so the recorded checksums have to change with it or
+  # `dpkg --verify` reports every file as corrupt.
+  if [ -f "$d/DEBIAN/md5sums" ]; then
+    ( cd "$d" && find . -path ./DEBIAN -prune -o -type f -print \
+        | sed 's|^\./||' | sort | xargs -r md5sum ) > "$d/DEBIAN/md5sums"
+  fi
+
+  # Uncompressed: the archive is unpacked again seconds later by the dpkg this
+  # script execs, and recompressing it with the repository's xz settings costs
+  # more than everything else here put together.
+  dpkg-deb -b -Znone "$d" "$out" >/dev/null
+  echo "$out"
+}
+
+repack_dir() {
+  out=$work/recursive
+  mkdir -p "$out"
+  # No `-type f`: apt fills that directory with links into its archive cache.
+  for deb in $(find "$1" -name '*.deb' | sort); do
+    mv "$(repack "$deb")" "$out/"
+  done
+  echo "$out"
+}
+
+# Rewrite every argument that names an archive, and the directory that follows
+# `--recursive`, which is how apt actually hands dpkg a set of packages. Pass
+# everything else through untouched: most of what apt calls dpkg for --
+# `--print-foreign-architectures`, `--assert-multi-arch`, `--status-fd` --
+# names no archive at all.
+n=$#
+i=0
+recursive=
+while [ $i -lt $n ]; do
+  a=$1; shift
+  if [ -n "$recursive" ] && [ -d "$a" ]; then
+    a=$(repack_dir "$a")
+    recursive=
+  else
+    case $a in
+      --recursive|-R) recursive=1 ;;
+      *.deb) [ -f "$a" ] && a=$(repack "$a") ;;
+    esac
+  fi
+  set -- "$@" "$a"
+  i=$((i + 1))
+done
+
+exec "$real" "$@"

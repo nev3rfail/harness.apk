@@ -11,6 +11,20 @@ data class SymlinkEntry(val target: String, val linkPath: String)
 /** The entry that lists the links, which describes the tree rather than belonging to it. */
 const val SYMLINKS_NAME = "SYMLINKS.txt"
 
+/**
+ * Whether an archive entry has to come out executable.
+ *
+ * A zip records a Unix mode in its external attributes and `ZipInputStream` does
+ * not expose it, so every entry arrives at the default and a tree extracted
+ * without this has no runnable bash. These three prefixes are the rule Termux's
+ * own installer applies to the same archives, rather than a guess about which
+ * files matter.
+ */
+private fun isProgram(name: String): Boolean =
+    name.startsWith("bin/") ||
+        name.startsWith("libexec/") ||
+        name.startsWith("lib/apt/methods/")
+
 // The separator is one U+2190, not the two ASCII characters it resembles.
 private const val ARROW = '←'
 
@@ -57,6 +71,7 @@ fun extractArchive(zip: InputStream, into: File, onProgress: (Int) -> Unit): Int
             } else {
                 target.parentFile?.mkdirs()
                 target.outputStream().use { out -> stream.copyTo(out) }
+                if (isProgram(entry.name)) target.setExecutable(true, true)
             }
             stream.closeEntry()
             written++
