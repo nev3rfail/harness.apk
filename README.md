@@ -17,10 +17,10 @@ and an Android app, and the harness answers all three — see
 [Running the agent](#running-the-agent).
 
 [ferrumclaudepilgrim/claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android)
-is vendored at `vendor/claude-code-android` as the reference for the same problem solved
-inside Termux, where a full glibc runtime is available from a package manager. Checking the
-download against Anthropic's published manifest is taken from it, as is the observation
-that a runtime carrying its own resolver has to be pointed at a nameserver by hand.
+solves the same problem inside Termux, where a full glibc runtime is available from a
+package manager. Checking the download against Anthropic's published manifest is taken from
+it, as is the observation that a runtime carrying its own resolver has to be pointed at a
+nameserver by hand.
 
 ## Architecture
 

@@ -1,6 +1,3 @@
 [submodule "vendor/ghostty-android"]
 	path = vendor/ghostty-android
 	url = git@github.com:nev3rfail/ghostty-android.git
-[submodule "vendor/claude-code-android"]
-	path = vendor/claude-code-android
-	url = git@github.com:ferrumclaudepilgrim/claude-code-android.git
