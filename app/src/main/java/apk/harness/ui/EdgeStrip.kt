@@ -2,16 +2,27 @@ package apk.harness.ui
 
 import android.graphics.Rect
 import android.os.Build
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -25,14 +36,29 @@ private val StripWidth = 24.dp
 // Leftward travel that counts as a pull rather than a stray touch. Tunable.
 private val PullThreshold = 20.dp
 
+// The handle painted inside the band. Narrower than the band, so the thumb has
+// more to aim at than the eye needs. Tunable.
+private val HandleWidth = 9.6.dp
+
+// How much of the terminal's height the handle spans, centred in it. Tunable.
+private const val HandleHeightFraction = 0.5f
+
+// Enough fill to find the handle without losing the terminal underneath it.
+// Tunable.
+private const val HandleAlpha = 0.4f
+
+// How much of the handle's height the chevron is stretched to. Wide enough to
+// read only because the handle is narrow. Tunable.
+private const val ChevronHeightFraction = 0.125f
+
 /**
  * The band along the terminal's right edge that opens the file drawer.
  *
- * It overlays the terminal rather than drawing anything: the terminal's
- * surface is composited above this window, so nothing drawn here would be
- * visible over it. Declared after the terminal in its parent, the strip
+ * It overlays the terminal: declared after it in their parent, the strip
  * claims a drag that starts within its width before the surface underneath
- * ever sees it.
+ * ever sees it. Only the handle inside the band is painted, and its fill is
+ * translucent, so the terminal shows through. The straight edge is the one
+ * against the screen's.
  */
 @Composable
 fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
@@ -82,5 +108,36 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                     travel.floatValue = 0f
                 },
             ),
-    )
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(HandleWidth)
+                .fillMaxHeight(HandleHeightFraction)
+                .clip(
+                    RoundedCornerShape(
+                        topStart = HandleWidth / 2,
+                        bottomStart = HandleWidth / 2,
+                        topEnd = 0.dp,
+                        bottomEnd = 0.dp,
+                    ),
+                )
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = HandleAlpha),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                imageVector = Icons.Default.ChevronLeft,
+                contentDescription = "Open the file drawer",
+                // The vector is stretched rather than fitted: the handle gives
+                // it height to be read by and no width to be read by.
+                contentScale = ContentScale.FillBounds,
+                colorFilter = ColorFilter.tint(Color.Black),
+                modifier = Modifier
+                    .width(HandleWidth)
+                    .fillMaxHeight(ChevronHeightFraction),
+            )
+        }
+    }
 }

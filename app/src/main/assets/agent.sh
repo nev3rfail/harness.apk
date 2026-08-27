@@ -1,34 +1,34 @@
 #!/system/bin/sh
 # How the agent is started. This is the file to edit to change that.
 #
-# The loader is run as a program with the agent as its argument. musl's dynamic
-# linker supports that, so the downloaded binary is stored exactly as it arrived
-# -- its checksum keeps describing it, and it needs no execute bit.
-#
-# On x86_64 the tracer goes in front. Android grants an app an allowlist of
-# syscalls covering what bionic calls, which is only the *at variants, and
-# answers the rest with SECCOMP_RET_KILL_PROCESS. The agent's runtime uses the
-# legacy calls where the ABI still offers them. The aarch64 Linux ABI never had
-# them, so there is nothing to translate and HARNESS_SHIM is empty there.
+# The loader runs as a program with the agent as its argument, so the download is
+# stored exactly as it arrived and needs no execute bit. On x86_64 the tracer goes
+# in front: Android's seccomp allowlist covers only the *at syscalls bionic uses,
+# and the agent's runtime calls the legacy ones where the ABI still has them.
+# aarch64 never had them, so HARNESS_SHIM is empty there.
 
-# The agent is a Bun program, and Bun resolves names two ways: libc for fetch,
-# and its own c-ares for the dns module. c-ares reads the same absent
-# /etc/resolv.conf and then falls back to a nameserver on loopback that nothing
-# answers, so every lookup through it spends its full timeout before failing. A
-# preload names the resolvers instead.
+# A shell that starts this carries the wrapper's preload, which is bionic and
+# cannot relocate against the agent's musl.
+unset LD_PRELOAD
+
+# Bun resolves names through libc for fetch and c-ares for dns. c-ares finds no
+# /etc/resolv.conf, falls back to a loopback nameserver nothing answers, and
+# waits out its timeout; a preload names the resolvers instead.
 export BUN_OPTIONS="--preload $HARNESS_ETC/setdns.js"
 
 # The staged binary is the one the app downloaded and verified.
 export DISABLE_AUTOUPDATER=1
 
-# --resume with nothing to resume prints "No conversations found to resume" and
-# exits, so the flag is passed only once there is a transcript.
+# --resume with nothing to resume exits, so it is passed only with a transcript.
+# Arguments take its place, which is how a shell asks for something else.
 resume=
 if [ -n "$(ls -A "$HOME/.claude/projects" 2>/dev/null)" ]; then
     resume=--resume
 fi
 
+[ "$#" -gt 0 ] || set -- $resume
+
 if [ -n "$HARNESS_SHIM" ]; then
-    exec "$HARNESS_SHIM" "$HARNESS_LOADER" "$HARNESS_AGENT" --ide $resume
+    exec "$HARNESS_SHIM" "$HARNESS_LOADER" "$HARNESS_AGENT" --ide "$@"
 fi
-exec "$HARNESS_LOADER" "$HARNESS_AGENT" --ide $resume
+exec "$HARNESS_LOADER" "$HARNESS_AGENT" --ide "$@"

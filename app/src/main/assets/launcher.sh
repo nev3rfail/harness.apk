@@ -1,41 +1,44 @@
 #!/system/bin/sh
-# What the agent needs from the platform.
-#
-# Nothing here is spelled absolutely. The app exports every path it owns as a
-# HARNESS_ variable, so one copy of this file serves every channel and the staged
-# file is the same bytes as the asset it came from.
-#
-# Edited on a device, this survives a relaunch: the app stages it when it is
-# absent and leaves it alone when it is there. Deleting it restores it.
+# What the agent needs from the platform. Paths arrive as HARNESS_ variables, so
+# one copy serves every channel. The app stages this only when it is absent, so
+# an edit here survives a relaunch and deleting it restores the original.
 
 export HOME="$HARNESS_HOME"
 export TMPDIR="$HARNESS_TMP"
 
-# Android answers a name lookup through netd rather than through a nameserver in
-# /etc/resolv.conf, so a program carrying its own resolver has nothing to read.
-# The tracer redirects /etc at this directory, and the app writes the file.
+# Android resolves names through netd, so a program carrying its own resolver
+# finds no /etc/resolv.conf. The tracer redirects /etc here, and the app fills it.
 export SYSCALL_SHIM_ETC="$HARNESS_ETC"
 
-# A URL is drawn as a hyperlink only for a terminal the agent believes supports
-# them, and it recognises this one by nothing. This is ghostty's terminal,
-# hyperlinks work, and a tap on one hands the URL to the phone. That is how a
-# login is completed here: the agent cannot open a browser itself, so it prints
-# the authorization URL and someone taps it.
+# The agent cannot open a browser, so a login is a URL it prints and someone
+# taps. It draws one only for a terminal it believes does hyperlinks; this one does.
 export FORCE_HYPERLINK=1
 
-# Android's own shell is toybox, and it is what the agent gets when no userland
-# is installed. Every tool the agent builds on a shell is disabled without one.
+# Toybox: what there is to run without a userland.
 export SHELL=/system/bin/sh
+
+# The shell can start the agent too, through the same script this launcher uses.
+mkdir -p "$HARNESS_HOME/bin"
+ln -sf "$HARNESS_HOME/agent.sh" "$HARNESS_HOME/bin/claude"
+export PATH="$HARNESS_HOME/bin:$PATH"
 
 if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
     export PREFIX="$HARNESS_PREFIX"
     export TERMUX__PREFIX="$HARNESS_PREFIX"
     export TERMUX__ROOTFS="$HARNESS_ROOTFS"
     export TERMUX_APP__DATA_DIR="$HARNESS_DATA"
-    # Carried in the environment as well as in the wrapper, so the userland's
-    # programs are found by whatever ran them.
+    # In the environment as well as in the wrapper, so a parent finds these too.
     export PATH="$HARNESS_PREFIX/bin:$PATH"
     export SHELL="$HARNESS_HOME/shell.sh"
 fi
 
-exec "$HARNESS_HOME/agent.sh"
+# Run the agent rather than become it: exec would take the pty down on its exit.
+"$HARNESS_HOME/agent.sh"
+
+# The session then belongs to a shell. The wrapper carries termux-exec, so it
+# comes first; bash directly when the wrapper is gone; toybox with no userland.
+if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
+    [ -x "$HARNESS_HOME/shell.sh" ] && exec "$HARNESS_HOME/shell.sh"
+    exec "$HARNESS_PREFIX/bin/bash"
+fi
+exec /system/bin/sh
