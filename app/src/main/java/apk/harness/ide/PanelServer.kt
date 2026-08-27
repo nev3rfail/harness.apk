@@ -38,6 +38,16 @@ class PanelServer(
 
     val port: Int get() = socket?.localPort ?: 0
 
+    /**
+     * The config file naming this server, once it is running.
+     *
+     * The agent reads this out of its working directory, which is right for a
+     * session started in the workspace and wrong for one started anywhere else,
+     * so a session that starts elsewhere is given the path on its command line
+     * instead. Public for that.
+     */
+    val configFile: File? get() = config
+
     fun start() {
         val listening = ServerSocket(0, BACKLOG, InetAddress.getByName(IPV4_LOOPBACK))
         socket = listening

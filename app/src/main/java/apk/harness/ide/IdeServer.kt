@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.java_websocket.WebSocket
 import org.java_websocket.drafts.Draft_6455
 import org.java_websocket.extensions.IExtension
@@ -42,7 +44,19 @@ class IdeServer(
 
     val port: Int get() = server?.port ?: 0
 
-    fun start() {
+    /**
+     * Binds, writes the lockfile, and returns the port.
+     *
+     * Blocking rather than leaving the port to arrive on a coroutine, because
+     * the port is an input to spawning the agent -- it travels to it in
+     * `CLAUDE_CODE_SSE_PORT` -- rather than something written to a file for it
+     * to find later. The wait is for a loopback bind and is measured in
+     * milliseconds.
+     *
+     * Zero means the socket never bound, which leaves the caller a session with
+     * no editor rather than no session.
+     */
+    fun start(): Int {
         // Port 0 asks the system for a free one. The lockfile cannot be written
         // until it is known, because its name is the port.
         val listener = Server()
@@ -50,30 +64,46 @@ class IdeServer(
         listener.start()
         server = listener
 
-        scope.launch {
-            val bound = listener.awaitPort()
-            lockDirectory.mkdirs()
+        val bound = runCatching {
+            runBlocking { withTimeout(BIND_TIMEOUT_MS) { listener.awaitPort() } }
+        }.getOrElse {
+            Log.e(TAG, "the editor socket did not bind", it)
+            return 0
+        }
 
-            // Only this app writes here, so anything already present belongs to a
-            // process that is gone -- the app does not get to tidy up when it is
-            // killed. Left alone, the agent would find it first and try to
-            // connect to a closed port with a stale token.
-            lockDirectory.listFiles { file -> file.name.endsWith(".lock") }
-                ?.forEach { it.delete() }
+        lockDirectory.mkdirs()
+        sweepStaleLocks()
 
-            val file = File(lockDirectory, "$bound.lock")
-            file.writeText(
-                JSONObject()
-                    .put("pid", android.os.Process.myPid())
-                    .put("workspaceFolders", JSONArray().put(workspace.absolutePath))
-                    .put("ideName", APP_NAME)
-                    .put("transport", "ws")
-                    .put("runningInWindows", false)
-                    .put("authToken", authToken)
-                    .toString(),
-            )
-            lockFile = file
-            Log.i(TAG, "listening on $bound, lockfile ${file.absolutePath}")
+        val file = File(lockDirectory, "$bound.lock")
+        file.writeText(
+            JSONObject()
+                .put("pid", android.os.Process.myPid())
+                .put("workspaceFolders", JSONArray().put(workspace.absolutePath))
+                .put("ideName", APP_NAME)
+                .put("transport", "ws")
+                .put("runningInWindows", false)
+                .put("authToken", authToken)
+                .toString(),
+        )
+        lockFile = file
+        Log.i(TAG, "listening on $bound, lockfile ${file.absolutePath}")
+        return bound
+    }
+
+    /**
+     * Removes the locks of servers that are gone.
+     *
+     * Only this app writes here, and it does not get to tidy up when it is
+     * killed, so a lock naming another process is a closed port with a stale
+     * token that the agent would try first. A lock naming *this* process belongs
+     * to another tab and is left alone -- sweeping those was right when only one
+     * server could exist and is each new tab unhooking its siblings now.
+     */
+    private fun sweepStaleLocks() {
+        val mine = android.os.Process.myPid()
+        lockDirectory.listFiles { file -> file.name.endsWith(".lock") }?.forEach { file ->
+            val pid = runCatching { JSONObject(file.readText()).optInt("pid") }.getOrDefault(0)
+            if (pid != mine) file.delete()
         }
     }
 
@@ -166,6 +196,7 @@ class IdeServer(
         const val IPV4_LOOPBACK = "127.0.0.1"
         const val AUTH_HEADER = "X-Claude-Code-Ide-Authorization"
         const val CLOSE_TIMEOUT_MS = 1000
+        const val BIND_TIMEOUT_MS = 5000L
         const val POLICY_VIOLATION = 1008
     }
 }

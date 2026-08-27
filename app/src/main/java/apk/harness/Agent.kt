@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import apk.harness.bootstrap.AgentStage
 import com.ghostty.android.terminal.TerminalSession
+import java.io.File
 
 /**
  * The session the terminal runs.
@@ -17,24 +18,57 @@ class Agent(private val context: Context) {
 
     private val stage = AgentStage(context)
 
-    fun session(): TerminalSession {
+    /** Where the agent's home is, which is where every project's history is filed. */
+    val home: File get() = stage.home
+
+    /**
+     * A session, in [directory], reached over [idePort].
+     *
+     * [directory] is the working directory the agent runs in and not its `HOME`:
+     * one home holds every project's transcripts and one set of credentials,
+     * while the working directory is what decides which project a conversation
+     * belongs to and therefore what `--resume` can find.
+     *
+     * [idePort] is the port the app is listening on for this session alone.
+     * Discovery otherwise picks a lockfile by matching its workspace against the
+     * working directory and taking the newest, which with more than one server
+     * is several answers to one question; the port names one of them.
+     *
+     * [arguments] reach the agent through `launcher.sh`, which forwards them to
+     * `agent.sh`. That script stands its own `--resume` default down when it is
+     * given arguments, so a session opened on a named conversation is not also
+     * offered the picker.
+     */
+    fun session(
+        directory: File = stage.home,
+        idePort: Int = 0,
+        arguments: List<String> = emptyList(),
+    ): TerminalSession {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
         runCatching { stage.stageHome() }
             .onFailure { Log.w(TAG, "the home payload did not stage", it) }
+
+        // The tap that opened this is the operator trusting the directory, so
+        // the agent is told rather than asking.
+        trustProject(File(stage.home, CONFIG_NAME), directory.absolutePath)
 
         val environment = TerminalSession.defaultEnvironment(
             home = stage.home.absolutePath,
             tmp = stage.tmp.absolutePath,
         ).toMutableMap()
         environment += stage.environment()
+        if (idePort > 0) environment["CLAUDE_CODE_SSE_PORT"] = idePort.toString()
+        // Word-split by the shell that reads it, which is why nothing here may
+        // carry a space. Session ids are UUIDs and paths are the app's own.
+        if (arguments.isNotEmpty()) environment["HARNESS_AGENT_ARGS"] = arguments.joinToString(" ")
 
         if (!stage.isStaged()) {
             // Android's own shell, which is toybox.
             environment["SHELL"] = ANDROID_SHELL
             return TerminalSession(
                 environment = environment,
-                cwd = stage.home.absolutePath,
+                cwd = directory.absolutePath,
             )
         }
 
@@ -44,12 +78,15 @@ class Agent(private val context: Context) {
             command = ANDROID_SHELL,
             argv = listOf(ANDROID_SHELL, stage.launcher.absolutePath),
             environment = environment,
-            cwd = stage.home.absolutePath,
+            cwd = directory.absolutePath,
         )
     }
 
     private companion object {
         const val TAG = "Agent"
         const val ANDROID_SHELL = "/system/bin/sh"
+
+        /** The agent's own config file, in its home. `AgentStage` seeds it. */
+        const val CONFIG_NAME = ".claude.json"
     }
 }

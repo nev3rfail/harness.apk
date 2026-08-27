@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,21 +16,26 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.lifecycleScope
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.bootstrap.BootstrapProgress
+import apk.harness.chats.Chat
+import apk.harness.chats.Project
 import apk.harness.ide.APP_NAME
 import apk.harness.ide.IdeServer
 import apk.harness.ide.McpEndpoint
@@ -39,15 +45,17 @@ import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
 import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
-import apk.harness.ui.FileDrawer
+import apk.harness.ui.DrawerSide
 import apk.harness.ui.FileTree
 import apk.harness.ui.HarnessTheme
 import apk.harness.ui.InputToolbar
+import apk.harness.ui.SessionTree
+import apk.harness.ui.SideDrawer
 import apk.harness.ui.SurfacePanel
+import apk.harness.ui.TabStrip
+import apk.harness.ui.TerminalPane
 import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
-import com.ghostty.android.renderer.TerminalEventListener
-import com.ghostty.android.terminal.TerminalSession
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,19 +64,21 @@ import kotlinx.coroutines.withContext
 /**
  * The harness.
  *
- * A terminal running the agent, and an IDE the agent connects back to. The agent
- * draws its own interface in the terminal; anything it wants drawn properly it
+ * Terminals running agents, and an IDE each of them connects back to. An agent
+ * draws its own interface in its terminal; anything it wants drawn properly it
  * asks the app for, and that arrives here as a [Surface] over the top.
  */
 class MainActivity : ComponentActivity() {
 
     // Built once the userland is installed rather than in onCreate, so it is
     // absent while the install runs.
-    private var session: TerminalSession? = null
-    private lateinit var ide: IdeServer
+    private var tabs: AgentTabs? = null
     private lateinit var panels: PanelServer
+    private lateinit var tools: Tools
     private val surfaces = Surfaces()
-    private var surfaceView: GhosttyGLSurfaceView? = null
+
+    /** Every terminal on screen, by its tab. Only one of them is visible. */
+    private val views = mutableMapOf<Long, GhosttyGLSurfaceView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,7 +89,7 @@ class MainActivity : ComponentActivity() {
 
         val home = filesDir
 
-        val tools = Tools(
+        tools = Tools(
             surfaces = surfaces,
             openExternal = ::openExternally,
             // Raw bytes for a diff to line up against the proposed text; a
@@ -92,17 +102,9 @@ class MainActivity : ComponentActivity() {
             readDocument = { path -> documentFor(File(path)) },
         )
 
-        // The agent finds an editor by reading lockfiles out of its own config
-        // directory, so the server has to write into the home the agent is given.
-        ide = IdeServer(
-            workspace = home,
-            lockDirectory = File(home, ".claude/ide"),
-            endpoint = McpEndpoint(APP_NAME, tools::editorDefinitions, tools::call),
-        )
-        ide.start()
-
         // The panels the agent chooses for itself travel the other way in, as a
         // server it is configured with rather than an editor it attaches to.
+        // One of these serves every tab: a phone has room for one panel.
         panels = PanelServer(
             workspace = home,
             endpoint = McpEndpoint(APP_NAME, tools::panelDefinitions, tools::call),
@@ -129,17 +131,17 @@ class MainActivity : ComponentActivity() {
                     // Built here rather than in onCreate: session() probes for a
                     // userland once, so a session made before the install is a
                     // session that never sees it.
-                    val started = remember {
-                        Agent(this@MainActivity).session().also { session = it }
-                    }
+                    val holder = remember { openTabs(home) }
                     HarnessScreen(
-                        session = started,
+                        tabs = holder,
                         surfaces = surfaces,
                         root = home,
+                        agentHome = File(home, AGENT_CONFIG_DIRECTORY),
                         // Zero at this boundary means "unasked": the renderer leaves the
                         // terminal library its own default rather than disabling history.
                         scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
-                        onSurfaceViewCreated = { surfaceView = it },
+                        onViewCreated = { key, view -> views[key] = view },
+                        onViewReleased = { key -> views.remove(key) },
                         openLink = { openExternally(it) },
                         copyText = { text -> runOnUiThread { copyToClipboard(text) } },
                         pasteText = ::clipboardAsInput,
@@ -161,29 +163,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The tab holder, with the app's own agent already in it.
+     *
+     * Every tab gets an editor of its own, on a port of its own, because
+     * discovery otherwise picks one lockfile out of the directory by matching
+     * its workspace and taking the newest -- which with several servers is
+     * several answers to one question.
+     */
+    private fun openTabs(home: File): AgentTabs = AgentTabs(
+        scope = lifecycleScope,
+        agent = Agent(this),
+        editorFor = { workspace ->
+            IdeServer(
+                workspace = workspace,
+                // The agent finds an editor by reading lockfiles out of its own
+                // config directory, so every server writes into the one home
+                // every agent is given.
+                lockDirectory = File(home, "$AGENT_CONFIG_DIRECTORY/ide"),
+                endpoint = McpEndpoint(APP_NAME, tools::editorDefinitions, tools::call),
+            )
+        },
+        panelConfig = { panels.configFile },
+    ).also {
+        tabs = it
+        it.openDefault()
+    }
+
     override fun onPause() {
         super.onPause()
-        surfaceView?.onPauseView()
+        showing()?.onPauseView()
     }
 
     override fun onResume() {
         super.onResume()
-        surfaceView?.onResumeView()
+        showing()?.onResumeView()
     }
+
+    /** The one terminal on screen, or null before there is one. */
+    private fun showing(): GhosttyGLSurfaceView? =
+        views.values.firstOrNull { it.visibility == View.VISIBLE }
 
     override fun onDestroy() {
         super.onDestroy()
-        session?.stop()
-        ide.stop()
+        tabs?.stopAll()
         panels.stop()
         AgentService.stop(this)
     }
 
-    /**
-     * Hands a URI to whatever on the device handles it. This is the embed story
-     * for anything the app has no business drawing itself: a `geo:` link is a
-     * map application, `tel:` is the dialer.
-     */
     /**
      * Puts text on the device clipboard. The system announces the copy itself
      * from Android 13 on, so nothing is drawn here.
@@ -211,6 +238,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Hands a URI to whatever on the device handles it. This is the embed story
+     * for anything the app has no business drawing itself: a `geo:` link is a
+     * map application, `tel:` is the dialer.
+     */
     private fun openExternally(uri: String): Boolean = try {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -221,38 +253,55 @@ class MainActivity : ComponentActivity() {
     } catch (e: IllegalArgumentException) {
         false
     }
+
+    private companion object {
+        /** Where the agent keeps its projects, its lockfiles and its settings. */
+        const val AGENT_CONFIG_DIRECTORY = ".claude"
+    }
 }
 
 @Composable
 private fun HarnessScreen(
-    session: TerminalSession,
+    tabs: AgentTabs,
     surfaces: Surfaces,
     root: File,
+    agentHome: File,
     scrollbackBytes: Long,
-    onSurfaceViewCreated: (GhosttyGLSurfaceView) -> Unit,
+    onViewCreated: (Long, GhosttyGLSurfaceView) -> Unit,
+    onViewReleased: (Long) -> Unit,
     openLink: (String) -> Unit,
     copyText: (String) -> Unit,
     pasteText: () -> String,
 ) {
-    var view by remember { mutableStateOf<GhosttyGLSurfaceView?>(null) }
     // spike: with a `capture` file in the home, every byte the agent writes is
     // kept, so a screen that goes wrong can be replayed.
     val context = androidx.compose.ui.platform.LocalContext.current
     val capture = remember {
         val home = context.filesDir
-        if (java.io.File(home, "capture").exists()) {
-            java.io.FileOutputStream(java.io.File(home, "pty.log"), true).buffered()
+        if (File(home, "capture").exists()) {
+            java.io.FileOutputStream(File(home, "pty.log"), true).buffered()
         } else {
             null
         }
     }
 
+    val open by tabs.tabs.collectAsState()
+    val activeKey by tabs.activeKey.collectAsState()
+    val live by tabs.live.collectAsState()
+    val active = open.firstOrNull { it.key == activeKey }
+
+    // The terminal the toolbar types into: whichever one is showing.
+    val views = remember { mutableStateMapOf<Long, GhosttyGLSurfaceView>() }
+    val view = views[activeKey]
+
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
     val surface by surfaces.visible.collectAsState()
 
-    var drawerOpen by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf(emptySet<String>()) }
+    var filesOpen by remember { mutableStateOf(false) }
+    var chatsOpen by remember { mutableStateOf(false) }
+    var expandedFiles by remember { mutableStateOf(emptySet<String>()) }
+    var expandedProjects by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -261,65 +310,66 @@ private fun HarnessScreen(
         // The status bar inset lives here, so the terminal's first line is never
         // under the bar when the bar is showing.
         Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
-            // The strip overlays the terminal's right edge and is declared
-            // after it, so a drag starting there reaches the strip rather
-            // than the surface underneath.
+            // One agent is the ordinary case, and it gives up no height for a
+            // row of one.
+            if (open.size > 1) {
+                TabStrip(
+                    tabs = open,
+                    activeKey = activeKey,
+                    onSelect = tabs::select,
+                    onClose = tabs::close,
+                )
+                HorizontalDivider()
+            }
+
+            // The strips overlay the terminal's edges and are declared after
+            // it, so a drag starting there reaches a strip rather than the
+            // surface underneath.
             Box(modifier = Modifier.fillMaxSize().weight(1f)) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        GhosttyGLSurfaceView(
-                            context,
-                            maxScrollbackBytes = scrollbackBytes,
-                        ).also { created ->
-                            view = created
-                            onSurfaceViewCreated(created)
-                            created.onModifiersConsumed = {
+                // Every tab is composed; only the active one is visible. A tab
+                // dropped from the composition would take its terminal with it
+                // and leave its agent writing to a pty nobody reads.
+                open.forEach { tab ->
+                    key(tab.key) {
+                        TerminalPane(
+                            session = tab.session,
+                            visible = tab.key == activeKey,
+                            scrollbackBytes = scrollbackBytes,
+                            capture = capture,
+                            onCreated = { created ->
+                                views[tab.key] = created
+                                onViewCreated(tab.key, created)
+                            },
+                            onReleased = {
+                                views.remove(tab.key)
+                                onViewReleased(tab.key)
+                            },
+                            onModifiersConsumed = {
                                 ctrlActive = false
                                 altActive = false
-                            }
-                            created.setEventListener(object : TerminalEventListener {
-                                override fun onSurfaceReady(cols: Int, rows: Int) {
-                                    if (session.isRunning.value) {
-                                        session.resize(cols, rows)
-                                        return
-                                    }
-                                    session.start(
-                                        cols = cols,
-                                        rows = rows,
-                                        onOutput = { bytes, length ->
-                                            capture?.run { write(bytes, 0, length); flush() }
-                                            created.getRenderer().processInput(bytes, length)
-                                            // The agent asks for the clipboard with
-                                            // OSC 52, which arrives in its output
-                                            // rather than through a tool.
-                                            created.getRenderer().takeClipboardWrite()
-                                                ?.let(copyText)
-                                        },
-                                    )
-                                }
-
-                                override fun onInput(bytes: ByteArray) = session.write(bytes)
-
-                                override fun onKeyboardOverlayProgress(offset: Float, maxOffset: Float) {}
-
-                                override fun onKeyboardOverlayStateChanged(expanded: Boolean) {}
-
-                                override fun onHyperlinkClicked(uri: String) = openLink(uri)
-
-                                override fun onTextSelected(text: String) = copyText(text)
-                            })
-                        }
-                    },
+                            },
+                            openLink = openLink,
+                            copyText = copyText,
+                        )
+                    }
+                }
+                DrawerEdgeStrip(
+                    side = DrawerSide.Left,
+                    onOpen = { chatsOpen = true },
+                    modifier = Modifier.align(Alignment.CenterStart),
                 )
                 DrawerEdgeStrip(
-                    onOpen = { drawerOpen = true },
+                    side = DrawerSide.Right,
+                    onOpen = { filesOpen = true },
                     modifier = Modifier.align(Alignment.CenterEnd),
                 )
             }
             InputToolbar(
-                onKey = { session.write(it) },
-                onPaste = { pasteText().takeIf { text -> text.isNotEmpty() }?.let(session::write) },
+                onKey = { active?.session?.write(it) },
+                onPaste = {
+                    pasteText().takeIf { text -> text.isNotEmpty() }
+                        ?.let { active?.session?.write(it) }
+                },
                 onShowKeyboard = { view?.showKeyboard() },
                 onToggleCtrl = {
                     ctrlActive = !ctrlActive
@@ -347,19 +397,19 @@ private fun HarnessScreen(
             }
         }
 
-        // A drawer of its own rather than a Surface. Surfaces holds one surface
-        // and abandons the last, and abandoning a diff rejects it -- so routing
-        // the tree through it would answer for the agent every time the operator
-        // opened a file.
-        if (drawerOpen) {
-            FileDrawer(onClosed = { drawerOpen = false }) { close ->
+        // Drawers of their own rather than Surfaces. Surfaces holds one surface
+        // and waits for a pending diff before replacing it, so routing a tree
+        // through it would leave the operator browsing a file behind an
+        // unanswered question.
+        if (filesOpen) {
+            SideDrawer(side = DrawerSide.Right, onClosed = { filesOpen = false }) { close ->
                 FileTree(
                     root = root,
-                    expanded = expanded,
+                    expanded = expandedFiles,
                     onToggle = { file ->
-                        expanded =
-                            if (file.path in expanded) expanded - file.path
-                            else expanded + file.path
+                        expandedFiles =
+                            if (file.path in expandedFiles) expandedFiles - file.path
+                            else expandedFiles + file.path
                     },
                     // A click handler runs on the main thread, and this reads up
                     // to a mebibyte. The panel opens when the document is built.
@@ -373,7 +423,44 @@ private fun HarnessScreen(
                 )
             }
         }
+
+        if (chatsOpen) {
+            SideDrawer(side = DrawerSide.Left, onClosed = { chatsOpen = false }) { close ->
+                SessionTree(
+                    agentHome = agentHome,
+                    live = live,
+                    expanded = expandedProjects,
+                    onToggle = { path ->
+                        expandedProjects =
+                            if (path in expandedProjects) expandedProjects - path
+                            else expandedProjects + path
+                    },
+                    // Opening a tab binds a socket, seeds a trust answer and
+                    // may stage the agent's home, none of which belongs on the
+                    // thread the tap arrived on.
+                    onOpenChat = { project: Project, chat: Chat ->
+                        close()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                tabs.resume(chat, File(project.path))
+                            }
+                        }
+                    },
+                    onNewChat = { project: Project ->
+                        close()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                tabs.start(File(project.path), project.name)
+                            }
+                        }
+                    },
+                    onDismiss = close,
+                )
+            }
+        }
     }
 
+    // The terminal takes the keyboard when it arrives and when the tab changes,
+    // so a tab switch leaves something to type into.
     LaunchedEffect(view) { view?.showKeyboard() }
 }

@@ -33,7 +33,13 @@ if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
 fi
 
 # Run the agent rather than become it: exec would take the pty down on its exit.
-"$HARNESS_HOME/agent.sh"
+#
+# HARNESS_AGENT_ARGS is what the app asks for on behalf of a tab -- which
+# conversation to resume, which id to give a new one, where its MCP config is.
+# Unquoted on purpose, so it splits into arguments; nothing the app puts there
+# carries a space. Empty for the session the app starts by itself, which leaves
+# agent.sh its own defaults.
+"$HARNESS_HOME/agent.sh" $HARNESS_AGENT_ARGS
 
 # The session then belongs to a shell. The wrapper carries termux-exec, so it
 # comes first; bash directly when the wrapper is gone; toybox with no userland.

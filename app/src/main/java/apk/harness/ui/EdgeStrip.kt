@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
@@ -33,7 +34,7 @@ import androidx.compose.ui.unit.dp
 // it is the smallest strip a drag can start in reliably. Tunable.
 private val StripWidth = 24.dp
 
-// Leftward travel that counts as a pull rather than a stray touch. Tunable.
+// Travel inward that counts as a pull rather than a stray touch. Tunable.
 private val PullThreshold = 20.dp
 
 // The handle painted inside the band. Narrower than the band, so the thumb has
@@ -52,16 +53,20 @@ private const val HandleAlpha = 0.4f
 private const val ChevronHeightFraction = 0.125f
 
 /**
- * The band along the terminal's right edge that opens the file drawer.
+ * The band along one edge of the terminal that opens the drawer on that side.
  *
  * It overlays the terminal: declared after it in their parent, the strip
  * claims a drag that starts within its width before the surface underneath
  * ever sees it. Only the handle inside the band is painted, and its fill is
  * translucent, so the terminal shows through. The straight edge is the one
  * against the screen's.
+ *
+ * [side] decides which edge it sits against, which way a pull has to travel,
+ * and which way the chevron points. There is one of these per side, and they
+ * share the view's gesture exclusion.
  */
 @Composable
-fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+fun DrawerEdgeStrip(side: DrawerSide, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val view = LocalView.current
     val threshold = with(LocalDensity.current) { PullThreshold.toPx() }
     // Read only inside the drag callbacks, so accumulating it recomposes
@@ -85,16 +90,21 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                         bounds.right.toInt(),
                         bounds.bottom.toInt(),
                     )
-                    // Layout runs on every frame of the keyboard's animation
-                    // and the rectangle is the same one throughout, so it goes
-                    // to the system only once it has moved. The comparison is
-                    // against the list the view holds because the strip owns
-                    // this view's exclusion rects outright -- the write
-                    // replaces them all -- so there is no second copy in
-                    // composition state to drift from what is registered.
+                    // The write replaces the whole list, and there is a strip on
+                    // each edge, so this side takes out only what it put in --
+                    // anything overlapping its own rectangle -- and leaves the
+                    // other side's alone. Two strips at opposite edges never
+                    // overlap, which is what makes that test enough.
+                    //
+                    // The comparison is against the list the view holds rather
+                    // than against composition state, so there is no second copy
+                    // to drift from what is registered. Layout runs on every
+                    // frame of the keyboard's animation with the same rectangle
+                    // throughout, so an unchanged list is not rewritten.
                     val registered = view.systemGestureExclusionRects
-                    if (registered.size != 1 || registered[0] != rect) {
-                        view.systemGestureExclusionRects = listOf(rect)
+                    val others = registered.filterNot { Rect.intersects(it, rect) }
+                    if (registered.size != others.size + 1 || rect !in registered) {
+                        view.systemGestureExclusionRects = others + rect
                     }
                 }
             }
@@ -103,24 +113,42 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 state = rememberDraggableState { delta -> travel.floatValue += delta },
                 onDragStarted = { travel.floatValue = 0f },
                 onDragStopped = {
-                    // Leftward is negative: the drawer comes in from the right.
-                    if (travel.floatValue <= -threshold) onOpen()
+                    // Inward is away from the edge the drawer comes in from:
+                    // negative on the right, positive on the left.
+                    val pulled = when (side) {
+                        DrawerSide.Right -> travel.floatValue <= -threshold
+                        DrawerSide.Left -> travel.floatValue >= threshold
+                    }
+                    if (pulled) onOpen()
                     travel.floatValue = 0f
                 },
             ),
-        contentAlignment = Alignment.CenterEnd,
+        contentAlignment =
+            if (side == DrawerSide.Right) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
+        val rounded = HandleWidth / 2
         Box(
             modifier = Modifier
                 .width(HandleWidth)
                 .fillMaxHeight(HandleHeightFraction)
+                // Round the inward corners and leave the ones against the
+                // screen's edge square.
                 .clip(
-                    RoundedCornerShape(
-                        topStart = HandleWidth / 2,
-                        bottomStart = HandleWidth / 2,
-                        topEnd = 0.dp,
-                        bottomEnd = 0.dp,
-                    ),
+                    if (side == DrawerSide.Right) {
+                        RoundedCornerShape(
+                            topStart = rounded,
+                            bottomStart = rounded,
+                            topEnd = 0.dp,
+                            bottomEnd = 0.dp,
+                        )
+                    } else {
+                        RoundedCornerShape(
+                            topStart = 0.dp,
+                            bottomStart = 0.dp,
+                            topEnd = rounded,
+                            bottomEnd = rounded,
+                        )
+                    }
                 )
                 .background(
                     MaterialTheme.colorScheme.primary.copy(alpha = HandleAlpha),
@@ -128,8 +156,12 @@ fun DrawerEdgeStrip(onOpen: () -> Unit, modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center,
         ) {
             Image(
-                imageVector = Icons.Default.ChevronLeft,
-                contentDescription = "Open the file drawer",
+                imageVector =
+                    if (side == DrawerSide.Right) Icons.Default.ChevronLeft
+                    else Icons.Default.ChevronRight,
+                contentDescription =
+                    if (side == DrawerSide.Right) "Open the file drawer"
+                    else "Open the chat drawer",
                 // The vector is stretched rather than fitted: the handle gives
                 // it height to be read by and no width to be read by.
                 contentScale = ContentScale.FillBounds,

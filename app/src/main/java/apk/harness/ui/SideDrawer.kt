@@ -38,8 +38,11 @@ private const val SlideMillis = 300
 
 private const val ScrimAlpha = 0.35f
 
+/** Which edge a drawer is anchored to, and therefore which way it arrives. */
+enum class DrawerSide { Left, Right }
+
 /**
- * A panel presented as a drawer against the right edge.
+ * A panel presented as a drawer against one edge.
  *
  * Structurally a [Dialog], as every panel here is: the terminal's surface is
  * composited above its own window, so anything drawn in that window sits under
@@ -50,9 +53,14 @@ private const val ScrimAlpha = 0.35f
  * have both finished and the caller can drop this from the composition; the
  * [content] receives the same close, so the scrim, the back action and the
  * content's own way out all play it.
+ *
+ * [side] decides the edge it sits against and the direction it slides from.
+ * Nothing else differs between the two: the file tree on the right and the
+ * chat list on the left are one drawer shown from two sides.
  */
 @Composable
-fun FileDrawer(
+fun SideDrawer(
+    side: DrawerSide,
     onClosed: () -> Unit,
     content: @Composable (close: () -> Unit) -> Unit,
 ) {
@@ -109,11 +117,19 @@ fun FileDrawer(
                         indication = null,
                     ) { closing = true },
             )
+            // Off-screen is past the far edge, so the offset a slide starts and
+            // ends at is the panel's width on the right and its negation on the
+            // left.
+            val offScreen: (Int) -> Int =
+                if (side == DrawerSide.Right) { width -> width } else { width -> -width }
+
             transition.AnimatedVisibility(
                 visible = { open -> open },
-                modifier = Modifier.align(Alignment.CenterEnd),
-                enter = slideInHorizontally(animationSpec = tween(SlideMillis)) { width -> width },
-                exit = slideOutHorizontally(animationSpec = tween(SlideMillis)) { width -> width },
+                modifier = Modifier.align(
+                    if (side == DrawerSide.Right) Alignment.CenterEnd else Alignment.CenterStart
+                ),
+                enter = slideInHorizontally(animationSpec = tween(SlideMillis), initialOffsetX = offScreen),
+                exit = slideOutHorizontally(animationSpec = tween(SlideMillis), targetOffsetX = offScreen),
             ) {
                 Box(
                     modifier = Modifier
