@@ -1,6 +1,7 @@
 package apk.harness
 
 import android.content.Context
+import android.util.Log
 import apk.harness.bootstrap.AgentStage
 import com.ghostty.android.terminal.TerminalSession
 
@@ -17,6 +18,11 @@ class Agent(private val context: Context) {
     private val stage = AgentStage(context)
 
     fun session(): TerminalSession {
+        // Content rather than machinery, so a failure here costs the agent a
+        // skill and not the operator a session.
+        runCatching { stage.stageHome() }
+            .onFailure { Log.w(TAG, "the home payload did not stage", it) }
+
         val environment = TerminalSession.defaultEnvironment(
             home = stage.home.absolutePath,
             tmp = stage.tmp.absolutePath,
@@ -43,6 +49,7 @@ class Agent(private val context: Context) {
     }
 
     private companion object {
+        const val TAG = "Agent"
         const val ANDROID_SHELL = "/system/bin/sh"
     }
 }

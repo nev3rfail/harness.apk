@@ -99,6 +99,34 @@ class AgentStage(private val context: Context) {
     }
 
     /**
+     * Stages what the app tells the agent about itself: the environment
+     * document, the skills, and the enablement the panel tools need.
+     *
+     * Once per install rather than once per launch, so an edit made on the
+     * device stands until the next one. The timestamp comes off the installed
+     * APK, which changes on every install including a reinstall of the same
+     * version.
+     */
+    fun stageHome() {
+        val installed = File(context.applicationInfo.sourceDir).lastModified().toString()
+        if (!payloadDue(payload, installed)) return
+
+        home.mkdirs()
+        copyTree(HOME_TREE, overwrite = true)
+        copyTree(SEED_TREE, overwrite = false)
+
+        // Last, for the reason the version stamp is written last: a run that
+        // failed halfway would otherwise report a staged payload.
+        stage.mkdirs()
+        payload.writeText("$installed\n")
+    }
+
+    private fun copyTree(tree: String, overwrite: Boolean) {
+        val entries = assetEntries({ context.assets.list(it) }, tree)
+        copyAssets(entries, { context.assets.open(it) }, tree, home, overwrite)
+    }
+
+    /**
      * Copies the loader out of the native library directory and points its
      * compiled-in paths at this channel.
      *
@@ -164,10 +192,18 @@ class AgentStage(private val context: Context) {
 
     private val stamp: File get() = File(stage, VERSION_NAME)
 
+    private val payload: File get() = File(stage, PAYLOAD_NAME)
+
     private companion object {
         const val STAGE_DIRECTORY = "claude"
         const val BINARY_NAME = "claude"
         const val VERSION_NAME = "VERSION"
+        const val PAYLOAD_NAME = "PAYLOAD"
+
+        // Two trees because two rules: what the app says about the device is
+        // replaced on install, and what the operator or the agent owns is not.
+        const val HOME_TREE = "home"
+        const val SEED_TREE = "seed"
         const val LAUNCHER = "launcher.sh"
         val SCRIPTS = listOf(LAUNCHER, "agent.sh", "shell.sh")
 

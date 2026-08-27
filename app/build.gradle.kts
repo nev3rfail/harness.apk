@@ -66,6 +66,14 @@ android {
         compose = true
     }
 
+    androidResources {
+        // The packaging step drops any asset whose name begins with a dot, and
+        // every file the agent reads lives under `.claude`. This is the default
+        // pattern with that one rule taken out.
+        ignoreAssetsPattern =
+            "!.svn:!.git:!.ds_store:!*.scc:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

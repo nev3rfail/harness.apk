@@ -15,3 +15,7 @@ local.properties
 # Signing material must never reach a repo that becomes public.
 *.keystore
 *.jks
+
+# The MCP enablement the app installs into the agent's home. An asset, not
+# anyone's own settings, so the usual rule against this name does not apply.
+!app/src/main/assets/seed/.claude/settings.local.json
