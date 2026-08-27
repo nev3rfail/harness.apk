@@ -131,8 +131,12 @@ private const val ZERO: Byte = 0
 /**
  * Extension to fence info string. Absent means an unlabelled fence, which still
  * preserves every line.
+ *
+ * Internal because it is the only place that decides what a fence is labelled,
+ * and what colours a fence reads those labels: the two lists are checked against
+ * each other by a test rather than by inspection.
  */
-private val LANGUAGES = mapOf(
+internal val LANGUAGES = mapOf(
     "kt" to "kotlin", "kts" to "kotlin", "java" to "java",
     "c" to "c", "h" to "c", "cpp" to "cpp", "cc" to "cpp", "hpp" to "cpp",
     "py" to "python", "rb" to "ruby", "rs" to "rust", "go" to "go",

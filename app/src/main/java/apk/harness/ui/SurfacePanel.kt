@@ -200,34 +200,6 @@ private fun diffLines(old: List<String>, new: List<String>): List<DiffLine> {
 }
 
 @Composable
-private fun Monospace(text: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        text.lines().forEachIndexed { index, line ->
-            Row {
-                Text(
-                    text = "${index + 1}".padStart(4),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "  $line",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun Prose(markdown: String) {
     Column(
         modifier = Modifier

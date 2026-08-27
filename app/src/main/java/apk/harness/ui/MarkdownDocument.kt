@@ -47,6 +47,7 @@ fun MarkdownDocument(content: String, modifier: Modifier = Modifier) {
                     typography = typography,
                 )
                 is MarkdownBlock.Table -> Table(block)
+                is MarkdownBlock.Code -> CodeFence(block.language, block.text)
             }
         }
     }

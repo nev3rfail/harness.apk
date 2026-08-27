@@ -1,10 +1,15 @@
 package apk.harness.ui
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MarkdownBlocksTest {
+
+    /** The one block a source is expected to produce, as a fence. */
+    private fun fence(source: String): MarkdownBlock.Code =
+        markdownBlocks(source).single() as MarkdownBlock.Code
 
     @Test
     fun `prose with no table stays one block`() {
@@ -65,7 +70,41 @@ class MarkdownBlocksTest {
     }
 
     @Test
-    fun `a table inside a fenced block stays prose`() {
+    fun `a fence is lifted out with the prose around it kept in order`() {
+        val blocks = markdownBlocks(
+            """
+            Before.
+
+            ```kotlin
+            fun main() {}
+            ```
+
+            After.
+            """.trimIndent()
+        )
+
+        assertEquals(3, blocks.size)
+        assertEquals("Before.", (blocks[0] as MarkdownBlock.Prose).text)
+
+        val code = blocks[1] as MarkdownBlock.Code
+        assertEquals("kotlin", code.language)
+        assertEquals("fun main() {}", code.text)
+
+        assertEquals("After.", (blocks[2] as MarkdownBlock.Prose).text)
+    }
+
+    @Test
+    fun `a fence with no info string carries no language`() {
+        assertNull(fence("```\nplain\n```\n").language)
+    }
+
+    @Test
+    fun `an info string is read down to its first word, lowercased`() {
+        assertEquals("kotlin", fence("```Kotlin title=x\ncode\n```\n").language)
+    }
+
+    @Test
+    fun `a table inside a fenced block is code`() {
         val blocks = markdownBlocks(
             """
             Before.
@@ -80,51 +119,50 @@ class MarkdownBlocksTest {
             """.trimIndent()
         )
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
-        assertTrue((blocks[0] as MarkdownBlock.Prose).text.contains("| Castelo | 15 EUR |"))
+        assertEquals(3, blocks.size)
+        val code = blocks[1] as MarkdownBlock.Code
+        assertTrue(code.text.contains("| Castelo | 15 EUR |"))
     }
 
     @Test
     fun `a short run does not close a longer fence`() {
-        val blocks = markdownBlocks(
-            "````\n```\n| a | b |\n| --- | --- |\n````\ntail\n"
-        )
+        val code = fence("````\n```\n| a | b |\n| --- | --- |\n````\n")
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertEquals("```\n| a | b |\n| --- | --- |", code.text)
     }
 
     @Test
     fun `a tilde fence is a fence`() {
-        val blocks = markdownBlocks("~~~\n| a | b |\n| --- | --- |\n~~~\n")
+        val code = fence("~~~\n| a | b |\n| --- | --- |\n~~~\n")
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertEquals("| a | b |\n| --- | --- |", code.text)
     }
 
     @Test
     fun `a backtick run does not close a tilde fence`() {
-        val blocks = markdownBlocks("~~~\n```\n| a | b |\n| --- | --- |\n~~~\n")
+        val code = fence("~~~\n```\n| a | b |\n| --- | --- |\n~~~\n")
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertEquals("```\n| a | b |\n| --- | --- |", code.text)
     }
 
     @Test
     fun `an info string does not close a fence`() {
-        val blocks = markdownBlocks("```kotlin\n```kotlin\n| a | b |\n| --- | --- |\n```\n")
+        val code = fence("```kotlin\n```kotlin\n| a | b |\n| --- | --- |\n```\n")
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertEquals("kotlin", code.language)
+        assertEquals("```kotlin\n| a | b |\n| --- | --- |", code.text)
     }
 
     @Test
     fun `an unclosed fence runs to the end`() {
-        val blocks = markdownBlocks("```\n| a | b |\n| --- | --- |\n")
+        val code = fence("```\n| a | b |\n| --- | --- |\n")
 
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertEquals("| a | b |\n| --- | --- |", code.text)
+    }
+
+    @Test
+    fun `an empty fence is an empty block`() {
+        assertEquals("", fence("```\n```\n").text)
     }
 
     @Test
@@ -132,8 +170,19 @@ class MarkdownBlocksTest {
         val blocks = markdownBlocks("```\ncode\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n")
 
         assertEquals(2, blocks.size)
+        assertEquals("code", (blocks[0] as MarkdownBlock.Code).text)
         val table = blocks[1] as MarkdownBlock.Table
         assertEquals(listOf("a", "b"), table.header)
         assertEquals(listOf(listOf("1", "2")), table.rows)
+    }
+
+    @Test
+    fun `two fences are two blocks`() {
+        val blocks = markdownBlocks("```sh\none\n```\ntext\n```py\ntwo\n```\n")
+
+        assertEquals(3, blocks.size)
+        assertEquals("one", (blocks[0] as MarkdownBlock.Code).text)
+        assertEquals("text", (blocks[1] as MarkdownBlock.Prose).text)
+        assertEquals("two", (blocks[2] as MarkdownBlock.Code).text)
     }
 }
