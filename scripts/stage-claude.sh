@@ -8,16 +8,20 @@
 # will live on the device.
 #
 # Usage: stage-claude.sh [--abi ABI] [--version X.Y.Z] [--prefix DIR]
-#                        [--out DIR] [--loader FILE]
+#                        [--out DIR] [--loader FILE] [--loader-only]
 #
-#   --abi      x86_64 (default) or arm64-v8a
-#   --version  Claude Code version; defaults to the latest on npm
-#   --prefix   where the staged files will live on the device, baked into the
-#              binary's ELF interpreter
-#   --out      staging directory on this machine
-#   --loader   use this loader instead of building one. A loader built anywhere
-#              else reads the real /etc, where Android keeps no resolver, so
-#              name resolution through libc will not work with one.
+#   --abi          x86_64 (default) or arm64-v8a
+#   --version      Claude Code version; defaults to the latest on npm
+#   --prefix       where the staged files will live on the device, baked into the
+#                  loader's own /etc paths
+#   --out          staging directory on this machine
+#   --loader       use this loader instead of building one. A loader built
+#                  anywhere else reads the real /etc, where Android keeps no
+#                  resolver, so name resolution through libc will not work.
+#   --loader-only  build the loader and stop. This is what the APK needs: the
+#                  binary is downloaded on the device, and the loader is run as
+#                  a program rather than named as an ELF interpreter, so nothing
+#                  patches it.
 #
 # Building for another architecture takes a cross compiler, passed as CC. Note
 # that `zig cc` is not one for this purpose: it is itself a musl toolchain, and
@@ -38,6 +42,7 @@ VERSION=
 PREFIX=/data/data/apk.harness/files/claude
 OUT=$ROOT/build/claude
 SUPPLIED_LOADER=
+LOADER_ONLY=
 # musl's tree is thousands of small files, so it is built on a local filesystem.
 # Under WSL the repository lives on a 9p mount where that is punishingly slow.
 CACHE=${MUSL_CACHE:-${TMPDIR:-/tmp}/harness-musl}
@@ -49,6 +54,7 @@ while [ $# -gt 0 ]; do
     --prefix) PREFIX=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --loader) SUPPLIED_LOADER=$2; shift 2 ;;
+    --loader-only) LOADER_ONLY=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -62,7 +68,12 @@ esac
 LOADER=ld-musl-$MUSL_ARCH.so.1
 info() { printf '\033[36m==\033[0m %s\n' "$*"; }
 
-for tool in curl jq patchelf make; do
+# The loader needs a compiler and an archive; the binary needs a manifest read and
+# an interpreter rewritten. Only what the requested path uses is demanded, so a
+# host that can build a loader is not turned away for lacking jq.
+tools="curl make"
+[ -n "$LOADER_ONLY" ] || tools="$tools jq patchelf"
+for tool in $tools; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
 done
 
@@ -171,6 +182,10 @@ fi
 cp "$CACHE/$MUSL_ARCH/$LOADER" "$OUT/$LOADER"
 chmod 755 "$OUT/$LOADER"
 info "loader: $OUT/$LOADER ($(stat -c%s "$OUT/$LOADER") bytes)"
+
+if [ -n "$LOADER_ONLY" ]; then
+  exit 0
+fi
 
 # --- the binary ---
 if [ -z "$VERSION" ] && [ -f "$OUT/VERSION" ]; then

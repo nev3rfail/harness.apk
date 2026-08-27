@@ -64,9 +64,8 @@ fun rewriteManifests(dpkgInfo: File, applicationId: String): Int {
  * one application id; every channel's id is the same eleven characters, so the
  * copy staged for another one is the same bytes with the name swapped.
  *
- * A loader that carries no such path -- the one whose architecture has a syscall
- * tracer to redirect `/etc` instead -- reports nothing changed, which is not an
- * error.
+ * A count of zero is not an error: a channel whose id is the one the loader was
+ * built for has nothing to rewrite.
  */
 fun retargetLoader(image: ByteArray, applicationId: String): Int {
     require(applicationId.length == ID_LENGTH) {

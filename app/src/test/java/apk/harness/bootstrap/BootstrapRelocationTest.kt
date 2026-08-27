@@ -121,7 +121,7 @@ class BootstrapRelocationTest {
     }
 
     @Test
-    fun `a loader with no compiled-in path is left alone`() {
+    fun `an image with nothing to match is left alone`() {
         val image = "\u0000/etc/resolv.conf\u0000".encodeToByteArray()
         val before = image.copyOf()
         assertEquals(0, retargetLoader(image, "dev.harness"))

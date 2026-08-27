@@ -99,6 +99,36 @@ androidComponents {
     }
 }
 
+// The musl loader Claude Code's build asks for, one per ABI. Built rather than
+// committed: it is a build output, and two copies checked in once disagreed with
+// each other about whether they carried the /etc prefix.
+//
+// The toolchain is a Linux one -- musl's own build, plus a cross compiler for the
+// other architecture -- so on Windows this goes through WSL. -PskipLoaderBuild
+// consumes whatever is already in jniLibs, the same escape the renderer has.
+tasks.register<Exec>("buildMuslLoader") {
+    description = "Build the musl loaders the APK packages, one per ABI"
+    group = "build"
+
+    workingDir = rootProject.projectDir
+    inputs.file(rootProject.file("scripts/build-loaders.sh"))
+    inputs.file(rootProject.file("scripts/stage-claude.sh"))
+    outputs.dir("src/main/jniLibs")
+
+    val script = "scripts/build-loaders.sh"
+    commandLine(
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            listOf("wsl", "bash", script)
+        } else {
+            listOf("bash", script)
+        }
+    )
+}
+
+tasks.named("preBuild") {
+    if (!project.hasProperty("skipLoaderBuild")) dependsOn("buildMuslLoader")
+}
+
 dependencies {
     implementation(project(":terminal-library"))
 

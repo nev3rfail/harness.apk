@@ -73,7 +73,10 @@ it is stored exactly as it arrived, its checksum keeps describing it, and it nee
 execute bit, because the loader opens it for reading. Measured both ways, aarch64 on a
 phone and x86_64 on an emulator.
 
-`scripts/stage-claude.sh` still builds the loader, and is the only thing that does.
+`scripts/build-loaders.sh` builds both, driven by the `buildMuslLoader` Gradle task, on
+WSL from a Windows host and directly on Linux. Nothing is committed: `-PskipLoaderBuild`
+consumes what is already in `jniLibs`, the same escape the renderer has, and a checkout
+built that way installs until `AgentStage` finds no loader and says so.
 
 Three platform facts make the difference between that binary existing and running.
 
@@ -109,8 +112,9 @@ copy of the loader is retargeted byte for byte at whichever one is running. The 
 module goes through the runtime's own c-ares instead, which is named directly by a preload
 the app writes and points `BUN_OPTIONS` at.
 
-On x86_64 the tracer redirects `/etc` at the syscall boundary, which covers libc's own
-opens, so that loader carries no compiled-in path and the retarget finds nothing to do.
+Both loaders carry it, so libc's own opens do not depend on the tracer on either
+architecture. The tracer's `/etc` redirect still covers what the runtime opens outside
+libc.
 
 Both are fed from one list, so they cannot drift apart. This sends the agent's lookups to
 public resolvers, which overrides a VPN or a local resolver for those queries and for
