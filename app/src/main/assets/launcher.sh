@@ -38,4 +38,15 @@ if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
     export SHELL="$HARNESS_HOME/shell.sh"
 fi
 
-exec "$HARNESS_HOME/agent.sh"
+# The agent replaces the process that runs it, so starting it with exec would
+# take the pty down with it and leave the terminal talking to nothing. Run it,
+# then hand what is left of the session to a shell: the wrapper first, because
+# it is what carries termux-exec; then bash itself, for a userland whose wrapper
+# is missing; and toybox only when there is no userland to reach.
+"$HARNESS_HOME/agent.sh"
+
+if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
+    [ -x "$HARNESS_HOME/shell.sh" ] && exec "$HARNESS_HOME/shell.sh"
+    exec "$HARNESS_PREFIX/bin/bash"
+fi
+exec /system/bin/sh
