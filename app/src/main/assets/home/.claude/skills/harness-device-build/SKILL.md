@@ -78,18 +78,56 @@ unquoted and the shell does the expanding.
 
 ```sh
 cd $HOME/harness.apk
-./gradlew assembleDebug --no-daemon -PskipNativeBuild=true
+./gradlew assembleDebug --no-daemon -PskipNativeBuild=true -PskipLoaderBuild
 ```
 
 A debug build takes the `dev.harness` id unless `-PharnessAppId` says otherwise,
-so the default target is the channel that is safe to break. The renderer's
-`libghostty-vt.so` and `libghostty_renderer.so` are consumed from
-`terminal-library/src/main/jniLibs/<abi>/`; `-PskipNativeBuild=true` leaves them
-alone.
+so the default target is the channel that is safe to break.
+
+The two flags consume the native pieces already in `jniLibs` rather than
+building them: the renderer's `libghostty-vt.so` and `libghostty_renderer.so`
+under `terminal-library/src/main/jniLibs/<abi>/`, and `libmuslloader.so` under
+`app/src/main/jniLibs/<abi>/`. Neither is committed, so an APK built with the
+flags and nothing in place installs and then throws in
+`AgentStage.stageLoader`.
 
 **Build against the channel that is not hosting your session.** A Gradle JVM at
 `-Xmx1536m` in the same sandbox as the agent is enough for Android to reclaim the
 app, and the session dies with it.
+
+## The native pieces, built here
+
+**The renderer** is Zig, and the version is not negotiable: both `build.zig.zon`
+files pin a `minimum_zig_version` that Termux's `zig` package satisfies, so
+`$PREFIX/bin/zig` is the one to use and a tarball fetched by hand is refused.
+`patchelf` comes from Termux too.
+
+Zig resolves the whole dependency manifest before it compiles anything, and its
+static binary reads `/etc/resolv.conf`, which Android has not got, so every fetch
+ends in `TemporaryNameServerFailure`. `curl` resolves names normally, so the loop
+is: run the build, take the URL out of the error, `curl` it, hand the file to
+`zig fetch`, run again. The directory those land in is the one never to delete --
+a dependency bump shows up here as a build that stops on one URL.
+
+**The loader** is built by `scripts/stage-claude.sh`. Its wrapper
+`scripts/build-loaders.sh` cannot run it for you: both are committed
+non-executable, so the wrapper fails on the script it calls. Drive the inner one
+with the NDK's clang, and not with `zig cc`, which is itself a musl toolchain and
+shadows musl's own `memcpy`:
+
+```sh
+NDK=$HOME/android-sdk/ndk/29.0.14206865
+out=$PWD/build/loader/arm64-v8a
+CC=$NDK/toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang \
+  bash scripts/stage-claude.sh --loader-only --abi arm64-v8a \
+  --prefix $HOME/claude --out "$out"
+cp "$out"/ld-musl-aarch64.so.1 app/src/main/jniLibs/arm64-v8a/libmuslloader.so
+```
+
+About a minute, musl's own download included, and the script's `verify_loader`
+gate is what says it worked. `x86_64` goes the same way through
+`x86_64-linux-android21-clang`. The prefix compiled in is rewritten per channel
+at install time, so it names whichever channel you build from.
 
 ## Install
 
@@ -106,6 +144,12 @@ Two transports appear for one device -- `127.0.0.1:5555` and an auto-detected
 `emulator-5554` -- so always pass `-s`. This also unlocks `logcat`, `dumpsys` and
 `am start`, which the app's own uid may not run. Keep `logcat` bounded with
 `--pid`, a tag, or a small `-t`; a broad dump outruns a two-minute timeout.
+
+**An instrumented build can look inert.** Where `getprop log.tag` reads `I`,
+every `Log.d` is dropped before it reaches `logcat`, so a build full of debug
+logging looks as though its code never ran. One tag at a time is opened with
+`adb -s 127.0.0.1:5555 shell setprop log.tag.<TAG> VERBOSE`, until the next
+reboot.
 
 ## Common mistakes
 
