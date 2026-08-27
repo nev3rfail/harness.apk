@@ -334,9 +334,6 @@ private fun HarnessScreen(
             )
         }
 
-        // The terminal renders on a surface composited above its own window, so
-        // nothing drawn in that window can cover it. A panel therefore gets a
-        // window of its own.
         surface?.let { shown ->
             Dialog(
                 onDismissRequest = surfaces::dismiss,
