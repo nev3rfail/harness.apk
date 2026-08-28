@@ -49,10 +49,12 @@ import apk.harness.ide.IdeServer
 import apk.harness.ide.NO_CHAT
 import apk.harness.ide.McpEndpoint
 import apk.harness.ide.PanelServer
+import apk.harness.ide.Report
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
 import apk.harness.ide.label
+import apk.harness.ide.reportFor
 import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.DrawerSide
@@ -322,6 +324,44 @@ private fun HarnessScreen(
     // The document on screen belongs to a chat, so it cannot stay over another
     // one. Switching parks it for its own chat, which draws that chat's band.
     LaunchedEffect(activeKey) { surfaces.switchTo(activeKey) }
+
+    // What each chat's agent was last told. The notification mirrors the state,
+    // so what decides whether one goes out is whether it would say something
+    // other than what that chat already has.
+    val told = remember { mutableMapOf<Long, Report>() }
+    // The chat last looked at, so a switch to another one can be recognised.
+    var watched by remember { mutableStateOf(NO_CHAT) }
+    LaunchedEffect(surface, selection, documentOwner, parked, open, activeKey) {
+        val switched = watched != activeKey
+        watched = activeKey
+        // Every open chat, rather than the one on screen: a document a
+        // background agent showed belongs to that agent, and it is the one told
+        // about it. A chat is the unit here, so NO_CHAT is left out by having no
+        // tab of its own -- a surface the app put up itself has no agent to tell.
+        open.forEach { tab ->
+            // On screen if what is showing is this chat's, behind its band
+            // otherwise. Parking moves a document without changing it, so both
+            // places answer the same question and a parked document still
+            // reports as open -- which is the whole of why minimising and
+            // restoring say nothing.
+            val shown = (surface as? Surface.Document)?.takeIf { documentOwner == tab.key }
+            val put = parked[tab.key]
+            val report = reportFor(
+                document = shown ?: put?.document,
+                selection = if (shown != null) selection else put?.selection,
+            )
+                // Gone from both is a document the app has discarded, which is
+                // the panel closing. The path stays, because the last document
+                // opened is still the document at hand, and the selection goes.
+                ?: told[tab.key]?.let { Report(it.path, null, null) }
+            if (report == null) return@forEach
+            // A chat arriving on screen is told its own state again: it is the
+            // one party that has just changed what it is looking at.
+            if (report == told[tab.key] && !(switched && tab.key == activeKey)) return@forEach
+            told[tab.key] = report
+            announce(tabs, tab.key, report)
+        }
+    }
 
     var filesOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
@@ -606,6 +646,25 @@ private fun HarnessScreen(
         view?.onResumeView()
         view?.showKeyboard()
     }
+}
+
+/**
+ * Tells one chat's agent what the app believes about its document.
+ *
+ * Every notification goes to exactly one agent: the operator is talking to the
+ * terminal they can see, and one document announced to four agents is three
+ * agents told about a file they never showed. [owner] is a tab's key, so a chat
+ * that has gone finds no editor and is sent nothing.
+ *
+ * The lines travel as they are held, zero-based and inclusive, because that is
+ * what the notification speaks.
+ */
+private fun announce(tabs: AgentTabs, owner: Long, report: Report) {
+    val ide = tabs.tabs.value.firstOrNull { it.key == owner }?.ide ?: return
+    val lines = report.lines
+    val text = report.text
+    if (lines == null || text == null) ide.reportSelection(report.path)
+    else ide.reportSelection(report.path, lines.first, lines.last, text)
 }
 
 /**

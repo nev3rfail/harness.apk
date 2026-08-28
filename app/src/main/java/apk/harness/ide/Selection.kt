@@ -114,3 +114,38 @@ fun bodyLinesOf(fence: Spanned, lines: IntRange): IntRange? {
     if (from > to) return null
     return (from - body)..(to - body)
 }
+
+/**
+ * What to send about a document, or null to send nothing.
+ *
+ * The decision apart from the socket that carries it: [IdeServer] speaks to
+ * `android.util.Log` and cannot be run off a device, and this is the part with
+ * cases in it. [lines] and [text] are absent together -- a document open with
+ * nothing highlighted -- or present together, so what is sent never names a
+ * range without saying what is on it.
+ */
+data class Report(val path: String, val lines: IntRange?, val text: String?)
+
+/**
+ * What the agent owning [document] is told about it, or null when there is
+ * nothing to tell.
+ *
+ * The notification mirrors the state, so this is a function of the state and
+ * nothing else: a document with no selection is its path, a selection is its
+ * path with its lines and their text, and no document is nothing at all. The
+ * text is sliced here rather than held with the selection, so it cannot drift
+ * from the lines it claims to be.
+ *
+ * Whether the document is on screen or behind a band is not asked, which is what
+ * leaves minimising and restoring silent: neither changes what the app believes
+ * about the document, so neither changes what this answers.
+ *
+ * [selection] is the one held in [document]. Nothing holds a selection into a
+ * document that is not on screen, so the two agree by construction.
+ */
+fun reportFor(document: Surface.Document?, selection: Selection?): Report? {
+    if (document == null) return null
+    if (selection == null) return Report(document.path, null, null)
+    val lines = selection.first..selection.last
+    return Report(document.path, lines, sliceOf(document.markdown, lines))
+}

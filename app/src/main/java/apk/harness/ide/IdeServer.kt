@@ -124,6 +124,19 @@ class IdeServer(
         scope.cancel()
     }
 
+    /**
+     * Tells the agent a document is open with nothing highlighted.
+     *
+     * `filePath` is the only field the notification requires, so the path alone
+     * is the whole of it. It is what the agent is told when a selection is
+     * cleared and when the panel closes: the app has discarded the selection,
+     * and an `ide_selection` still naming a range would be a claim it no longer
+     * believes.
+     */
+    fun reportSelection(path: String) {
+        notify("selection_changed", JSONObject().put("filePath", path))
+    }
+
     /** Tells the agent what the user has highlighted. */
     fun reportSelection(path: String, startLine: Int, endLine: Int, text: String) {
         val params = JSONObject()
