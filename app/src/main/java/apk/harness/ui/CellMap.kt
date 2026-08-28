@@ -139,9 +139,19 @@ private fun Pins(places: List<Pair<CellRow, CellPoint>>, selected: Int, zoom: Do
                         position = GeoPoint(point.latitude, point.longitude)
                         title = textOf(row.fields["name"])
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        // Mutated, or the tint would follow the shared drawable
-                        // onto every other pin on the map.
-                        if (index == selected) icon = icon?.mutate()?.apply { setTint(tint) }
+                        // Every marker on a map is handed the one icon its
+                        // MapView caches, and `mutate` answers with that same
+                        // object, so tinting what a marker already holds tints
+                        // every pin at once. A drawable taken off the constant
+                        // state is this marker's alone, and only that copy is
+                        // ever tinted: the rest stay osmdroid's default, which
+                        // is what makes the selected one tell itself apart.
+                        if (index == selected) {
+                            icon?.constantState?.newDrawable(map.resources)?.mutate()?.let { own ->
+                                own.setTint(tint)
+                                icon = own
+                            }
+                        }
                     },
                 )
             }
