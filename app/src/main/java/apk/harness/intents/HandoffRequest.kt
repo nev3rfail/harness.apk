@@ -12,8 +12,8 @@ import org.json.JSONObject
  * exception thrown from inside the platform.
  *
  * [writable] is the directory prefixes a path in `files` may sit under -- the
- * caller passes the app's own `filesDir` and `cacheDir`, so this code never asks
- * Android where those are.
+ * caller passes the app's own `filesDir` and `cacheDir`, under every spelling
+ * they answer to, so this code never asks Android where those are.
  */
 fun handoffFor(arguments: JSONObject, writable: List<String>): Result<Handoff> = try {
     Result.success(readHandoff(arguments, writable))
@@ -110,9 +110,13 @@ private fun seriesOf(name: String, values: JSONArray): List<String> =
 /**
  * The paths in `files`, each proved to sit inside the app's own directories.
  *
- * Both sides are resolved before they are compared: a prefix test on the text as
- * written lets `files/../../secrets` through, and on a device `filesDir` itself
- * arrives through a symlink, so the two only line up once both are canonical.
+ * Both sides are resolved before they are compared, because a prefix test on the
+ * text as written lets `files/../../secrets` through.
+ *
+ * Resolving does not unify the two spellings of the app's data directory:
+ * `/data/user/0/<package>` is a bind mount of `/data/data/<package>` rather than
+ * a symlink to it, so a path comes back in whichever spelling it went in as.
+ * [writable] carries both spellings for that reason, and this only compares.
  */
 private fun contentOf(files: JSONArray?, writable: List<String>): List<String> {
     if (files == null) return emptyList()

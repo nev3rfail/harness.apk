@@ -107,6 +107,19 @@ class HandoffRequestTest {
     }
 
     @Test
+    fun `a file under a second root is taken, because the roots are a list`() {
+        // `/data/user/0/<package>` and `/data/data/<package>` are one directory
+        // joined by a bind mount, which nothing resolves away, so both spellings
+        // are handed in and a path written in either is the app's own.
+        val handoff = handoffFor(
+            request("action" to "share", "mime_type" to "text/markdown")
+                .put("files", JSONArray(listOf("$DATA_FILES/montmartre.md"))),
+            WRITABLE,
+        ).getOrThrow()
+        assertEquals(listOf("$DATA_FILES/montmartre.md"), handoff.content)
+    }
+
+    @Test
     fun `a file outside them is refused, and the refusal names the path`() {
         val refusal = handoffFor(
             request("action" to "share", "mime_type" to "text/plain")
@@ -183,6 +196,12 @@ class HandoffRequestTest {
     private companion object {
         const val FILES = "/data/user/0/apk.harness/files"
         const val CACHE = "/data/user/0/apk.harness/cache"
-        val WRITABLE = listOf(FILES, CACHE)
+
+        // The same two directories under the spelling the agent's own
+        // environment document uses.
+        const val DATA_FILES = "/data/data/apk.harness/files"
+        const val DATA_CACHE = "/data/data/apk.harness/cache"
+
+        val WRITABLE = listOf(FILES, CACHE, DATA_FILES, DATA_CACHE)
     }
 }

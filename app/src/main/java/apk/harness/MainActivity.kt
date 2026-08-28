@@ -39,6 +39,7 @@ import apk.harness.agents.mergedProjects
 import apk.harness.agents.withOpenTabs
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.bootstrap.BootstrapProgress
+import apk.harness.bootstrap.bothSpellings
 import apk.harness.chats.Chat
 import apk.harness.chats.Project
 import apk.harness.ide.APP_NAME
@@ -110,8 +111,10 @@ class MainActivity : ComponentActivity() {
             describeHandoff = { handoff -> appFor(this, handoff) },
             fireHandoff = { handoff -> fire(this, handoff) },
             // The whole of what a handoff may carry out of the app: the two
-            // directories the agent can write.
-            writable = listOf(filesDir.path, cacheDir.path),
+            // directories the agent can write, each under both spellings, since
+            // the agent has been taught one of them and Android reports the
+            // other.
+            writable = bothSpellings(this, filesDir) + bothSpellings(this, cacheDir),
             // Raw bytes for a diff to line up against the proposed text; a
             // missing or unreadable file throws, which is the "no before text"
             // case a diff needs to detect rather than mask with a placeholder.

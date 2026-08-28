@@ -25,7 +25,7 @@ class AgentStage(private val context: Context) {
      * spellings of one directory is the comparison risk the byte budget exists
      * to avoid.
      */
-    val data: File = File("/data/data/${context.packageName}")
+    val data: File = dataDirectory(context)
     val rootfs: File = File(data, "root")
     val prefix: File = File(rootfs, "usr")
 
@@ -248,3 +248,22 @@ class AgentStage(private val context: Context) {
             .let { "try { require(\"dns\").setServers([$it]); } catch (e) {}\n" }
     }
 }
+
+/**
+ * [directory], one of the app's own, under both spellings of the data directory.
+ *
+ * `/data/user/0/<package>` and `/data/data/<package>` are one directory reached
+ * two ways. On this device the first is a bind mount of the second rather than a
+ * symlink to it, so resolving a path hands back the spelling it arrived in and
+ * nothing folds the two together. Android gives the app the `/data/user/0`
+ * spelling; [AgentStage.data] pins the userland to `/data/data`, and that is the
+ * spelling the agent's own environment document and the skills beside it are
+ * written in. Anything comparing a path the agent supplied against the app's
+ * directories therefore has to hold both, or it takes half of the agent's
+ * vocabulary and refuses the other half.
+ */
+fun bothSpellings(context: Context, directory: File): List<String> =
+    listOf(directory.path, File(dataDirectory(context), directory.name).path)
+
+/** The spelling of the app's data directory that fits the userland's byte budget. */
+private fun dataDirectory(context: Context): File = File("/data/data/${context.packageName}")
