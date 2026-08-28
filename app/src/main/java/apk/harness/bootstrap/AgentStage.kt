@@ -93,27 +93,45 @@ class AgentStage(private val context: Context) {
         stageLoader(loader)
         configure()
 
+        // The launcher comes from the payload, and [isStaged] answers from it,
+        // so the payload has to land before the stamp says the agent is ready.
+        stageHome()
+
         // Last, because it is what [isStaged] answers from: written before the
         // rest, a run that failed halfway would report a staged agent.
         stamp.writeText("$AGENT_VERSION\n")
     }
 
     /**
-     * Stages what the app tells the agent about itself: the environment
-     * document, the skills, and the enablement the panel tools need.
+     * Stages what the app tells the agent about itself: the launcher, the
+     * environment document, the skills, and the enablement the panel tools need.
      *
      * Once per install rather than once per launch, so an edit made on the
      * device stands until the next one. The timestamp comes off the installed
      * APK, which changes on every install including a reinstall of the same
      * version.
+     *
+     * A missing launcher also brings the copy forward, whatever the stamp says,
+     * because deleting a staged file is how a device asks for the shipped one
+     * back and the launcher is the file a session cannot start without.
      */
     fun stageHome() {
         val installed = File(context.applicationInfo.sourceDir).lastModified().toString()
-        if (!payloadDue(payload, installed)) return
+
+        // Before the guard, and cheap: a copy carries content and not
+        // permissions, [isStaged] reads this bit, and an editor on the device
+        // can take it off a file the stamp otherwise considers current. Losing
+        // it that way would put the app back to downloading the agent again.
+        // Owner only, like the scripts [configure] writes. False on a device
+        // that has no launcher yet, which the copy below answers.
+        launcher.setExecutable(true, true)
+
+        if (!payloadDue(payload, installed) && launcher.isFile) return
 
         home.mkdirs()
         copyTree(HOME_TREE, overwrite = true)
         copyTree(SEED_TREE, overwrite = false)
+        launcher.setExecutable(true, true)
 
         // Last, for the reason the version stamp is written last: a run that
         // failed halfway would otherwise report a staged payload.
@@ -159,7 +177,8 @@ class AgentStage(private val context: Context) {
         File(home, CONFIG_NAME).let { if (!it.exists()) it.writeText(ONBOARDED) }
 
         // Written only when absent, which is what makes an edit on a device
-        // survive a relaunch. Deleting one restores it.
+        // survive a relaunch. Deleting one restores it. The launcher is not
+        // among them: it is app-owned, and arrives with the payload.
         for (name in SCRIPTS) {
             val script = File(home, name)
             if (!script.isFile) {
@@ -204,8 +223,15 @@ class AgentStage(private val context: Context) {
         // replaced on install, and what the operator or the agent owns is not.
         const val HOME_TREE = "home"
         const val SEED_TREE = "seed"
+
+        // In the app-owned tree, so a build can correct it. What a device wants
+        // of its own goes in launcher.local.sh, which the launcher sources and
+        // nothing writes.
         const val LAUNCHER = "launcher.sh"
-        val SCRIPTS = listOf(LAUNCHER, "agent.sh", "shell.sh")
+
+        // Operator-owned: the invocation and the shell are what a device is
+        // expected to change, and an edit to either stands until it is deleted.
+        val SCRIPTS = listOf("agent.sh", "shell.sh")
 
         // Programs shipped as libraries, because that directory stays executable
         // whatever the app targets.

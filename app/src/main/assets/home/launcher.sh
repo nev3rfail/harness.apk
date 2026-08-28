@@ -1,7 +1,11 @@
 #!/system/bin/sh
+#
+# Do not edit: the app rewrites this file on every install. Put anything of your
+# own in launcher.local.sh beside it, which is sourced below and which nothing
+# here writes.
+#
 # What the agent needs from the platform. Paths arrive as HARNESS_ variables, so
-# one copy serves every channel. The app stages this only when it is absent, so
-# an edit here survives a relaunch and deleting it restores the original.
+# one copy serves every channel.
 
 export HOME="$HARNESS_HOME"
 export TMPDIR="$HARNESS_TMP"
@@ -31,6 +35,11 @@ if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
     export PATH="$HARNESS_PREFIX/bin:$PATH"
     export SHELL="$HARNESS_HOME/shell.sh"
 fi
+
+# The extension point, sourced with the environment assembled so it has the last
+# word on any of it. Absent by default: nothing stages it, and its absence is how
+# a device says it wants none.
+[ -f "$HARNESS_HOME/launcher.local.sh" ] && . "$HARNESS_HOME/launcher.local.sh"
 
 # Run the agent rather than become it: exec would take the pty down on its exit.
 #
