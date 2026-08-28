@@ -136,25 +136,50 @@ class AgentTabs(
     }
 
     /**
-     * Moves the agent on screen to [chat], in the tab it is already in.
+     * Puts [chat] on the screen in place of what the tab there holds.
      *
-     * The line goes into the running agent's pty and the tab takes the new id:
-     * the app asked for the switch, so the tab names the conversation on screen
-     * rather than the one the agent left. What it costs is that conversation,
-     * which is why this is a control of its own rather than what a tap does.
+     * Two ways in, and the tab decides which. An agent that is alive, runs
+     * [chat]'s backend, stands in [directory] and takes a switching command is
+     * told to change conversation: the line goes into its pty and the tab takes
+     * the new id, because the app asked for the switch and the tab names what is
+     * on screen rather than what the agent left.
      *
-     * Nothing is written when the tab is already in [chat], when [chat] was read
-     * by another backend -- the agent on screen would not understand the line --
-     * when the backend has no such command, or when [directory] is not the tab's
-     * own. The agent resolves a conversation id against the directory it runs in
-     * and files the conversation there, so a chat of another project is one this
-     * tab cannot take.
+     * Anything else is a different agent: the chat opens in a tab of its own and
+     * the one it replaces closes. A working directory is fixed for the life of a
+     * process, and it is both what a conversation id resolves against and what
+     * the conversation is filed under, so a chat of another project is one no
+     * running agent can be moved into.
+     *
+     * Either way it costs the conversation the tab was in, which is why this is
+     * a control of its own rather than what a tap does. Whatever is typed and
+     * not sent is lost with it, so the caller reads the prompt first.
+     *
+     * Starting an agent binds a socket and may stage the agent's home, so this
+     * does not belong on the thread a tap arrives on.
      */
     fun continueHere(chat: Chat, directory: File) {
         val tab = active ?: return
-        if (tab.sessionId == chat.sessionId || tab.backend.id != chat.backendId) return
-        if (tab.directory.absolutePath != directory.absolutePath) return
-        val line = tab.backend.switch(chat.sessionId) ?: return
+        if (tab.sessionId == chat.sessionId) return
+        val backend = backendFor(chat.backendId)
+
+        val line = backend.switch(chat.sessionId)?.takeIf {
+            tab.backend.id == backend.id &&
+                tab.directory.absolutePath == directory.absolutePath &&
+                tab.session.isRunning.value
+        }
+        if (line == null) {
+            // The new tab first: the last tab does not close, and this is what
+            // stands behind the one going away.
+            add(
+                directory = directory,
+                sessionId = chat.sessionId,
+                label = chat.label,
+                backend = backend,
+                arguments = backend.resume(chat.sessionId),
+            )
+            close(tab.key)
+            return
+        }
 
         // Enter, as a terminal receives it.
         tab.session.write(line + "\r")

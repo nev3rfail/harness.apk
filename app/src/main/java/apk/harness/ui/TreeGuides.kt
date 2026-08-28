@@ -22,6 +22,16 @@ private val GuideGap = 2.dp
 // rows by it, so an icon sits the same distance from its name in either.
 val IconGap = 6.dp
 
+// What a row's icon occupies, given to the rows that carry one and reserved by
+// the rows that do not. Text then starts at the same offset for a given depth
+// whatever the row is, so a chat sits to the right of the project above it
+// rather than under its icon.
+val IconSlot = 16.dp
+
+// The elbow's run for a row that draws no icon: across the icon's slot as well,
+// so the line meets the text, which is the only thing such a row draws.
+val ElbowToText = GuideStub + GuideGap + IconSlot + IconGap
+
 // Structure rather than content: the outline colour, well under full strength.
 const val GuideAlpha = 0.35f
 
@@ -48,10 +58,14 @@ fun guideIndent(depth: Int): Dp = IndentStep * (depth + 0.5f) + GuideStub + Guid
  *
  * Four kinds of line come out of that: a full-height line for each ancestor
  * still to be continued, the row's own line down to its middle where the elbow
- * runs out to the icon, that line carried on to the bottom when a sibling
+ * runs out to the right, that line carried on to the bottom when a sibling
  * follows, and the head of the child column, drawn from the row's middle to its
  * bottom at the child level's offset. The last is what joins an open row to the
  * first row inside it.
+ *
+ * [elbow] is how far that run goes. A row that draws an icon asks for the stub
+ * that reaches it; a row that draws none asks for [ElbowToText], so the line
+ * ends where the row's text begins rather than in the space an icon would fill.
  */
 fun Modifier.treeGuides(
     depth: Int,
@@ -59,6 +73,7 @@ fun Modifier.treeGuides(
     isLastSibling: Boolean,
     hasChildren: Boolean,
     colour: Color,
+    elbow: Dp = GuideStub,
 ): Modifier = drawBehind {
     val step = IndentStep.toPx()
     val middle = size.height / 2f
@@ -89,7 +104,7 @@ fun Modifier.treeGuides(
     drawLine(
         color = colour,
         start = Offset(own, middle),
-        end = Offset(own + GuideStub.toPx(), middle),
+        end = Offset(own + elbow.toPx(), middle),
         strokeWidth = Stroke.HairlineWidth,
     )
     // The child column, begun on the row it descends from: from this row's

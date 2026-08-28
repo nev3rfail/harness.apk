@@ -234,4 +234,55 @@ class ClaudeBackendTest {
     fun `switching an agent already running is a typed command`() {
         assertEquals("/resume s", ClaudeBackend.switch("s"))
     }
+
+    // The CLI's prompt as the grid holds it: the glyph, a non-breaking space,
+    // and the row padded out to the terminal's width. The rules above and below
+    // it are what the CLI draws around the prompt.
+    private fun viewport(vararg lines: String) = lines.joinToString("\n")
+
+    private fun prompt(typed: String) = "\u276F\u00A0$typed".padEnd(40)
+
+    private val rule = "─".repeat(40)
+
+    @Test
+    fun `an empty prompt holds nothing`() {
+        assertEquals("", promptLine(viewport(rule, prompt(""), rule)))
+    }
+
+    @Test
+    fun `a prompt with text holds what was typed`() {
+        assertEquals("hello", promptLine(viewport(rule, prompt("hello"), rule)))
+    }
+
+    @Test
+    fun `the prompt is read past the messages echoed above it`() {
+        // Every sent message is drawn behind the same glyph, so the prompt is
+        // the last such line rather than the first.
+        val screen = viewport(
+            "\u276F what I asked a while ago".padEnd(40),
+            "an answer".padEnd(40),
+            rule,
+            prompt(""),
+            rule,
+        )
+        assertEquals("", promptLine(screen))
+    }
+
+    @Test
+    fun `a viewport scrolled off the prompt reads as text rather than as empty`() {
+        // What is on screen is an old message, and answering "" for it would
+        // put a typed command on the end of whatever is really in the prompt.
+        val screen = viewport("\u276F what I asked a while ago".padEnd(40), "an answer".padEnd(40))
+        assertEquals("what I asked a while ago", promptLine(screen))
+    }
+
+    @Test
+    fun `a viewport with no prompt on it answers nothing`() {
+        assertNull(promptLine(viewport("$ ls".padEnd(40), "agent.sh".padEnd(40))))
+    }
+
+    @Test
+    fun `an empty viewport answers nothing`() {
+        assertNull(promptLine(""))
+    }
 }

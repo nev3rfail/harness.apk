@@ -50,6 +50,8 @@ object ClaudeBackend : AgentBackend {
 
     override fun switch(sessionId: String): String = "/resume $sessionId"
 
+    override fun promptText(viewport: String): String? = promptLine(viewport)
+
     /**
      * The newest transcript filed under [directory], by its name.
      *
@@ -135,3 +137,29 @@ private const val SEPARATORS = "/\\.:"
 
 /** Field 22 of `stat`, counted from the field after the `comm` field. */
 private const val START_TIME = 19
+
+/**
+ * What the prompt on [viewport] holds, or null when the viewport carries no
+ * prompt.
+ *
+ * The CLI draws its prompt as [PROMPT] and a non-breaking space at the head of a
+ * line, with what is typed from the third column on. The transcript above it
+ * echoes every sent message behind the same glyph, so the prompt is the last
+ * such line on the viewport -- and a viewport scrolled up off the prompt answers
+ * null rather than answering for a message sent long ago.
+ *
+ * The grid is padded to its full width, and the space after the glyph is a
+ * non-breaking one, which the JVM does not count as whitespace. Both come off
+ * the end of the answer.
+ */
+fun promptLine(viewport: String): String? = viewport.lineSequence()
+    .map { it.trimStart() }
+    .lastOrNull { it.startsWith(PROMPT) }
+    ?.removePrefix(PROMPT)
+    ?.trim { it.isWhitespace() || it == NBSP }
+
+/** The glyph at the head of the CLI's prompt, and of every message it echoes. */
+private const val PROMPT = "\u276F"
+
+/** The space the CLI puts between that glyph and what is typed. */
+private const val NBSP = '\u00A0'

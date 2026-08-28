@@ -52,23 +52,16 @@ import apk.harness.chats.Project
  * [running] is keyed by session id, [current] is the session on screen, and
  * [openTabs] is the sessions that have a tab: between them they decide the
  * marker, the background and the trailing control of every chat row. [canClose]
- * and [canContinue] say whether those two controls can act, which is a fact
- * about the tabs rather than about any one chat.
- *
- * [activeDirectory] is the working directory of the tab on screen. Continuing a
- * chat types into that tab, and the directory that tab runs in is what a
- * conversation id resolves against and what the conversation is then filed
- * under, so the control is offered on chats of that project alone.
+ * says whether the closing control can act, which is a fact about the tabs
+ * rather than about any one chat.
  */
 @Composable
 fun SessionTree(
     projects: List<Project>,
     running: Map<String, RunningSession>,
     current: String?,
-    activeDirectory: String?,
     openTabs: Set<String>,
     canClose: Boolean,
-    canContinue: Boolean,
     expanded: Set<String>,
     onToggle: (String) -> Unit,
     onOpenChat: (Project, Chat) -> Unit,
@@ -98,6 +91,7 @@ fun SessionTree(
                         is SessionRow.ProjectRow -> ProjectEntry(
                             row = row,
                             isOpen = row.project.path in expanded,
+                            isCurrent = row.project.chats.any { it.sessionId == current },
                             onClick = { onToggle(row.project.path) },
                             onNew = { onNewChat(row.project) },
                         )
@@ -108,8 +102,6 @@ fun SessionTree(
                             isCurrent = row.chat.sessionId == current,
                             hasTab = row.chat.sessionId in openTabs,
                             canClose = canClose,
-                            canContinue = canContinue,
-                            inActiveDirectory = row.project.path == activeDirectory,
                             onClick = { onOpenChat(row.project, row.chat) },
                             onContinue = { onContinueHere(row.project, row.chat) },
                             onClose = { onCloseChat(row.chat) },
@@ -152,16 +144,11 @@ private val TouchTarget = 48.dp
 // more of the row's text.
 private val ControlFontSize = 18.sp
 
-// What a row's icon occupies, given to the rows that carry one and reserved by
-// the rows that do not. Text then starts at the same offset for a given depth
-// whatever the row is, so a chat sits to the right of the project above it
-// rather than under its icon.
-private val IconSlot = 16.dp
-
 @Composable
 private fun ProjectEntry(
     row: SessionRow.ProjectRow,
     isOpen: Boolean,
+    isCurrent: Boolean,
     onClick: () -> Unit,
     onNew: () -> Unit,
 ) {
@@ -200,17 +187,35 @@ private fun ProjectEntry(
         }
         Spacer(modifier = Modifier.width(IconGap))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                // A short name, which is what tells two projects apart on a
-                // screen this narrow. The whole path is underneath it.
-                text = project.name,
-                fontFamily = FontFamily.Monospace,
-                fontSize = RowFontSize,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = if (project.reachable) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    // A short name, which is what tells two projects apart on a
+                    // screen this narrow. The whole path is underneath it.
+                    text = project.name,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = RowFontSize,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (project.reachable) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Shrinks to leave the label beside it room, and takes no
+                    // more than it needs when the label is not there.
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // Every project here is named the same thing, so which one holds
+                // the conversation on screen is worth saying on the row that is
+                // collapsed as well as on the chat inside it.
+                if (isCurrent) {
+                    Spacer(modifier = Modifier.width(IconGap))
+                    Text(
+                        text = "current",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = NoteFontSize,
+                        maxLines = 1,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Text(
                 // A guessed path is marked, because flattening a directory name
                 // cannot be undone and the result is often wrong.
@@ -247,8 +252,6 @@ private fun ChatEntry(
     isCurrent: Boolean,
     hasTab: Boolean,
     canClose: Boolean,
-    canContinue: Boolean,
-    inActiveDirectory: Boolean,
     onClick: () -> Unit,
     onContinue: () -> Unit,
     onClose: () -> Unit,
@@ -276,6 +279,8 @@ private fun ChatEntry(
                 isLastSibling = row.isLastSibling,
                 hasChildren = row.hasChildren,
                 colour = guide,
+                // The row draws no icon, so the elbow carries on to the text.
+                elbow = ElbowToText,
             )
             .padding(
                 start = guideIndent(row.depth),
@@ -330,10 +335,10 @@ private fun ChatEntry(
                 colour = MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = onClose,
             )
-            // Continuing types into the agent on screen, so it needs an agent
-            // running there, standing in this chat's own project, and a
-            // conversation other than the one it is already in.
-            !hasTab && canContinue && inActiveDirectory && !isCurrent -> Control(
+            // A chat with a tab is reached by tapping its row, and a project
+            // whose directory is gone is one no agent can be started in. What
+            // is left is every chat this tab can be turned into.
+            !hasTab && enabled -> Control(
                 glyph = "↩",
                 colour = MaterialTheme.colorScheme.primary,
                 onClick = onContinue,

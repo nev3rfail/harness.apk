@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -65,8 +66,6 @@ import com.ghostty.android.renderer.GhosttyGLSurfaceView
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -296,9 +295,6 @@ private fun HarnessScreen(
     val open by tabs.tabs.collectAsState()
     val activeKey by tabs.activeKey.collectAsState()
     val active = open.firstOrNull { it.key == activeKey }
-    // A typed command reaches an agent only while its process is up, which is
-    // what decides whether the drawer offers to continue a chat in this tab.
-    val agentRunning by (active?.session?.isRunning ?: NO_AGENT).collectAsState()
 
     // The terminal the toolbar types into: whichever one is showing.
     val views = remember { mutableStateMapOf<Long, GhosttyGLSurfaceView>() }
@@ -441,6 +437,16 @@ private fun HarnessScreen(
                     )
                 }
 
+                // The conversation on screen is what the drawer is opened to
+                // look away from, so the project holding it is open when the
+                // drawer is. Added to what is expanded rather than replacing
+                // it: a project opened by hand stays open.
+                LaunchedEffect(listed, active?.sessionId) {
+                    listed.firstOrNull { project ->
+                        project.chats.any { it.sessionId == active?.sessionId }
+                    }?.let { expandedProjects = expandedProjects + it.path }
+                }
+
                 // The replacement for this local lives in lifecycle-runtime-compose,
                 // an artifact the app does not depend on for one composition local.
                 @Suppress("DEPRECATION")
@@ -471,11 +477,9 @@ private fun HarnessScreen(
                     projects = listed,
                     running = running,
                     current = active?.sessionId,
-                    activeDirectory = active?.directory?.absolutePath,
                     openTabs = open.mapTo(mutableSetOf()) { it.sessionId },
                     // The last tab does not close, so no row offers to.
                     canClose = open.size > 1,
-                    canContinue = agentRunning,
                     expanded = expandedProjects,
                     onToggle = { path ->
                         expandedProjects =
@@ -493,11 +497,36 @@ private fun HarnessScreen(
                             }
                         }
                     },
-                    // A line into a pty the app already holds, so there is
-                    // nothing here to take off the main thread.
+                    // Continuing costs whatever is typed and not sent -- the
+                    // line it types is appended to it, and the agent it starts
+                    // instead takes the process holding it down. So the prompt
+                    // is read first, and anything but an empty one is left for
+                    // the operator to send or clear.
                     onContinueHere = { project: Project, chat: Chat ->
-                        close()
-                        tabs.continueHere(chat, File(project.path))
+                        val prompt = view?.getRenderer()?.getViewportText()
+                            ?.let { active?.backend?.promptText(it) }
+                        when {
+                            prompt == null -> Toast.makeText(
+                                context,
+                                "Cannot see the prompt. Scroll to the bottom and try again.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+
+                            prompt.isNotEmpty() -> Toast.makeText(
+                                context,
+                                "Unsent text in the prompt. Send it or clear it first.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+
+                            else -> {
+                                close()
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        tabs.continueHere(chat, File(project.path))
+                                    }
+                                }
+                            }
+                        }
                     },
                     // The drawer stays open: closing an agent is a thing done to
                     // a list, and the next row is usually the next tap.
@@ -517,12 +546,16 @@ private fun HarnessScreen(
     }
 
     // The terminal takes the keyboard when it arrives and when the tab changes,
-    // so a tab switch leaves something to type into.
-    LaunchedEffect(view) { view?.showKeyboard() }
+    // so a tab switch leaves something to type into. It is also told to resume:
+    // a terminal drawn for the first time in a frame another one is hidden in
+    // renders and is not composited, and this is the same call the app makes on
+    // its way back from the background, which is what puts such a terminal on
+    // the screen.
+    LaunchedEffect(view) {
+        view?.onResumeView()
+        view?.showKeyboard()
+    }
 }
 
 /** How often the drawer rereads the roster while it is open. */
 private const val ROSTER_INTERVAL_MS = 2_000L
-
-/** The liveness of a tab that is not there. */
-private val NO_AGENT: StateFlow<Boolean> = MutableStateFlow(false)

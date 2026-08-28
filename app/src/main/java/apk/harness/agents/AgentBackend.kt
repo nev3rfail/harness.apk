@@ -49,6 +49,17 @@ interface AgentBackend {
      */
     fun switch(sessionId: String): String?
 
+    /**
+     * What is typed into this CLI's prompt and not sent, read off [viewport] --
+     * the terminal's visible grid as plain text.
+     *
+     * The empty string says the prompt is there and holds nothing. Null says the
+     * prompt is not on the viewport, which a scrollback scrolled up looks like
+     * and an unrecognised prompt looks like too. A caller about to destroy the
+     * prompt's contents acts on the empty string alone.
+     */
+    fun promptText(viewport: String): String?
+
     /** The conversation a fresh tab in [directory] lands in, or null. */
     fun mostRecent(home: File, directory: File): String?
 }
