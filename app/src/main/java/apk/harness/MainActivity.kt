@@ -593,6 +593,10 @@ private fun HarnessScreen(
 
                 SessionTree(
                     projects = listed,
+                    // The agent's HOME is the app's files directory, under both
+                    // spellings, so a row folds whichever one its transcript
+                    // recorded.
+                    homes = remember(agentHome) { bothSpellings(context, agentHome) },
                     running = running,
                     current = active?.sessionId,
                     openTabs = open.mapTo(mutableSetOf()) { it.sessionId },

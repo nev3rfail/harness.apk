@@ -83,6 +83,32 @@ data class Project(
 }
 
 /**
+ * [path] with the agent's home folded to `~`, for a row with no room for it.
+ *
+ * A drawer row is one line wide and every project on this device sits under one
+ * home, so the shared head of the path is the part worth losing: drawn whole and
+ * ellipsised, `/data/user/0/dev.harness/files` fills the row and cuts off the
+ * segment that says which project this is. Shortening by meaning rather than by
+ * measurement keeps that segment, and this Compose version can only ellipsise a
+ * tail anyway.
+ *
+ * [homes] is every spelling the home answers to -- the same list the app hands
+ * its path checks -- because a transcript records whichever spelling the agent
+ * was run under, and a row should fold either.
+ *
+ * A path that is not under any of them is drawn whole. So is one that merely
+ * shares a prefix: `<home>omething` is a sibling, not a child, which is why the
+ * separator is part of the test.
+ */
+fun foldHome(path: String, homes: List<String>): String {
+    for (home in homes) {
+        if (path == home) return HOME_MARK
+        if (path.startsWith("$home/")) return HOME_MARK + path.removePrefix(home)
+    }
+    return path
+}
+
+/**
  * Every project under [agentHome], most recently touched first.
  *
  * [agentHome] is the agent's config directory -- `~/.claude` -- not the home it
@@ -253,6 +279,7 @@ private fun clean(text: String): String? = text.lineSequence()
     .map { it.trim() }
     .firstOrNull { it.isNotEmpty() && !it.startsWith("<") && !it.startsWith("Caveat:") }
 
+private const val HOME_MARK = "~"
 private const val SUFFIX = ".jsonl"
 private const val NAME_SEGMENTS = 2
 private const val ID_PREFIX = 8

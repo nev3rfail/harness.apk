@@ -279,4 +279,38 @@ class ChatTreeTest {
     fun `a home with no history is an empty list`() {
         assertEquals(emptyList<Project>(), projects(folder.root))
     }
+
+    @Test
+    fun `the home itself folds to a tilde`() {
+        assertEquals("~", foldHome(USER_HOME, HOMES))
+    }
+
+    @Test
+    fun `a directory under the home keeps everything below it`() {
+        assertEquals("~/projects/foo", foldHome("$USER_HOME/projects/foo", HOMES))
+    }
+
+    @Test
+    fun `either spelling of the home folds, because a transcript may record either`() {
+        assertEquals("~", foldHome(DATA_HOME, HOMES))
+        assertEquals("~/projects/foo", foldHome("$DATA_HOME/projects/foo", HOMES))
+    }
+
+    @Test
+    fun `a path outside the home is drawn whole`() {
+        assertEquals("/sdcard/Download", foldHome("/sdcard/Download", HOMES))
+    }
+
+    @Test
+    fun `a sibling that merely shares the prefix is not folded`() {
+        // The separator is part of the test, or `filesomething` reads as a
+        // child of `files`.
+        assertEquals("${USER_HOME}omething", foldHome("${USER_HOME}omething", HOMES))
+    }
+
+    private companion object {
+        const val USER_HOME = "/data/user/0/dev.harness/files"
+        const val DATA_HOME = "/data/data/dev.harness/files"
+        val HOMES = listOf(USER_HOME, DATA_HOME)
+    }
 }

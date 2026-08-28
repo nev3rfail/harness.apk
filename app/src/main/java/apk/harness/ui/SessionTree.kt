@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import apk.harness.agents.RunningSession
 import apk.harness.chats.Chat
 import apk.harness.chats.Project
+import apk.harness.chats.foldHome
 
 /**
  * The chats an agent home holds, as rows that open and close.
@@ -54,10 +55,14 @@ import apk.harness.chats.Project
  * marker, the background and the trailing control of every chat row. [canClose]
  * says whether the closing control can act, which is a fact about the tabs
  * rather than about any one chat.
+ *
+ * [homes] is every spelling of the agent's home, so a project row can fold it
+ * away and keep the segment that says which project it is.
  */
 @Composable
 fun SessionTree(
     projects: List<Project>,
+    homes: List<String>,
     running: Map<String, RunningSession>,
     current: String?,
     openTabs: Set<String>,
@@ -90,6 +95,7 @@ fun SessionTree(
                     when (row) {
                         is SessionRow.ProjectRow -> ProjectEntry(
                             row = row,
+                            homes = homes,
                             isOpen = row.project.path in expanded,
                             isCurrent = row.project.chats.any { it.sessionId == current },
                             onClick = { onToggle(row.project.path) },
@@ -147,6 +153,7 @@ private val ControlFontSize = 18.sp
 @Composable
 private fun ProjectEntry(
     row: SessionRow.ProjectRow,
+    homes: List<String>,
     isOpen: Boolean,
     isCurrent: Boolean,
     onClick: () -> Unit,
@@ -192,10 +199,13 @@ private fun ProjectEntry(
                     // The path itself, which is what a project is. A shortened
                     // name drawn above it said the same thing twice and agreed
                     // with neither the path nor the directory it was folded
-                    // from. A guessed path is marked, because flattening a
-                    // directory name cannot be undone and the result is often
-                    // wrong.
-                    text = project.path + if (project.guessed) "  (guessed)" else "",
+                    // from. The home is folded to `~` because it is the head of
+                    // almost every path here, and the tail -- which is what an
+                    // ellipsis eats -- is the part that names the project. A
+                    // guessed path is marked, because flattening a directory
+                    // name cannot be undone and the result is often wrong.
+                    text = foldHome(project.path, homes) +
+                        if (project.guessed) "  (guessed)" else "",
                     fontFamily = FontFamily.Monospace,
                     fontSize = RowFontSize,
                     maxLines = 1,
