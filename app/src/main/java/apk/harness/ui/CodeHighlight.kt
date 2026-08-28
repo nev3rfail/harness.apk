@@ -438,4 +438,9 @@ private val GRAMMARS: Map<String, Grammar> = buildMap {
         escape = null,
     ))
     put("ini", requireNotNull(get("properties")))
+
+    // A cell body is TOML, and a cell that does not check renders as its own
+    // source. The label is what CodeFence has to colour it by.
+    put("harness-map", requireNotNull(get("toml")))
+    put("harness-table", requireNotNull(get("toml")))
 }

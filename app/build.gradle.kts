@@ -161,6 +161,10 @@ dependencies {
     implementation("com.mikepenz:multiplatform-markdown-renderer-android:0.26.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.26.0")
 
+    // TOML in a cell body. Pinned at 0.7.0: 0.7.1 declares kotlin-stdlib 2.2.0,
+    // whose metadata this compiler cannot read.
+    implementation("com.akuleshov7:ktoml-core:0.7.0")
+
     // Maps without Play services or an API key.
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 

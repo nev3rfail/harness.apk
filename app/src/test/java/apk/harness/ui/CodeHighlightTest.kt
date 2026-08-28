@@ -137,6 +137,15 @@ class CodeHighlightTest {
     }
 
     @Test
+    fun `every cell label is coloured as the format its body is written in`() {
+        // A cell that fails to check degrades to a code block, and the only thing
+        // that makes that block readable is the TOML grammar behind its label.
+        val uncoloured = setOf("harness-map", "harness-table").filter { grammarFor(it) == null }
+
+        assertEquals(emptyList<String>(), uncoloured)
+    }
+
+    @Test
     fun `every language the file browser labels a fence with is either coloured or known plain`() {
         // The one place that decides a fence's label is `LANGUAGES`. A tag added
         // there without a grammar renders plain, which is a decision rather than
