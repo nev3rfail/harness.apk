@@ -40,8 +40,8 @@ fun MarkdownDocument(content: String, modifier: Modifier = Modifier) {
     )
 
     Column(modifier = modifier) {
-        blocks.forEach { block ->
-            when (block) {
+        blocks.forEach { spanned ->
+            when (val block = spanned.block) {
                 is MarkdownBlock.Prose -> Markdown(
                     content = block.text,
                     typography = typography,

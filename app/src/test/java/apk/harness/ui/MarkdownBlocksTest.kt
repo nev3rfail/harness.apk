@@ -9,13 +9,13 @@ class MarkdownBlocksTest {
 
     /** The one block a source is expected to produce, as a fence. */
     private fun fence(source: String): MarkdownBlock.Code =
-        markdownBlocks(source).single() as MarkdownBlock.Code
+        markdownBlocks(source).single().block as MarkdownBlock.Code
 
     @Test
-    fun `prose with no table stays one block`() {
+    fun `prose with no table is prose`() {
         val blocks = markdownBlocks("# Title\n\nSome text.\n")
-        assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertTrue(blocks.isNotEmpty())
+        assertTrue(blocks.all { it.block is MarkdownBlock.Prose })
     }
 
     @Test
@@ -33,30 +33,37 @@ class MarkdownBlocksTest {
             """.trimIndent()
         )
 
-        assertEquals(3, blocks.size)
-        assertEquals("Before.", (blocks[0] as MarkdownBlock.Prose).text)
+        assertEquals(
+            listOf(
+                MarkdownBlock.Prose::class,
+                MarkdownBlock.Table::class,
+                MarkdownBlock.Prose::class,
+            ),
+            blocks.map { it.block::class },
+        )
+        assertEquals("Before.", (blocks[0].block as MarkdownBlock.Prose).text)
 
-        val table = blocks[1] as MarkdownBlock.Table
+        val table = blocks[1].block as MarkdownBlock.Table
         assertEquals(listOf("Where", "Cost"), table.header)
         assertEquals(
             listOf(listOf("Castelo", "15 EUR"), listOf("Se", "5 EUR")),
             table.rows,
         )
 
-        assertEquals("After.", (blocks[2] as MarkdownBlock.Prose).text)
+        assertEquals("After.", (blocks[2].block as MarkdownBlock.Prose).text)
     }
 
     @Test
     fun `a pipe line without a separator under it is not a table`() {
         val blocks = markdownBlocks("| this is just text |\nand so is this\n")
         assertEquals(1, blocks.size)
-        assertTrue(blocks[0] is MarkdownBlock.Prose)
+        assertTrue(blocks[0].block is MarkdownBlock.Prose)
     }
 
     @Test
     fun `alignment markers are accepted in the separator`() {
         val blocks = markdownBlocks("| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |\n")
-        val table = blocks.single() as MarkdownBlock.Table
+        val table = blocks.single().block as MarkdownBlock.Table
         assertEquals(listOf("a", "b", "c"), table.header)
         assertEquals(listOf(listOf("1", "2", "3")), table.rows)
     }
@@ -64,7 +71,7 @@ class MarkdownBlocksTest {
     @Test
     fun `a header with no rows is still a table`() {
         val blocks = markdownBlocks("| only | header |\n| --- | --- |\n")
-        val table = blocks.single() as MarkdownBlock.Table
+        val table = blocks.single().block as MarkdownBlock.Table
         assertEquals(listOf("only", "header"), table.header)
         assertTrue(table.rows.isEmpty())
     }
@@ -83,14 +90,21 @@ class MarkdownBlocksTest {
             """.trimIndent()
         )
 
-        assertEquals(3, blocks.size)
-        assertEquals("Before.", (blocks[0] as MarkdownBlock.Prose).text)
+        assertEquals(
+            listOf(
+                MarkdownBlock.Prose::class,
+                MarkdownBlock.Code::class,
+                MarkdownBlock.Prose::class,
+            ),
+            blocks.map { it.block::class },
+        )
+        assertEquals("Before.", (blocks[0].block as MarkdownBlock.Prose).text)
 
-        val code = blocks[1] as MarkdownBlock.Code
+        val code = blocks[1].block as MarkdownBlock.Code
         assertEquals("kotlin", code.language)
         assertEquals("fun main() {}", code.text)
 
-        assertEquals("After.", (blocks[2] as MarkdownBlock.Prose).text)
+        assertEquals("After.", (blocks[2].block as MarkdownBlock.Prose).text)
     }
 
     @Test
@@ -120,7 +134,7 @@ class MarkdownBlocksTest {
         )
 
         assertEquals(3, blocks.size)
-        val code = blocks[1] as MarkdownBlock.Code
+        val code = blocks[1].block as MarkdownBlock.Code
         assertTrue(code.text.contains("| Castelo | 15 EUR |"))
     }
 
@@ -170,8 +184,8 @@ class MarkdownBlocksTest {
         val blocks = markdownBlocks("```\ncode\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n")
 
         assertEquals(2, blocks.size)
-        assertEquals("code", (blocks[0] as MarkdownBlock.Code).text)
-        val table = blocks[1] as MarkdownBlock.Table
+        assertEquals("code", (blocks[0].block as MarkdownBlock.Code).text)
+        val table = blocks[1].block as MarkdownBlock.Table
         assertEquals(listOf("a", "b"), table.header)
         assertEquals(listOf(listOf("1", "2")), table.rows)
     }
@@ -181,8 +195,8 @@ class MarkdownBlocksTest {
         val blocks = markdownBlocks("```sh\none\n```\ntext\n```py\ntwo\n```\n")
 
         assertEquals(3, blocks.size)
-        assertEquals("one", (blocks[0] as MarkdownBlock.Code).text)
-        assertEquals("text", (blocks[1] as MarkdownBlock.Prose).text)
-        assertEquals("two", (blocks[2] as MarkdownBlock.Code).text)
+        assertEquals("one", (blocks[0].block as MarkdownBlock.Code).text)
+        assertEquals("text", (blocks[1].block as MarkdownBlock.Prose).text)
+        assertEquals("two", (blocks[2].block as MarkdownBlock.Code).text)
     }
 }

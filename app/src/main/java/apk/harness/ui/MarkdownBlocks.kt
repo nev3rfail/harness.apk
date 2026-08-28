@@ -30,14 +30,40 @@ sealed interface MarkdownBlock {
     data class Code(val language: String?, val text: String) : MarkdownBlock
 }
 
-fun markdownBlocks(source: String): List<MarkdownBlock> {
+/**
+ * A block and the lines of source it came from.
+ *
+ * Zero-based and inclusive, the same numbers `selection_changed` reports. A
+ * wrapper rather than a field on each variant, so a block stays comparable
+ * without carrying a position nothing was testing.
+ */
+data class Spanned(val block: MarkdownBlock, val lines: IntRange)
+
+/**
+ * Splits [source] into blocks, each carrying the lines it came from.
+ *
+ * Prose comes out one paragraph per block rather than one run per gap between
+ * tables and fences, because a paragraph is the smallest thing a person points
+ * at and a block is what a selection is measured against.
+ */
+fun markdownBlocks(source: String): List<Spanned> {
     val lines = source.lines()
-    val blocks = mutableListOf<MarkdownBlock>()
+    val blocks = mutableListOf<Spanned>()
+    // The prose unit being accumulated: its text, the line it started on, the
+    // last non-blank line in it, and whether its first line opened a list.
     val prose = StringBuilder()
+    var unitFirst = -1
+    var unitLast = -1
+    var unitOpensList = false
 
     fun flushProse() {
-        if (prose.isNotBlank()) blocks += MarkdownBlock.Prose(prose.toString().trim('\n'))
+        if (prose.isNotBlank()) {
+            blocks += Spanned(MarkdownBlock.Prose(prose.toString().trim('\n')), unitFirst..unitLast)
+        }
         prose.setLength(0)
+        unitFirst = -1
+        unitLast = -1
+        unitOpensList = false
     }
 
     var index = 0
@@ -62,7 +88,12 @@ fun markdownBlocks(source: String): List<MarkdownBlock> {
             // line. A closed fence's closing line absorbs it; an unclosed one
             // would otherwise end in a blank line nobody typed.
             if (cursor >= lines.size && body.lastOrNull() == "") body.removeAt(body.lastIndex)
-            blocks += MarkdownBlock.Code(opened.language, body.joinToString("\n"))
+            // A closed fence ends on its closing line. An unclosed one ends on
+            // its last body line, which is not the cursor: the cursor stopped
+            // past the end, and a trailing empty line dropped from the body is
+            // no part of the fence either.
+            val end = if (cursor < lines.size) cursor else index + body.size
+            blocks += Spanned(MarkdownBlock.Code(opened.language, body.joinToString("\n")), index..end)
             // Past the closing line, or past the end when there was none.
             index = cursor + 1
             continue
@@ -77,16 +108,59 @@ fun markdownBlocks(source: String): List<MarkdownBlock> {
                 rows += cells(lines[cursor])
                 cursor++
             }
-            blocks += MarkdownBlock.Table(cells(line), rows)
+            blocks += Spanned(MarkdownBlock.Table(cells(line), rows), index..cursor - 1)
             index = cursor
-        } else {
-            prose.append(line).append('\n')
-            index++
+            continue
         }
+
+        if (line.isBlank()) {
+            // A blank line ends the unit it follows. Runs of them between
+            // paragraphs belong to no unit, so they are stepped over rather than
+            // becoming a block of their own.
+            if (prose.isEmpty()) {
+                index++
+                continue
+            }
+            val next = (index + 1 until lines.size).firstOrNull { lines[it].isNotBlank() }
+            if (continuesList(unitOpensList, next?.let { lines[it] })) {
+                // Kept in the text so the renderer still sees a loose list.
+                prose.append(line).append('\n')
+            } else {
+                flushProse()
+            }
+            index++
+            continue
+        }
+
+        if (prose.isEmpty()) {
+            unitFirst = index
+            unitOpensList = opensItem(line.trimStart())
+        }
+        prose.append(line).append('\n')
+        unitLast = index
+        index++
     }
     flushProse()
     return blocks
 }
+
+/** A line that opens a list item: `- `, `* `, `+ `, or `1. `. */
+private fun opensItem(line: String): Boolean {
+    if (line.length > 1 && line[0] in "-*+" && line[1] == ' ') return true
+    val number = line.takeWhile { it.isDigit() }
+    return number.isNotEmpty() && line.startsWith(". ", number.length)
+}
+
+/**
+ * Whether a unit that began a list continues past a blank line.
+ *
+ * A loose list is one list -- `1. a`, blank, `2. b` -- and splitting it restarts
+ * the numbering in each half. So a blank line does not end a unit whose first
+ * line opened a list and whose next non-blank line either opens another item or
+ * is indented under one.
+ */
+private fun continuesList(unitOpensList: Boolean, next: String?): Boolean =
+    unitOpensList && next != null && (opensItem(next.trimStart()) || next.startsWith("  "))
 
 private fun isRow(line: String): Boolean = line.trim().startsWith("|")
 

@@ -100,7 +100,7 @@ class FileDocumentTest {
 
         // The whole file is one fence, so its pipes are code and not a table.
         assertEquals(1, blocks.size)
-        val code = blocks[0] as MarkdownBlock.Code
+        val code = blocks[0].block as MarkdownBlock.Code
         assertEquals("| a | b |\n| --- | --- |\n| 1 | 2 |", code.text)
     }
 
