@@ -36,6 +36,22 @@
         <service
             android:name=".AgentService"
             android:exported="false" />
+
+        <!-- A file handed to another app cannot travel as a path: an app-private
+             directory is unreadable to every other uid, and a file:// URI throws
+             from targetSdk 24 up. The roots are files and cache because those are
+             the two the agent itself writes, so a handoff carries out only what
+             the agent could already put there. The grant is read-only and lasts
+             as long as the activity it started. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/handoff_paths" />
+        </provider>
     </application>
 
 </manifest>

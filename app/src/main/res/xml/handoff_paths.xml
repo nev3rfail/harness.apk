@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The two directories the agent may write. A handoff may carry out what the
+     agent could already put there and nothing else, so this tool never widens
+     what it can read. -->
+<paths>
+    <files-path name="agent" path="." />
+    <cache-path name="scratch" path="." />
+</paths>
