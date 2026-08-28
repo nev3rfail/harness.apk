@@ -46,6 +46,7 @@ import apk.harness.chats.Chat
 import apk.harness.chats.Project
 import apk.harness.ide.APP_NAME
 import apk.harness.ide.IdeServer
+import apk.harness.ide.NO_CHAT
 import apk.harness.ide.McpEndpoint
 import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
@@ -307,6 +308,18 @@ private fun HarnessScreen(
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
     val surface by surfaces.visible.collectAsState()
+    val documentOwner by surfaces.owner.collectAsState()
+    val parked by surfaces.parked.collectAsState()
+
+    // Where each chat's document was scrolled to. Here rather than in Surfaces
+    // because nothing outside the composition reads it, and this composition
+    // outlives every dialog it opens -- which is what a parked document needs,
+    // since parking it destroys the panel that was drawing it.
+    val offsets = remember { mutableStateMapOf<Long, Int>() }
+
+    // The document on screen belongs to a chat, so it cannot stay over another
+    // one. Switching parks it for its own chat, which draws that chat's band.
+    LaunchedEffect(activeKey) { surfaces.switchTo(activeKey) }
 
     var filesOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
@@ -361,6 +374,18 @@ private fun HarnessScreen(
                     onOpen = { filesOpen = true },
                     modifier = Modifier.align(Alignment.CenterEnd),
                 )
+                // The band for the chat being looked at, and only for that one:
+                // another chat's parked document is that chat's to come back to.
+                // In this Box rather than in the Column around it, so it sits
+                // over the terminal's bottom edge and above the toolbar.
+                parked[activeKey]?.let { put ->
+                    DrawerEdgeStrip(
+                        side = DrawerSide.Bottom,
+                        onOpen = { surfaces.restore(activeKey) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                        label = bandLabel(put),
+                    )
+                }
             }
             InputToolbar(
                 onKey = { active?.session?.write(it) },
@@ -391,6 +416,16 @@ private fun HarnessScreen(
                     surface = shown,
                     onDecide = { diff, decision -> surfaces.decide(diff, decision) },
                     onDismiss = surfaces::dismiss,
+                    // Offered only for a document a chat owns: parking is
+                    // coming back to it later, and the band that comes back
+                    // from is drawn per chat.
+                    onPark = if (documentOwner == NO_CHAT) null else surfaces::park,
+                    // Keyed by the chat the document belongs to rather than by
+                    // the chat on screen: a document a background agent showed
+                    // parks for its own chat and comes back where that chat
+                    // left it.
+                    scroll = offsets[documentOwner] ?: 0,
+                    onScroll = { offset -> offsets[documentOwner] = offset },
                 )
             }
         }
@@ -414,7 +449,12 @@ private fun HarnessScreen(
                     onPick = { file ->
                         scope.launch {
                             val document = withContext(Dispatchers.IO) { documentFor(file) }
-                            surfaces.show(Surface.Document(file.path, document))
+                            // The chat on screen owns it. The operator opened it
+                            // while looking at that conversation, which is the
+                            // conversation the file is at hand for, and a
+                            // document with no owner is one no agent is told
+                            // about and no band can bring back.
+                            surfaces.show(Surface.Document(file.path, document), activeKey)
                         }
                     },
                     onDismiss = close,
@@ -559,6 +599,21 @@ private fun HarnessScreen(
         view?.onResumeView()
         view?.showKeyboard()
     }
+}
+
+/**
+ * What the band says: the document's filename, and the selected lines beside it.
+ *
+ * One-based, because this is the one place the lines are drawn for a person
+ * rather than sent to an agent, and it is also the only place the operator can
+ * see what the agent has been told.
+ */
+private fun bandLabel(put: Surfaces.Parked): String {
+    val name = put.document.path.substringAfterLast('/')
+    val selection = put.selection ?: return name
+    val first = selection.first + 1
+    val last = selection.last + 1
+    return if (first == last) "$name  L$first" else "$name  L$first-$last"
 }
 
 /** How often the drawer rereads the roster while it is open. */

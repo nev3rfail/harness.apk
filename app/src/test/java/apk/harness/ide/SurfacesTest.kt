@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -103,6 +104,144 @@ class SurfacesTest {
         // operator browsing a file cannot answer for the agent.
         assertFalse(pending.decision.isCompleted)
         assertEquals(pending, surfaces.visible.value)
+    }
+
+    @Test
+    fun `a document parks for the chat that showed it`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+
+        surfaces.park()
+
+        assertNull(surfaces.visible.value)
+        assertEquals("/a/c.kt", surfaces.parked.value[3L]?.document?.path)
+    }
+
+    @Test
+    fun `parking keeps the selection`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+
+        surfaces.park()
+
+        assertEquals(Selection("/a/c.kt", 4, 7), surfaces.parked.value[3L]?.selection)
+        // Off screen, so nothing about the screen claims a selection: the parked
+        // entry is where it is held.
+        assertNull(surfaces.selection.value)
+    }
+
+    @Test
+    fun `restoring puts the document and its selection back`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        surfaces.park()
+
+        surfaces.restore(3L)
+
+        assertEquals(file(), surfaces.visible.value)
+        assertEquals(Selection("/a/c.kt", 4, 7), surfaces.selection.value)
+        assertEquals(3L, surfaces.owner.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `a new surface for a chat discards what that chat had parked`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        surfaces.park()
+
+        surfaces.show(Surface.Document("/a/d.md", "hello"), owner = 3L)
+
+        assertTrue(surfaces.parked.value.isEmpty())
+        assertNull(surfaces.selection.value)
+    }
+
+    @Test
+    fun `a new surface leaves another chat's parked document alone`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.park()
+
+        surfaces.show(Surface.Document("/a/d.md", "hello"), owner = 4L)
+
+        assertEquals("/a/c.kt", surfaces.parked.value[3L]?.document?.path)
+    }
+
+    @Test
+    fun `a diff cannot be parked`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = diff()
+        surfaces.show(pending, owner = 3L)
+
+        surfaces.park()
+
+        assertEquals(pending, surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+        assertFalse(pending.decision.isCompleted)
+    }
+
+    @Test
+    fun `a document no chat owns does not park`() = runBlocking {
+        val surfaces = Surfaces()
+        // What a session started outside the app shows: it reaches the tools
+        // through the app-wide token, which names no chat.
+        surfaces.show(file())
+
+        surfaces.park()
+
+        // No band is drawn for a chat that does not exist, so parking it would
+        // be losing it. It stays on screen instead.
+        assertEquals(file(), surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `switching parks what is showing for its own chat`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+
+        surfaces.switchTo(4L)
+
+        assertNull(surfaces.visible.value)
+        assertEquals(setOf(3L), surfaces.parked.value.keys)
+    }
+
+    @Test
+    fun `switching to a chat with nothing parked leaves the screen empty`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+
+        surfaces.switchTo(4L)
+
+        // A band is drawn for a parked document; nothing comes back on screen
+        // by itself, and 4 has nothing to draw.
+        assertNull(surfaces.visible.value)
+        assertNull(surfaces.parked.value[4L])
+    }
+
+    @Test
+    fun `a selection is dropped when the surface it belongs to goes`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+
+        surfaces.dismiss()
+
+        assertNull(surfaces.selection.value)
+    }
+
+    @Test
+    fun `the owner of what is on screen is the chat that showed it`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 7L)
+        assertEquals(7L, surfaces.owner.value)
+
+        surfaces.show(Surface.Document("/a/d.md", "hello"))
+
+        assertEquals(NO_CHAT, surfaces.owner.value)
     }
 
     private companion object {

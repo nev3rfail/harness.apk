@@ -38,8 +38,16 @@ private const val SlideMillis = 300
 
 private const val ScrimAlpha = 0.35f
 
-/** Which edge a drawer is anchored to, and therefore which way it arrives. */
-enum class DrawerSide { Left, Right }
+/**
+ * Which edge a drawer is anchored to, and therefore which way it arrives.
+ *
+ * [Bottom] is an edge a [DrawerEdgeStrip] sits on and no drawer is anchored to:
+ * the band a parked document comes back from is a strip, and what it opens is
+ * the document panel's own dialog. [SideDrawer] reads any side other than
+ * [Right] as [Left], so [Bottom] passed to it would arrive from the left rather
+ * than crash a composition.
+ */
+enum class DrawerSide { Left, Right, Bottom }
 
 /**
  * A panel presented as a drawer against one edge.
@@ -119,7 +127,9 @@ fun SideDrawer(
             )
             // Off-screen is past the far edge, so the offset a slide starts and
             // ends at is the panel's width on the right and its negation on the
-            // left.
+            // left. Right against everything else rather than a case per side:
+            // a drawer is anchored to a side, and the third side of
+            // [DrawerSide] is not one a drawer is anchored to.
             val offScreen: (Int) -> Int =
                 if (side == DrawerSide.Right) { width -> width } else { width -> -width }
 

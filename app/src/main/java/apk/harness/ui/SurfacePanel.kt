@@ -14,14 +14,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -44,12 +51,24 @@ import org.osmdroid.views.overlay.Marker
  *
  * The point of the harness: a file, a diff, a rendered document or a map, drawn
  * by the app instead of drawn with ANSI in a scrollback buffer.
+ *
+ * [onPark] puts a document away behind the band at the bottom of the screen.
+ * Only a document offers it: a diff is a question an agent is blocked on and a
+ * place is a look at one thing, and neither is something to come back to later.
+ * Null for a document there is nowhere to park, which is one no chat owns.
+ *
+ * [scroll] and [onScroll] are how a parked document comes back where it was
+ * left. Parking destroys this composition, so the offset is reported to the
+ * caller, which outlives it, and read back from there when it is built again.
  */
 @Composable
 fun SurfacePanel(
     surface: Surface,
     onDecide: (Surface.Diff, DiffDecision) -> Unit,
     onDismiss: () -> Unit,
+    onPark: (() -> Unit)?,
+    scroll: Int,
+    onScroll: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MaterialSurface(
@@ -61,6 +80,7 @@ fun SurfacePanel(
                 title = surface.title(),
                 subtitle = surface.subtitle(),
                 onDismiss = onDismiss,
+                onPark = if (surface is Surface.Document) onPark else null,
             )
             HorizontalDivider()
 
@@ -68,7 +88,7 @@ fun SurfacePanel(
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
                 when (surface) {
                     is Surface.Diff -> DiffBody(surface)
-                    is Surface.Document -> Prose(surface.markdown)
+                    is Surface.Document -> Prose(surface.markdown, scroll, onScroll)
                     is Surface.Place -> Map(surface)
                 }
             }
@@ -96,8 +116,20 @@ private fun Surface.subtitle(): String? = when (this) {
     is Surface.Place -> "%.5f, %.5f".format(latitude, longitude)
 }
 
+/**
+ * The panel's title, and the two ways out of it.
+ *
+ * [onPark] is drawn as a chevron pointing the way the document goes, which is
+ * the way the band it lands on is pulled back. It defaults to absent, so the
+ * row is Close alone for the drawers and for a surface that does not park.
+ */
 @Composable
-internal fun Header(title: String, subtitle: String?, onDismiss: () -> Unit) {
+internal fun Header(
+    title: String,
+    subtitle: String?,
+    onDismiss: () -> Unit,
+    onPark: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -110,6 +142,14 @@ internal fun Header(title: String, subtitle: String?, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                )
+            }
+        }
+        if (onPark != null) {
+            IconButton(onClick = onPark) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Put the document away",
                 )
             }
         }
@@ -197,11 +237,17 @@ private fun diffLines(old: List<String>, new: List<String>): List<DiffLine> {
 }
 
 @Composable
-private fun Prose(markdown: String) {
+private fun Prose(markdown: String, scroll: Int, onScroll: (Int) -> Unit) {
+    val state = rememberScrollState(initial = scroll)
+    // Reported once, as this goes away, because that is the only moment anything
+    // reads it. Following the scroll frame by frame would tell the caller the
+    // same number several hundred times to answer a question asked once.
+    val report by rememberUpdatedState(onScroll)
+    DisposableEffect(state) { onDispose { report(state.value) } }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(state)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         MarkdownDocument(content = markdown)
