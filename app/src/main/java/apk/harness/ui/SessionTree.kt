@@ -121,8 +121,11 @@ fun SessionTree(
 
 private fun summary(projects: List<Project>): String {
     val chats = projects.sumOf { it.chats.size }
-    return "${projects.size} projects, $chats chats"
+    return "${count(projects.size, "project")}, ${count(chats, "chat")}"
 }
+
+/** A count and its noun, singular when there is one of them. */
+private fun count(n: Int, noun: String): String = "$n $noun" + if (n == 1) "" else "s"
 
 // The live marker. Small enough to sit inside a row's height and still be the
 // only thing on the row that is not text.
