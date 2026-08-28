@@ -67,11 +67,13 @@ data class Project(
     val modified: Long get() = chats.maxOfOrNull { it.modified } ?: 0L
 
     /**
-     * A short name for the project, for a row with no room for a path.
+     * A short name for the project, for a tab with no room for a path.
      *
      * The last two segments rather than the last one: every project on this
      * device is a `files` directory under an application id, so one segment
-     * names them all the same thing.
+     * names them all the same thing. A drawer row draws the path instead --
+     * there is room for it there, and a folded name beside the thing it was
+     * folded from says one thing twice.
      */
     val name: String
         get() = path.split('/').filter { it.isNotEmpty() }

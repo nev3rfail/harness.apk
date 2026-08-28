@@ -189,9 +189,13 @@ private fun ProjectEntry(
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    // A short name, which is what tells two projects apart on a
-                    // screen this narrow. The whole path is underneath it.
-                    text = project.name,
+                    // The path itself, which is what a project is. A shortened
+                    // name drawn above it said the same thing twice and agreed
+                    // with neither the path nor the directory it was folded
+                    // from. A guessed path is marked, because flattening a
+                    // directory name cannot be undone and the result is often
+                    // wrong.
+                    text = project.path + if (project.guessed) "  (guessed)" else "",
                     fontFamily = FontFamily.Monospace,
                     fontSize = RowFontSize,
                     maxLines = 1,
@@ -216,16 +220,6 @@ private fun ProjectEntry(
                     )
                 }
             }
-            Text(
-                // A guessed path is marked, because flattening a directory name
-                // cannot be undone and the result is often wrong.
-                text = project.path + if (project.guessed) "  (guessed)" else "",
-                fontFamily = FontFamily.Monospace,
-                fontSize = NoteFontSize,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
         Text(
             text = "${project.chats.size}",
