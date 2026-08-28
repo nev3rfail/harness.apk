@@ -134,18 +134,19 @@ class IdeServer(
      * believes.
      */
     fun reportSelection(path: String) {
-        notify("selection_changed", JSONObject().put("filePath", path))
+        notify("selection_changed", selectionParams(path))
     }
 
-    /** Tells the agent what the user has highlighted. */
+    /**
+     * Tells the agent what the user has highlighted.
+     *
+     * [endLine] is the last selected line, inclusive, because that is what a
+     * person points at. Turning that into what the wire wants is
+     * [selectionParams]' job, which is also where it can be tested: this class
+     * speaks to `android.util.Log` and cannot be run off a device.
+     */
     fun reportSelection(path: String, startLine: Int, endLine: Int, text: String) {
-        val params = JSONObject()
-            .put("selection", JSONObject()
-                .put("start", JSONObject().put("line", startLine).put("character", 0))
-                .put("end", JSONObject().put("line", endLine).put("character", 0)))
-            .put("text", text)
-            .put("filePath", path)
-        notify("selection_changed", params)
+        notify("selection_changed", selectionParams(path, startLine, endLine, text))
     }
 
     /** Points the agent at a file, the way an editor's "add to chat" does. */

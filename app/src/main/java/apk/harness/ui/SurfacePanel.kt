@@ -98,7 +98,10 @@ fun SurfacePanel(
                 subtitle = surface.subtitle(),
                 onDismiss = onDismiss,
                 onPark = if (surface is Surface.Document) onPark else null,
-                selected = selection?.label(),
+                // The file's numbering, not the document's: this reads back
+                // what the agent was told, so it may not disagree with it.
+                selected = (surface as? Surface.Document)
+                    ?.let { document -> selection?.label(document.lineOffset) },
                 onClear = { onSelect(null) },
             )
             HorizontalDivider()

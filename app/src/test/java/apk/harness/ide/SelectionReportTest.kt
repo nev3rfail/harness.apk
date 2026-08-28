@@ -1,11 +1,43 @@
 package apk.harness.ide
 
 import apk.harness.ui.markdownBlocks
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelectionReportTest {
+
+    @Test
+    fun `the end position names the line after the last selected one`() {
+        val selection = selectionParams("/doc.md", 4, 7, "text").getJSONObject("selection")
+        assertEquals(4, selection.getJSONObject("start").getInt("line"))
+        assertEquals(8, selection.getJSONObject("end").getInt("line"))
+    }
+
+    @Test
+    fun `a one-line selection is a range of one line, not an empty one`() {
+        // The case that degenerates: character 0 of the only selected line is
+        // the point before it, so an inclusive end sends `1 to 0`.
+        val selection = selectionParams("/doc.md", 0, 0, "text").getJSONObject("selection")
+        assertEquals(0, selection.getJSONObject("start").getInt("line"))
+        assertEquals(1, selection.getJSONObject("end").getInt("line"))
+    }
+
+    @Test
+    fun `both ends sit at character zero`() {
+        val selection = selectionParams("/doc.md", 4, 7, "text").getJSONObject("selection")
+        assertEquals(0, selection.getJSONObject("start").getInt("character"))
+        assertEquals(0, selection.getJSONObject("end").getInt("character"))
+    }
+
+    @Test
+    fun `the params carry the path and the selected text`() {
+        val params = selectionParams("/doc.md", 4, 7, "text")
+        assertEquals("/doc.md", params.getString("filePath"))
+        assertEquals("text", params.getString("text"))
+    }
 
     @Test
     fun `an open document with no selection reports its path alone`() {

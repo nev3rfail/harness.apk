@@ -1,6 +1,7 @@
 package apk.harness.ide
 
 import apk.harness.ui.Spanned
+import org.json.JSONObject
 
 /**
  * A range of source lines in a document.
@@ -53,15 +54,26 @@ fun sliceOf(source: String, lines: IntRange): String {
 }
 
 /**
- * The selection as a person reads it, `L113-119`.
+ * The selection as a person reads it, `L113-119`, or null when the document
+ * holds no line of the file.
+ *
+ * [lineOffset] is the document's own, and it is asked for rather than defaulted
+ * so that no call site can quietly draw the document's numbering instead of the
+ * file's: a fenced source sits one line in, and a band reading `L2` for file
+ * line 1 disagrees with what the agent was told. The band is the only place the
+ * operator can read that back, so it may not disagree.
  *
  * One is added here, and nowhere else on the way to a screen: [Selection] is
  * zero-based because that is what goes on the wire. A single line drops the
  * range, because `L113-113` says the same thing twice.
+ *
+ * A null offset is a document that describes a file rather than showing it. Its
+ * lines are not the file's, so there is no range to draw.
  */
-fun Selection.label(): String {
-    val first = this.first + 1
-    val last = this.last + 1
+fun Selection.label(lineOffset: Int?): String? {
+    if (lineOffset == null) return null
+    val first = this.first + lineOffset + 1
+    val last = this.last + lineOffset + 1
     return if (first == last) "L$first" else "L$first-$last"
 }
 
@@ -158,3 +170,38 @@ fun reportFor(document: Surface.Document?, selection: Selection?): Report? {
 }
 
 private fun IntRange.shift(by: Int) = (first + by)..(last + by)
+
+/**
+ * The `selection_changed` params for a document with nothing highlighted.
+ *
+ * `filePath` is the only field the notification requires, so the path is the
+ * whole of it.
+ */
+fun selectionParams(path: String): JSONObject =
+    JSONObject().put("filePath", path)
+
+/**
+ * The `selection_changed` params for the lines [first] through [last].
+ *
+ * [last] is the last selected line, inclusive, because that is the selection the
+ * app holds and what a person points at. The wire is not: `selection` is a pair
+ * of *positions*, and character 0 of the last selected line is the point before
+ * that line, so sending it drops the line -- a four-line selection arrives as
+ * three, and a one-line selection arrives as `1 to 0`, which reads as nothing
+ * selected. The end therefore names the line after the last selected one, and
+ * this is the one place that conversion happens.
+ *
+ * Both characters stay at 0 rather than becoming a second thing to get wrong.
+ * `text` carries the content and the CLI reads the file to name the range, so
+ * nothing here needs a column.
+ */
+fun selectionParams(path: String, first: Int, last: Int, text: String): JSONObject =
+    JSONObject()
+        .put(
+            "selection",
+            JSONObject()
+                .put("start", JSONObject().put("line", first).put("character", 0))
+                .put("end", JSONObject().put("line", last + 1).put("character", 0)),
+        )
+        .put("text", text)
+        .put("filePath", path)

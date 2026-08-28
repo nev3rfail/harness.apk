@@ -4,6 +4,7 @@ import apk.harness.ui.MarkdownBlock
 import apk.harness.ui.Spanned
 import apk.harness.ui.markdownBlocks
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SelectionTest {
@@ -77,12 +78,24 @@ class SelectionTest {
 
     @Test
     fun `a range is drawn for a person one line later than it is sent`() {
-        assertEquals("L113-119", Selection("/doc.md", 112, 118).label())
+        assertEquals("L113-119", Selection("/doc.md", 112, 118).label(0))
     }
 
     @Test
     fun `one line is drawn as one number`() {
-        assertEquals("L1", Selection("/doc.md", 0, 0).label())
+        assertEquals("L1", Selection("/doc.md", 0, 0).label(0))
+    }
+
+    @Test
+    fun `a fenced source is drawn at the file's line, not the document's`() {
+        // documentFor wraps source in a fence, so the file's line 0 is the
+        // document's line 1 and the offset between them is minus one.
+        assertEquals("L1-34", Selection("/Foo.kt", 1, 34).label(-1))
+    }
+
+    @Test
+    fun `a described document draws no range at all`() {
+        assertNull(Selection("/blob.bin", 0, 0).label(null))
     }
 
     @Test

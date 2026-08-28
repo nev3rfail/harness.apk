@@ -684,12 +684,16 @@ private fun announce(tabs: AgentTabs, owner: Long, report: Report) {
  *
  * One-based, because this is the one place the lines are drawn for a person
  * rather than sent to an agent, and it is also the only place the operator can
- * see what the agent has been told.
+ * see what the agent has been told. They are the file's lines for the same
+ * reason: the band and the wire have to agree, so the document's own offset is
+ * applied here too. A document that only describes a file holds no line of it
+ * and shows its name alone.
  */
 private fun bandLabel(put: Surfaces.Parked): String {
     val name = put.document.path.substringAfterLast('/')
     val selection = put.selection ?: return name
-    return "$name  " + selection.label()
+    val label = selection.label(put.document.lineOffset) ?: return name
+    return "$name  " + label
 }
 
 /** How often the drawer rereads the roster while it is open. */
