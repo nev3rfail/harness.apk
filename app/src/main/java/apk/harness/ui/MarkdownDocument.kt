@@ -3,7 +3,6 @@ package apk.harness.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +35,10 @@ import com.mikepenz.markdown.m3.markdownTypography
  *
  * [onPoint] is told which unit was touched and whether the touch was a long
  * press, and nothing else. What that does to the selection depends on where the
- * anchor is, and the anchor belongs to whoever outlives this composition.
+ * anchor is, and the anchor belongs to whoever outlives this composition. A
+ * long press is always reported; a tap only while [selected] holds something,
+ * because that is the only state a tap has a meaning in, and a document whose
+ * links stopped opening would be a poor price for one that has none.
  *
  * [openExternal] is what a cell's source mark hands its reference to. It comes
  * from here rather than from the cell because a document is the smallest thing
@@ -61,6 +63,13 @@ fun MarkdownDocument(
     // taken as it is when the touch lands rather than as it was then. Without
     // this a tap would extend from the selection two taps ago.
     val point by rememberUpdatedState(onPoint)
+    // Whether a tap means anything, read the same way and for a second reason:
+    // a pointer input node whose keys are unchanged is reused as it stands,
+    // handler and all, so a modifier that swapped one gesture block for another
+    // on the same key would leave the block installed first running for good.
+    // One block that reads this is the only shape that answers a selection
+    // arriving and going away.
+    val holding by rememberUpdatedState(selected != null)
     val highlight = MaterialTheme.colorScheme.primary.copy(alpha = SELECTION_ALPHA)
     val typography = markdownTypography(
         h1 = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
@@ -88,22 +97,9 @@ fun MarkdownDocument(
                 .fillMaxWidth()
                 .then(if (covered) Modifier.background(highlight) else Modifier)
                 .then(
-                    when {
-                        onPoint == null -> Modifier
-                        // A tap inside a link reaches the renderer's own handler
-                        // first, so while a selection is held the tap is taken
-                        // before it gets there: pointing at a unit is what a tap
-                        // means then. With no selection held nothing is
-                        // intercepted and a link opens as it always does.
-                        selected != null -> Modifier.pointAhead(unit) { held ->
-                            point?.invoke(unit, held)
-                        }
-                        else -> Modifier.pointerInput(unit) {
-                            detectTapGestures(
-                                onLongPress = { point?.invoke(unit, true) },
-                                onTap = { point?.invoke(unit, false) },
-                            )
-                        }
+                    if (onPoint == null) Modifier
+                    else Modifier.pointAhead(unit, { holding }) { held ->
+                        point?.invoke(unit, held)
                     }
                 )
 
@@ -152,45 +148,60 @@ fun MarkdownDocument(
  * the initial pass, which reaches the outside first, and consumes the touch it
  * acts on so the link never sees it.
  *
+ * A long press always anchors. A tap is acted on only while [taps] answers
+ * true, which is while a selection is held: `spec/040` gives a tap no meaning
+ * with nothing held, so the release is left as it arrived and whatever is under
+ * it -- a link -- has it. The release of a long press is consumed either way,
+ * because holding a link is not clicking it.
+ *
  * Nothing is consumed until the touch has settled into a tap or a hold: a drag
  * starting here is the panel scrolling, and taking it would pin the document
- * under a finger.
+ * under a finger. Watching a pass does not take a change from it, so on the
+ * gestures this declines the pointer stream is the one the renderer would have
+ * seen had nothing been attached here at all.
+ *
+ * [taps] is asked rather than told, because this block outlives the composition
+ * that installed it and a new one is not put in its place.
  *
  * [press] is told whether the touch was held long enough to be a long press,
  * which is the same pair of answers a tap detector gives.
  */
-private fun Modifier.pointAhead(key: Any, press: (held: Boolean) -> kotlin.Unit) =
-    pointerInput(key) {
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            val tapped = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                var change = down
-                while (change.pressed) {
-                    change = awaitPointerEvent(PointerEventPass.Initial).changes
-                        .firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
-                    if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
-                        return@withTimeoutOrNull false
-                    }
+private fun Modifier.pointAhead(
+    key: Any,
+    taps: () -> Boolean,
+    press: (held: Boolean) -> kotlin.Unit,
+) = pointerInput(key) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val tapped = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+            var change = down
+            while (change.pressed) {
+                change = awaitPointerEvent(PointerEventPass.Initial).changes
+                    .firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                    return@withTimeoutOrNull false
                 }
-                change.consume()
-                true
             }
-            when {
-                // Still down when the press timed out. What is left of the
-                // gesture is consumed as it arrives, or the release lands on the
-                // link as a click of its own.
-                tapped == null -> {
-                    press(true)
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        event.changes.forEach { it.consume() }
-                    } while (event.changes.any { it.pressed })
-                }
+            if (!taps()) return@withTimeoutOrNull false
+            change.consume()
+            true
+        }
+        when {
+            // Still down when the press timed out. What is left of the
+            // gesture is consumed as it arrives, or the release lands on the
+            // link as a click of its own.
+            tapped == null -> {
+                press(true)
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                } while (event.changes.any { it.pressed })
+            }
 
-                tapped -> press(false)
-            }
+            tapped -> press(false)
         }
     }
+}
 
 /**
  * How much of the theme's primary a selected block is drawn in.
