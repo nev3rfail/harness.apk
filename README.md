@@ -1,43 +1,46 @@
-# harness.apk
+# harness.apk -- From Tinkerers For Tinkerers
 
 >A full agentic loop delivered to your phone
 
 ## Description
 
-An Android app that runs Claude Code on the phone as a native process, and is
-also the editor that agent attaches to.
+- Puts an agent into an apk file, that allows agent to interact with the phone: show you diffs when proposing edits, open files, show you things on the map. The apk bootstraps it's own termux environment for the agent to use, and installs several shims for the musl claude to work. Untested with other CLI harnesses, although you can (and should!) try to put your favorite Codex or Pi in agent.sh and see for yourself.
+- With self adb, possibilities are endless: run as different programs, deploy programs written on android from said android to said android. With Firefox USB Debugging enabled, agent can even drive your mobile Firefox instance
 
-Anthropic publishes a musl build of the agent, and a musl binary asks the system
-for one thing Android lacks: `/lib/ld-musl-<arch>.so.1`, which on musl is libc
-and the ELF interpreter at once. The app ships that loader, built from musl's own
-release, one per ABI, and runs the agent as an argument to it. On x86_64 a
-syscall tracer goes in front, because Android's seccomp allowlist covers only the
-`*at` calls bionic uses while the agent's runtime reaches for the legacy ones;
-aarch64 never had them.
+## How it boots
 
-The terminal is ghostty, drawn by its own renderer through JNI onto a GL surface.
-Under it sits a relocated Termux userland -- bash, git and the rest -- with its
-prefix inside the app's data directory. `apt install` works against Termux's
-repository, because every archive is rewritten on the way in to land under that
-prefix.
+```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 540}}}%%
+flowchart TB
+  l["launcher.sh<br/>assembles the platform; spells no absolute path"]
+  a["agent.sh<br/>names the command, its flags, and the Bun preload"]
+  s["syscall-shim<br/>unpacked into the native library directory"]
+  ld["ld-musl-&lt;arch&gt;.so.1<br/>run as a program, not named as PT_INTERP"]
+  c["claude --ide<br/>stored exactly as it arrived"]
 
-Being the editor is what makes the phone useful to the agent. Claude Code finds
-one by reading a lockfile that names a port, so the app writes one and answers on
-it. The tools an editor is asked for are fixed, so anything meant to be reached
-for on purpose is served separately, as an MCP server the agent is configured
-with. Either way, a capability the app can draw becomes a tool the agent can
-call: a document rendered rather than printed, a diff held open until someone
-accepts it, a map, or a URI handed to whichever app the phone opens it with.
+  l --> a --> s --> ld --> c
+
+  sdk["targetSdk 28 — API 29 and later grant an app<br/>no right to execute its own data directory"]
+  abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp.<br/>aarch64 — the ABI is already the allowlist, so the shim only execs"]
+  dns["names — the staged prefix is compiled into the loader, so libc<br/>finds a resolver file; the dns module goes through c-ares,<br/>named by a preload that BUN_OPTIONS points at"]
+
+  abi -.-> s
+  sdk -.-> ld
+  dns -.-> c
+
+  classDef note fill:#fbfbfb,stroke:#999,stroke-dasharray:4 3,color:#444
+  class sdk,abi,dns note
+```
 
 ## Restrictions
 
+- It is modern android. We can't achieve true persistence so claude should be instructed to be careful with background jobs and heaby tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
 - targetSdk=28 and compileSdk=34
-- markdown view is rather lacking
-- since there are no rich interactive widgets (yet?) it is more like a proof of concept. But it works good enough
+- since there are no rich interactive widgets (yet), it is more like a proof of concept. But it works good enough to deliver *self updates* for this app
 
 ## Shoulders of giants we're standing on
 
-- ghostty for being the best tty
-- ghostty-android authors that did a lot of heavy lifting running it on an alien platform with an alien renderer
+- ghostty -- the best tty
+- ghostty-android author @tapthaker, who did a lot of heavy lifting running it on an alien platform with an alien renderer
 - claude-code-android for the inspiration with shimming glibc with bionic and in general showing me that it is possible
-- termux for the userland, and it's wonderful community for providing provides third-party precompiled stuff like arm ndk navigation
+- termux for the userland, and it's wonderful community who provides precompiled stuff like arm ndk
