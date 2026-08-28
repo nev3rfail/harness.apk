@@ -93,6 +93,43 @@ class CellGridTest {
         assertEquals("name\tyears\nPicasso\t1904", tabSeparated(gridOf(cell, rows)))
     }
 
+    @Test
+    fun `a blanket source vouches for a factual field`() {
+        val row = CellRow(fields = mapOf("at" to CellValue.Text("0, 0")), blanket = Provenance.Reasoned)
+
+        assertEquals(Provenance.Reasoned, markFor(CellKind.Map, "at", row))
+    }
+
+    @Test
+    fun `a blanket source does not reach an extra the schema calls nobody's claim`() {
+        val row = CellRow(fields = mapOf("who" to CellValue.Text("Picasso")), blanket = Provenance.Reasoned)
+
+        assertNull(markFor(CellKind.Map, "who", row))
+    }
+
+    @Test
+    fun `an extra the row vouched for itself keeps its mark`() {
+        val row = CellRow(
+            fields = mapOf("who" to CellValue.Text("Picasso")),
+            provenance = mapOf("who" to Provenance.Source("https://example.test")),
+            blanket = Provenance.Reasoned,
+        )
+
+        assertEquals(Provenance.Source("https://example.test"), markFor(CellKind.Map, "who", row))
+    }
+
+    @Test
+    fun `notes is marked only when the row marked it`() {
+        val presumed = CellRow(
+            fields = mapOf("notes" to CellValue.Text("a walk")),
+            blanket = Provenance.Operator,
+        )
+        val stated = presumed.copy(provenance = mapOf("notes" to Provenance.Reasoned))
+
+        assertNull(markFor(CellKind.Map, "notes", presumed))
+        assertEquals(Provenance.Reasoned, markFor(CellKind.Map, "notes", stated))
+    }
+
     private fun table(columns: List<String>, sort: String? = null) = Cell(
         kind = CellKind.Table,
         attributes = buildMap {

@@ -53,7 +53,7 @@ fun gridOf(cell: Cell, rows: List<CellRow>): CellGrid {
     return CellGrid(
         header = columns,
         rows = sorted.map { row -> columns.map { textOf(row.fields[it]) } },
-        marks = sorted.map { row -> columns.map { row.provenanceOf(it) } },
+        marks = sorted.map { row -> columns.map { markFor(cell.kind, it, row) } },
     )
 }
 
@@ -66,3 +66,15 @@ fun gridOf(cell: Cell, rows: List<CellRow>): CellGrid {
  */
 fun tabSeparated(grid: CellGrid): String =
     (listOf(grid.header) + grid.rows).joinToString("\n") { it.joinToString("\t") }
+
+/**
+ * What vouches for one field of one row, or nothing.
+ *
+ * A blanket `source` covers the kind's factual fields and stops there. Drawing
+ * it beside an extra would put a claim on a value the schema says is nobody's,
+ * and `notes` is presumed reasoned already, so it shows a mark only when the row
+ * gave it one of its own.
+ */
+fun markFor(kind: CellKind, field: String, row: CellRow): Provenance? =
+    if (field in SCHEMAS.getValue(kind).factual) row.provenanceOf(field)
+    else row.provenance[field]
