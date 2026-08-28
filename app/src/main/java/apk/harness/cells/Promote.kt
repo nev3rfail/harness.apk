@@ -3,9 +3,6 @@ package apk.harness.cells
 import apk.harness.ui.MarkdownBlock
 import apk.harness.ui.Spanned
 
-/** The fence labels a cell may carry. */
-val CELL_LABELS: Set<String> = CellKind.entries.map { it.label }.toSet()
-
 /**
  * A document's blocks with its cells promoted, and what did not promote.
  *
@@ -44,9 +41,15 @@ fun promoteCells(blocks: List<Spanned>): Promotion {
         if (cell != null && found.isEmpty()) {
             Spanned(MarkdownBlock.Widget(cell), spanned.lines)
         } else {
-            // A fence's body starts one line after its opening line, which is
-            // where a parser position counts from.
-            val placed = found.map { it.copy(line = spanned.lines.first + (it.line ?: 0)) }
+            // A parser position is a line inside the body, and a body starts one
+            // line after the fence's opening line. A checker problem has no line
+            // of its own and lands on the fence.
+            val placed = found.map { problem ->
+                problem.copy(
+                    line = problem.line?.let { spanned.lines.first + 1 + it }
+                        ?: spanned.lines.first,
+                )
+            }
             problems += placed
             Spanned(degrade(spanned.block as MarkdownBlock.Code, placed), spanned.lines)
         }

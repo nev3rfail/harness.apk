@@ -130,7 +130,7 @@ fun rowsFor(cell: Cell, rowsById: Map<String, List<CellRow>>): List<CellRow> =
  * otherwise reports the same sentence twice and names neither.
  */
 private fun coordinateProblems(index: Int, row: CellRow): List<CellProblem> {
-    val where = "row $index: "
+    val where = "row ${index + 1}: "
     val pair = (row.fields["at"] as? CellValue.Series)?.values
         ?.map { (it as? CellValue.Number)?.value ?: return listOf(CellProblem(where + NOT_A_PAIR)) }
     if (pair == null || pair.size != 2) return listOf(CellProblem(where + NOT_A_PAIR))

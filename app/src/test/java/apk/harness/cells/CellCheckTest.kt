@@ -194,7 +194,7 @@ class CellCheckTest {
             sourcedRow("bad", 91.0, 0.0),
         ))
         val problems = checkCell(cell, emptyMap())
-        assertTrue(problems.single().reason.startsWith("row 1:"))
+        assertTrue(problems.single().reason.startsWith("row 2:"))
     }
 
     private fun mapCell(

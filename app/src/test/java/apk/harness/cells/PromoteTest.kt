@@ -78,6 +78,15 @@ class PromoteTest {
     }
 
     @Test
+    fun `a parse problem's line is the body line that broke, not the fence's own`() {
+        // The fence opens on line 1, so its body starts on line 2 and the
+        // unterminated string on the body's second line is document line 3.
+        val source = "intro\n```harness-map\ntitle = \"a\"\nzoom = \"oops\n```\n"
+        val promoted = promoteCells(markdownBlocks(source))
+        assertEquals(3, promoted.problems.single().line)
+    }
+
+    @Test
     fun `a cell inside a source file is interior text and is never promoted`() {
         // A .kt file becomes one fence from top to bottom, so a harness-map block
         // inside it is code. The same block in a .md file is a cell.
