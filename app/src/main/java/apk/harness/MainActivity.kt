@@ -474,6 +474,10 @@ private fun HarnessScreen(
                     // made the selection is gone by then.
                     selection = selection,
                     onSelect = surfaces::select,
+                    // The same way out of the app a terminal link takes. A
+                    // document's cells cite sources, and a citation nobody can
+                    // follow is a string.
+                    openExternal = openLink,
                 )
             }
         }

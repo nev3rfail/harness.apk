@@ -71,6 +71,9 @@ import org.osmdroid.views.overlay.Marker
  * one is to put the document away and then talk about it, which happens after
  * this composition is gone. [onSelect] is called with what the person has
  * pointed at, or null when they have dropped it.
+ *
+ * [openExternal] is the way out of the app, which a document needs because a
+ * cell's source mark is a reference to follow rather than a string to read.
  */
 @Composable
 fun SurfacePanel(
@@ -83,6 +86,7 @@ fun SurfacePanel(
     selection: Selection?,
     onSelect: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
+    openExternal: ((String) -> Unit)? = null,
 ) {
     MaterialSurface(
         modifier = modifier.fillMaxSize(),
@@ -103,7 +107,8 @@ fun SurfacePanel(
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
                 when (surface) {
                     is Surface.Diff -> DiffBody(surface)
-                    is Surface.Document -> Prose(surface, selection, onSelect, scroll, onScroll)
+                    is Surface.Document ->
+                        Prose(surface, selection, onSelect, scroll, onScroll, openExternal)
                     is Surface.Place -> Map(surface)
                 }
             }
@@ -274,6 +279,7 @@ private fun Prose(
     onSelect: (Selection?) -> Unit,
     scroll: Int,
     onScroll: (Int) -> Unit,
+    openExternal: ((String) -> Unit)?,
 ) {
     val state = rememberScrollState(initial = scroll)
     // Reported once, as this goes away, because that is the only moment anything
@@ -308,6 +314,7 @@ private fun Prose(
                 }
                 onSelect(next)
             },
+            openExternal = openExternal,
         )
     }
 }
