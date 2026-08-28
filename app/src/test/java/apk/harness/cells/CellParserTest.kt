@@ -148,6 +148,22 @@ class CellParserTest {
         assertTrue(result.isFailure)
     }
 
+    @Test
+    fun `a source that is not a reference or a mark is refused`() {
+        // An empty reference draws as no link but satisfies the check, so a cell
+        // would claim a source it does not have. Silence is the error the
+        // provenance rules exist to catch, and this is silence in a costume.
+        for (body in listOf(
+            "title = \"a\"\n[[rows]]\nname = \"a\"\nat = [0.0, 0.0]\nsource = 5\n",
+            "title = \"a\"\n[[rows]]\nname = \"a\"\nat = [0.0, 0.0]\nsource = { at = 5 }\n",
+        )) {
+            val result = parseCell(CellKind.Map, body)
+            assertTrue("accepted: $body", result.isFailure)
+            val problem = (result.exceptionOrNull() as CellProblemException).problem
+            assertTrue("source" in problem.reason)
+        }
+    }
+
     private companion object {
         val MONTMARTRE = """
             id = "montmartre"

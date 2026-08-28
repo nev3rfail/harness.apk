@@ -16,6 +16,8 @@ private const val SOURCE = "source"
 
 private const val NESTED = "a cell holds attributes and rows, nothing deeper"
 private const val DOTTED = "write a row's source inside the row: source = { at = \"...\" }"
+private const val SOURCE_SHAPE =
+    "a source is a URL or a result id, or \"reasoned\", or \"operator\""
 
 /** The position a parser failure carries, which it carries only as text. */
 private val LINE_PREFIX = Regex("""^Line (\d+):""")
@@ -108,11 +110,13 @@ private fun rowOf(element: TomlArrayOfTablesElement): CellRow {
     for (node in element.children) {
         val pair = keyValueOf(node)
         when {
-            pair != null && pair.first == SOURCE -> blanket = provenanceOf(pair.second)
+            pair != null && pair.first == SOURCE ->
+                blanket = provenanceOf(pair.second, node.lineNo)
             pair != null -> fields += pair
             node is TomlTable && node.name == SOURCE ->
-                for ((field, mark) in node.children.mapNotNull(::keyValueOf)) {
-                    provenance[field] = provenanceOf(mark)
+                for (child in node.children) {
+                    val (field, mark) = keyValueOf(child) ?: continue
+                    provenance[field] = provenanceOf(mark, child.lineNo)
                 }
             node is TomlTable -> refuse(NESTED, node.lineNo)
         }
@@ -148,14 +152,20 @@ private fun valueOf(value: TomlValue): CellValue = when (val content = value.con
     else -> CellValue.Text(content.toString())
 }
 
-/** What a `source` entry says: one of the two marks, or a reference to follow. */
-private fun provenanceOf(value: CellValue): Provenance =
+/**
+ * What a `source` entry says: one of the two marks, or a reference to follow.
+ *
+ * Anything that is not a string is refused rather than read as an empty
+ * reference: an empty reference draws as no link while the check still sees
+ * provenance present, so the field would claim a source it does not have.
+ */
+private fun provenanceOf(value: CellValue, lineNo: Int): Provenance =
     when (val mark = (value as? CellValue.Text)?.value) {
-        // A mark is a literal, so the comparison is exact. A source that is not
-        // a string references nothing, and an empty reference draws as no link.
+        // A mark is a literal, so the comparison is exact.
         "reasoned" -> Provenance.Reasoned
         "operator" -> Provenance.Operator
-        else -> Provenance.Source(mark.orEmpty())
+        null -> refuse(SOURCE_SHAPE, lineNo)
+        else -> Provenance.Source(mark)
     }
 
 /**
