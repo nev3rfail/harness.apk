@@ -345,7 +345,7 @@ private fun Map(place: Surface.Place) {
  * osmdroid keeps a tile cache on disk and identifies itself to the tile server,
  * both of which it refuses to guess at. The cache goes in the app's own space.
  */
-private fun configureOsmdroid(context: Context) {
+internal fun configureOsmdroid(context: Context) {
     val configuration = Configuration.getInstance()
     if (configuration.userAgentValue == context.packageName) return
     configuration.userAgentValue = context.packageName

@@ -49,7 +49,7 @@ fun CellBody(
 ) {
     when (cell.kind) {
         CellKind.Table -> CellTable(cell, rows, modifier, openExternal)
-        CellKind.Map -> {}
+        CellKind.Map -> CellMapBody(cell, rows, modifier, openExternal)
     }
 }
 
