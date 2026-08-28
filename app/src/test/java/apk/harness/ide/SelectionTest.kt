@@ -74,4 +74,103 @@ class SelectionTest {
         assertEquals(4, selection.last)
         assertEquals("second para", sliceOf(source, selection.first..selection.last))
     }
+
+    @Test
+    fun `a range is drawn for a person one line later than it is sent`() {
+        assertEquals("L113-119", Selection("/doc.md", 112, 118).label())
+    }
+
+    @Test
+    fun `one line is drawn as one number`() {
+        assertEquals("L1", Selection("/doc.md", 0, 0).label())
+    }
+
+    @Test
+    fun `a long press takes the unit it landed on and nothing else`() {
+        val target = unitOf(3, Spanned(MarkdownBlock.Prose("a"), 8..11))
+        val held = Selection("/doc.md", 0, 2)
+        val next = pointAt("/doc.md", anchor = null, selection = held, target, anchoring = true)
+        assertEquals(Selection("/doc.md", 8, 11), next)
+    }
+
+    @Test
+    fun `a tap extends from the anchor to the unit it landed on`() {
+        val anchor = unitOf(0, Spanned(MarkdownBlock.Prose("a"), 2..3))
+        val target = unitOf(2, Spanned(MarkdownBlock.Prose("b"), 8..11))
+        val held = Selection("/doc.md", 2, 3)
+        assertEquals(
+            Selection("/doc.md", 2, 11),
+            pointAt("/doc.md", anchor, held, target, anchoring = false),
+        )
+    }
+
+    @Test
+    fun `a tap above the anchor extends upwards`() {
+        val anchor = unitOf(2, Spanned(MarkdownBlock.Prose("b"), 8..11))
+        val target = unitOf(0, Spanned(MarkdownBlock.Prose("a"), 2..3))
+        val held = Selection("/doc.md", 8, 11)
+        assertEquals(
+            Selection("/doc.md", 2, 11),
+            pointAt("/doc.md", anchor, held, target, anchoring = false),
+        )
+    }
+
+    @Test
+    fun `a tap on a unit the selection covers drops the selection`() {
+        val target = unitOf(1, Spanned(MarkdownBlock.Prose("b"), 4..5))
+        val held = Selection("/doc.md", 2, 9)
+        val anchor = unitOf(0, Spanned(MarkdownBlock.Prose("a"), 2..3))
+        assertEquals(null, pointAt("/doc.md", anchor, held, target, anchoring = false))
+    }
+
+    @Test
+    fun `a tap with no anchor and no selection takes the unit alone`() {
+        val target = unitOf(1, Spanned(MarkdownBlock.Prose("b"), 4..5))
+        assertEquals(
+            Selection("/doc.md", 4, 5),
+            pointAt("/doc.md", anchor = null, selection = null, target, anchoring = false),
+        )
+    }
+
+    @Test
+    fun `the first tap after a restore extends from where the selection starts`() {
+        // A restored document has a selection and no anchor: the run of pointing
+        // that made it ended when the panel was put away.
+        val held = Selection("/doc.md", 4, 5)
+        val target = unitOf(3, Spanned(MarkdownBlock.Prose("c"), 10..12))
+        assertEquals(
+            Selection("/doc.md", 4, 12),
+            pointAt("/doc.md", anchor = null, selection = held, target, anchoring = false),
+        )
+    }
+
+    @Test
+    fun `a fence draws its own body lines rather than the document's`() {
+        val fence = Spanned(MarkdownBlock.Code("kotlin", "a\nb\nc"), 10..14)
+        assertEquals(1..2, bodyLinesOf(fence, 12..13))
+    }
+
+    @Test
+    fun `a fence taken whole draws from its first body line`() {
+        val fence = Spanned(MarkdownBlock.Code("kotlin", "a\nb\nc"), 10..14)
+        assertEquals(0..3, bodyLinesOf(fence, 10..14))
+    }
+
+    @Test
+    fun `a selection ending above a fence draws nothing in it`() {
+        val fence = Spanned(MarkdownBlock.Code("kotlin", "a"), 10..12)
+        assertEquals(null, bodyLinesOf(fence, 2..9))
+    }
+
+    @Test
+    fun `a selection starting below a fence draws nothing in it`() {
+        val fence = Spanned(MarkdownBlock.Code("kotlin", "a"), 10..12)
+        assertEquals(null, bodyLinesOf(fence, 13..20))
+    }
+
+    @Test
+    fun `a selection reaching into a fence from above draws its first lines`() {
+        val fence = Spanned(MarkdownBlock.Code("kotlin", "a\nb\nc"), 10..14)
+        assertEquals(0..1, bodyLinesOf(fence, 4..12))
+    }
 }

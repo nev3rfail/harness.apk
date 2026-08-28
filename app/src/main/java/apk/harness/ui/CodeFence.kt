@@ -1,6 +1,7 @@
 package apk.harness.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,12 +12,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -51,20 +60,52 @@ private const val HIGHLIGHT_MAX_CHARS = 128 * 1024
  *
  * Only the code scrolls sideways. A long line takes itself off the screen and
  * leaves the numbers where they are.
+ *
+ * [selected] is counted in this fence's own body lines, from zero at the line
+ * after the opening fence. The caller converts, so a fence draws a selection
+ * without ever learning where in a document it sits. [onPointLine] answers in
+ * the same numbers: the line a touch landed on, and whether it was a long
+ * press. What that does to the selection is decided by whoever holds the anchor.
  */
 @Composable
-fun CodeFence(language: String?, code: String, modifier: Modifier = Modifier) {
+fun CodeFence(
+    language: String?,
+    code: String,
+    modifier: Modifier = Modifier,
+    selected: IntRange? = null,
+    onPointLine: ((bodyLine: Int, anchoring: Boolean) -> Unit)? = null,
+) {
     val lineCount = remember(code) { code.count { it == '\n' } + 1 }
-    val gutter = remember(lineCount) {
+    val accent = MaterialTheme.colorScheme.primary
+    // One string for every number, with a span over the selected ones. Asking a
+    // second layout which numbers to colour would be two layouts that have to
+    // agree about where a line is.
+    val gutter = remember(lineCount, selected, accent) {
         val width = lineCount.toString().length
-        (1..lineCount).joinToString("\n") { it.toString().padStart(width) }
+        buildAnnotatedString {
+            append((1..lineCount).joinToString("\n") { it.toString().padStart(width) })
+            val band = selected?.clampedTo(lineCount) ?: return@buildAnnotatedString
+            // Every number is padded to the same width and joined by a single
+            // newline, so a line's own characters start at a fixed stride.
+            val stride = width + 1
+            addStyle(SpanStyle(color = accent), band.first * stride, band.last * stride + width)
+        }
     }
 
-    // A keyword takes the theme's own accent; the other three are named here,
-    // because the scheme's remaining roles are not distinct enough from each
-    // other on this palette to tell a string from a number.
-    val keyword = MaterialTheme.colorScheme.primary
-    val palette = remember(keyword) { Palette(CommentColour, TextColour, NumberColour, keyword) }
+    // The layout that drew the body: it is what turns a touch into a line and a
+    // line into the height a band is drawn at, exactly, rather than inferred
+    // from a font size the layout was free to adjust.
+    var layout by remember(code) { mutableStateOf<TextLayoutResult?>(null) }
+    // A gesture outlives the composition that started it, so the handler is
+    // taken as it is when the touch lands rather than as it was then.
+    val point by rememberUpdatedState(onPointLine)
+    val highlight = accent.copy(alpha = SELECTION_ALPHA)
+
+    // A keyword takes the theme's own accent -- the same one a selected line
+    // number takes; the other three are named here, because the scheme's
+    // remaining roles are not distinct enough from each other on this palette to
+    // tell a string from a number.
+    val palette = remember(accent) { Palette(CommentColour, TextColour, NumberColour, accent) }
 
     // Plain first, coloured when the pass finishes. A fence large enough for the
     // tokenizing to be noticeable is a fence large enough that waiting to draw
@@ -97,7 +138,32 @@ fun CodeFence(language: String?, code: String, modifier: Modifier = Modifier) {
             // numbers stay put while the code moves.
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())
-                .padding(end = 8.dp),
+                .padding(end = 8.dp)
+                // Both of these sit inside the scroll, where the width is the
+                // longest line's rather than the window's: a band covers the
+                // whole of the lines it marks, and a touch arrives in the
+                // text's own coordinates. Only the vertical offset is read, and
+                // a horizontal scroll leaves that alone either way.
+                .drawBehind {
+                    val lines = layout ?: return@drawBehind
+                    val band = selected?.clampedTo(lines.lineCount) ?: return@drawBehind
+                    val top = lines.getLineTop(band.first)
+                    drawRect(
+                        color = highlight,
+                        topLeft = Offset(0f, top),
+                        size = Size(size.width, lines.getLineBottom(band.last) - top),
+                    )
+                }
+                .then(
+                    if (onPointLine == null) Modifier
+                    else Modifier.pointerInput(code) {
+                        detectTapGestures(
+                            onLongPress = { at -> report(layout, at.y, true, point) },
+                            onTap = { at -> report(layout, at.y, false, point) },
+                        )
+                    }
+                ),
+            onTextLayout = { layout = it },
             fontFamily = FontFamily.Monospace,
             fontSize = CodeSize,
             color = MaterialTheme.colorScheme.onSurface,
@@ -106,6 +172,31 @@ fun CodeFence(language: String?, code: String, modifier: Modifier = Modifier) {
             softWrap = false,
         )
     }
+}
+
+/**
+ * The lines of a body that were laid out, or null when the range names none.
+ *
+ * A fence's span runs to its closing marker, so a selection over the whole fence
+ * asks for one line more than the body has, and a selection that reaches the
+ * fence from below can name only that marker. The layout is the authority on how
+ * many lines there are.
+ */
+private fun IntRange.clampedTo(lineCount: Int): IntRange? {
+    if (first > lineCount - 1 || last < 0) return null
+    val from = first.coerceAtLeast(0)
+    return from..last.coerceIn(from, lineCount - 1)
+}
+
+/** The line [y] fell on, told to [point]. Without a layout there is no line. */
+private fun report(
+    layout: TextLayoutResult?,
+    y: Float,
+    anchoring: Boolean,
+    point: ((Int, Boolean) -> Unit)?,
+) {
+    val lines = layout ?: return
+    point?.invoke(lines.getLineForVerticalPosition(y), anchoring)
 }
 
 // Against the fence's own background, which is the scheme's surfaceVariant.

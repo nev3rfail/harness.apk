@@ -52,6 +52,7 @@ import apk.harness.ide.PanelServer
 import apk.harness.ide.Surface
 import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
+import apk.harness.ide.label
 import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.DrawerSide
@@ -310,6 +311,7 @@ private fun HarnessScreen(
     val surface by surfaces.visible.collectAsState()
     val documentOwner by surfaces.owner.collectAsState()
     val parked by surfaces.parked.collectAsState()
+    val selection by surfaces.selection.collectAsState()
 
     // Where each chat's document was scrolled to. Here rather than in Surfaces
     // because nothing outside the composition reads it, and this composition
@@ -426,6 +428,11 @@ private fun HarnessScreen(
                     // left it.
                     scroll = offsets[documentOwner] ?: 0,
                     onScroll = { offset -> offsets[documentOwner] = offset },
+                    // Held in Surfaces rather than in the panel: the document is
+                    // put away and talked about afterwards, and the panel that
+                    // made the selection is gone by then.
+                    selection = selection,
+                    onSelect = surfaces::select,
                 )
             }
         }
@@ -611,9 +618,7 @@ private fun HarnessScreen(
 private fun bandLabel(put: Surfaces.Parked): String {
     val name = put.document.path.substringAfterLast('/')
     val selection = put.selection ?: return name
-    val first = selection.first + 1
-    val last = selection.last + 1
-    return if (first == last) "$name  L$first" else "$name  L$first-$last"
+    return "$name  " + selection.label()
 }
 
 /** How often the drawer rereads the roster while it is open. */

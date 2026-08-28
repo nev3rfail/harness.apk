@@ -28,7 +28,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -39,7 +42,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import apk.harness.ide.DiffDecision
+import apk.harness.ide.Selection
 import apk.harness.ide.Surface
+import apk.harness.ide.label
+import apk.harness.ide.pointAt
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -60,6 +66,11 @@ import org.osmdroid.views.overlay.Marker
  * [scroll] and [onScroll] are how a parked document comes back where it was
  * left. Parking destroys this composition, so the offset is reported to the
  * caller, which outlives it, and read back from there when it is built again.
+ *
+ * [selection] arrives the same way and for the same reason: the point of holding
+ * one is to put the document away and then talk about it, which happens after
+ * this composition is gone. [onSelect] is called with what the person has
+ * pointed at, or null when they have dropped it.
  */
 @Composable
 fun SurfacePanel(
@@ -69,6 +80,8 @@ fun SurfacePanel(
     onPark: (() -> Unit)?,
     scroll: Int,
     onScroll: (Int) -> Unit,
+    selection: Selection?,
+    onSelect: (Selection?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MaterialSurface(
@@ -81,6 +94,8 @@ fun SurfacePanel(
                 subtitle = surface.subtitle(),
                 onDismiss = onDismiss,
                 onPark = if (surface is Surface.Document) onPark else null,
+                selected = selection?.label(),
+                onClear = { onSelect(null) },
             )
             HorizontalDivider()
 
@@ -88,7 +103,7 @@ fun SurfacePanel(
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
                 when (surface) {
                     is Surface.Diff -> DiffBody(surface)
-                    is Surface.Document -> Prose(surface.markdown, scroll, onScroll)
+                    is Surface.Document -> Prose(surface, selection, onSelect, scroll, onScroll)
                     is Surface.Place -> Map(surface)
                 }
             }
@@ -117,11 +132,16 @@ private fun Surface.subtitle(): String? = when (this) {
 }
 
 /**
- * The panel's title, and the two ways out of it.
+ * The panel's title, what is selected in it, and the two ways out of it.
  *
  * [onPark] is drawn as a chevron pointing the way the document goes, which is
  * the way the band it lands on is pulled back. It defaults to absent, so the
  * row is Close alone for the drawers and for a surface that does not park.
+ *
+ * [selected] is the range already written for a person, `L113-119`. It is the
+ * only place they can read back what the agent has been told, and [onClear] is
+ * beside it because a selection with nowhere on screen to drop it is one the
+ * operator has to guess their way out of.
  */
 @Composable
 internal fun Header(
@@ -129,6 +149,8 @@ internal fun Header(
     subtitle: String?,
     onDismiss: () -> Unit,
     onPark: (() -> Unit)? = null,
+    selected: String? = null,
+    onClear: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
@@ -144,6 +166,15 @@ internal fun Header(
                     maxLines = 1,
                 )
             }
+        }
+        if (selected != null) {
+            Text(
+                selected,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+            TextButton(onClick = onClear) { Text("Clear") }
         }
         if (onPark != null) {
             IconButton(onClick = onPark) {
@@ -237,20 +268,47 @@ private fun diffLines(old: List<String>, new: List<String>): List<DiffLine> {
 }
 
 @Composable
-private fun Prose(markdown: String, scroll: Int, onScroll: (Int) -> Unit) {
+private fun Prose(
+    document: Surface.Document,
+    selection: Selection?,
+    onSelect: (Selection?) -> Unit,
+    scroll: Int,
+    onScroll: (Int) -> Unit,
+) {
     val state = rememberScrollState(initial = scroll)
     // Reported once, as this goes away, because that is the only moment anything
     // reads it. Following the scroll frame by frame would tell the caller the
     // same number several hundred times to answer a question asked once.
     val report by rememberUpdatedState(onScroll)
     DisposableEffect(state) { onDispose { report(state.value) } }
+
+    // The anchor is meaningful only while one run of pointing lasts, so it is
+    // remembered here and goes when this composition does. A restored document
+    // arrives with a selection and no anchor, and pointAt reads the selection's
+    // own first line in its place.
+    var anchor by remember(document.path) { mutableStateOf<apk.harness.ide.Unit?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(state)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        MarkdownDocument(content = markdown)
+        MarkdownDocument(
+            content = document.markdown,
+            selected = selection?.let { it.first..it.last },
+            onPoint = { unit, anchoring ->
+                val next = pointAt(document.path, anchor, selection, unit, anchoring)
+                // A long press is where the anchor is dropped, and a tap that
+                // dropped the selection ended the run of pointing it belonged to.
+                anchor = when {
+                    anchoring -> unit
+                    next == null -> null
+                    else -> anchor
+                }
+                onSelect(next)
+            },
+        )
     }
 }
 

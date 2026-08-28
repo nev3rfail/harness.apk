@@ -51,3 +51,66 @@ fun sliceOf(source: String, lines: IntRange): String {
     val last = lines.last.coerceIn(first, all.lastIndex)
     return all.subList(first, last + 1).joinToString("\n")
 }
+
+/**
+ * The selection as a person reads it, `L113-119`.
+ *
+ * One is added here, and nowhere else on the way to a screen: [Selection] is
+ * zero-based because that is what goes on the wire. A single line drops the
+ * range, because `L113-113` says the same thing twice.
+ */
+fun Selection.label(): String {
+    val first = this.first + 1
+    val last = this.last + 1
+    return if (first == last) "L$first" else "L$first-$last"
+}
+
+/**
+ * What pointing at [target] leaves selected, or null for nothing.
+ *
+ * The rule for one point, in the one place both halves of it can be seen. A long
+ * press ([anchoring]) takes the unit alone and is where the anchor is dropped. A
+ * tap extends from the anchor to the unit, and a tap on a unit the selection
+ * already covers drops the selection -- which is why this is decided here and
+ * not in a block: a block knows it was pointed at and nothing else.
+ *
+ * [anchor] is null after a restore, which brings a selection back without the
+ * run of pointing that made it. The selection's own first line stands in, so the
+ * first tap extends from where the selection starts.
+ */
+fun pointAt(
+    path: String,
+    anchor: Unit?,
+    selection: Selection?,
+    target: Unit,
+    anchoring: Boolean,
+): Selection? {
+    val alone = Selection(path, target.lines.first, target.lines.last)
+    if (anchoring) return alone
+    if (selection != null && target.lines.first >= selection.first &&
+        target.lines.last <= selection.last
+    ) {
+        return null
+    }
+    val from = anchor?.lines ?: selection?.let { it.first..it.first } ?: return alone
+    val span = minOf(from.first, target.lines.first)..maxOf(from.last, target.lines.last)
+    return Selection(path, span.first, span.last)
+}
+
+/**
+ * The lines of [fence]'s body that [lines] covers, or null when it covers none.
+ *
+ * A fence is drawn from its body alone, so a selection measured in document
+ * lines has to be moved into that body's own numbering before the fence can draw
+ * it. Doing it here is what keeps a fence from learning about document
+ * positions. The body starts one line after the opening fence, so the last line
+ * of a closed fence's span is its closing marker and lands past the body; the
+ * fence clamps to the lines it actually laid out.
+ */
+fun bodyLinesOf(fence: Spanned, lines: IntRange): IntRange? {
+    val body = fence.lines.first + 1
+    val from = maxOf(lines.first, body)
+    val to = minOf(lines.last, fence.lines.last)
+    if (from > to) return null
+    return (from - body)..(to - body)
+}
