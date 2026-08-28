@@ -131,3 +131,51 @@ private fun canonical(path: String): String =
     runCatching { File(path).canonicalPath }.getOrElse { refuse("$path cannot be resolved: ${it.message}") }
 
 private fun refuse(reason: String): Nothing = throw HandoffRefusalException(HandoffRefusal(reason))
+
+/** The schemes whose whole payload is the URI, and which the system already disambiguates. */
+private val OPEN_SCHEMES = setOf("http", "https", "geo", "mailto", "tel")
+
+/**
+ * Whether a person sees this fire before it happens.
+ *
+ * False only for the fire that happens today: a [Action.View] on a scheme in
+ * [OPEN_SCHEMES] with nothing else attached. That case is the status quo -- the
+ * URI is the entire payload and the system's own disambiguation already stands
+ * between the agent and the receiving app -- so confirming it would put a dialog
+ * on every hyperlink and teach the operator to dismiss dialogs. Everything else
+ * reaches further than a link does: a named package chooses the receiver, an
+ * extra or a file carries something the URI does not say, and a scheme outside
+ * the list may be anything at all.
+ *
+ * A share is true by that reasoning and false in practice, because the system
+ * sheet is its own confirmation -- [chooserInstead] is what says so.
+ */
+fun confirmationNeeded(handoff: Handoff): Boolean {
+    if (chooserInstead(handoff)) return false
+    if (handoff.action != Action.View) return true
+    if (handoff.target != null) return true
+    if (handoff.extras.isNotEmpty() || handoff.content.isNotEmpty()) return true
+    return schemeOf(handoff.uri) !in OPEN_SCHEMES
+}
+
+/**
+ * Whether the system's own chooser stands in for a confirmation of ours.
+ *
+ * A share reaches `Intent.createChooser`, where the person picks the receiving
+ * app or dismisses the sheet, and asking the same question twice trains the
+ * operator to dismiss the first one. A share aimed at a package is the edge this
+ * function exists for: it goes straight to that app, no sheet is ever drawn, and
+ * so the confirmation has to be ours.
+ */
+fun chooserInstead(handoff: Handoff): Boolean =
+    handoff.action in setOf(Action.Share, Action.ShareMany) && handoff.target == null
+
+/**
+ * The scheme of a URI, lowercased, or null when it has none.
+ *
+ * Read as the text up to the first `:` rather than parsed, because this runs off
+ * the device where `android.net.Uri` is a stub that throws. A URI with no scheme
+ * has none, and none is not in [OPEN_SCHEMES], so it is confirmed.
+ */
+private fun schemeOf(uri: String?): String? =
+    uri?.substringBefore(':', missingDelimiterValue = "")?.ifBlank { null }?.lowercase()
