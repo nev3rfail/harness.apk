@@ -10,6 +10,14 @@ import org.junit.Test
 class SelectionReportTest {
 
     @Test
+    fun `nothing selected is sent as an explicit null, not an absent key`() {
+        val params = selectionParams("/doc.md")
+        assertEquals("/doc.md", params.getString("filePath"))
+        assertTrue(params.has("selection"))
+        assertTrue(params.isNull("selection"))
+    }
+
+    @Test
     fun `the end position names the line after the last selected one`() {
         val selection = selectionParams("/doc.md", 4, 7, "text").getJSONObject("selection")
         assertEquals(4, selection.getJSONObject("start").getInt("line"))

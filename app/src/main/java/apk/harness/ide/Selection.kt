@@ -174,11 +174,18 @@ private fun IntRange.shift(by: Int) = (first + by)..(last + by)
 /**
  * The `selection_changed` params for a document with nothing highlighted.
  *
- * `filePath` is the only field the notification requires, so the path is the
- * whole of it.
+ * `filePath` is the only field the notification requires, but `selection` is
+ * sent as an explicit null rather than left out: an absent key and a null one
+ * are different messages, and this one is a statement about the selection. The
+ * app has discarded it, and an `ide_selection` block still naming a range would
+ * be a claim the app no longer believes.
+ *
+ * An empty range at line 0 would say the same thing in a form the CLI could not
+ * tell from a real selection, so it is not sent -- that would be a claim about
+ * the file.
  */
 fun selectionParams(path: String): JSONObject =
-    JSONObject().put("filePath", path)
+    JSONObject().put("filePath", path).put("selection", JSONObject.NULL)
 
 /**
  * The `selection_changed` params for the lines [first] through [last].
