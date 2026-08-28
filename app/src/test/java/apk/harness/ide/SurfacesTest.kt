@@ -20,14 +20,14 @@ class SurfacesTest {
         newText = "after",
     )
 
-    private fun file() = Surface.Document("/a/c.kt", "```\nx\n```\n")
+    private fun file() = Surface.Document("/a/c.kt", "```\nx\n```\n", -1)
 
     @Test
     fun `a surface nobody owes an answer to is replaced at once`() = runBlocking {
         val surfaces = Surfaces()
         surfaces.show(file())
 
-        withTimeout(SOON) { surfaces.show(Surface.Document("/a/d.md", "hello")) }
+        withTimeout(SOON) { surfaces.show(Surface.Document("/a/d.md", "hello", 0)) }
 
         assertEquals("/a/d.md", (surfaces.visible.value as Surface.Document).path)
     }
@@ -153,7 +153,7 @@ class SurfacesTest {
         surfaces.select(Selection("/a/c.kt", 4, 7))
         surfaces.park()
 
-        surfaces.show(Surface.Document("/a/d.md", "hello"), owner = 3L)
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0), owner = 3L)
 
         assertTrue(surfaces.parked.value.isEmpty())
         assertNull(surfaces.selection.value)
@@ -165,7 +165,7 @@ class SurfacesTest {
         surfaces.show(file(), owner = 3L)
         surfaces.park()
 
-        surfaces.show(Surface.Document("/a/d.md", "hello"), owner = 4L)
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0), owner = 4L)
 
         assertEquals("/a/c.kt", surfaces.parked.value[3L]?.document?.path)
     }
@@ -239,7 +239,7 @@ class SurfacesTest {
         surfaces.show(file(), owner = 7L)
         assertEquals(7L, surfaces.owner.value)
 
-        surfaces.show(Surface.Document("/a/d.md", "hello"))
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0))
 
         assertEquals(NO_CHAT, surfaces.owner.value)
     }

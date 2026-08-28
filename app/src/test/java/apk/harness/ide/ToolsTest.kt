@@ -1,5 +1,6 @@
 package apk.harness.ide
 
+import apk.harness.ui.Rendered
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -20,7 +21,9 @@ class ToolsTest {
         surfaces = surfaces,
         openExternal = { true },
         readFile = { path -> documents[path] ?: error("no such file: $path") },
-        readDocument = { path -> documents[path] ?: error("no such file: $path") },
+        readDocument = { path ->
+            Rendered(documents[path] ?: error("no such file: $path"), 0)
+        },
     )
 
     private fun call(

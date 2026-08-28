@@ -109,8 +109,9 @@ class MainActivity : ComponentActivity() {
             // case a diff needs to detect rather than mask with a placeholder.
             readFile = { path -> File(path).readText() },
             // The same file as a document: fenced when it is source, or a
-            // refusal string in place of content that should not be drawn --
-            // binary, oversized, or unreadable. What a tree row shows.
+            // description in place of content that should not be drawn --
+            // binary, oversized, or unreadable. What a tree row shows, and it
+            // carries the offset between its lines and the file's.
             readDocument = { path -> documentFor(File(path)) },
         )
 
@@ -495,13 +496,20 @@ private fun HarnessScreen(
                     // to a mebibyte. The panel opens when the document is built.
                     onPick = { file ->
                         scope.launch {
-                            val document = withContext(Dispatchers.IO) { documentFor(file) }
+                            val rendered = withContext(Dispatchers.IO) { documentFor(file) }
                             // The chat on screen owns it. The operator opened it
                             // while looking at that conversation, which is the
                             // conversation the file is at hand for, and a
                             // document with no owner is one no agent is told
                             // about and no band can bring back.
-                            surfaces.show(Surface.Document(file.path, document), activeKey)
+                            surfaces.show(
+                                Surface.Document(
+                                    file.path,
+                                    rendered.markdown,
+                                    rendered.lineOffset,
+                                ),
+                                activeKey,
+                            )
                         }
                     },
                     onDismiss = close,

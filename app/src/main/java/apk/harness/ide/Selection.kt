@@ -142,10 +142,19 @@ data class Report(val path: String, val lines: IntRange?, val text: String?)
  *
  * [selection] is the one held in [document]. Nothing holds a selection into a
  * document that is not on screen, so the two agree by construction.
+ *
+ * The lines reported are the file's, shifted by the document's own offset, while
+ * the text is sliced at the document's lines -- that is where the text is, and
+ * for a fenced source those are the same characters either way. A document with
+ * no offset holds no line of the file, so a selection in one reports the path
+ * alone: the same thing it reports with nothing selected.
  */
 fun reportFor(document: Surface.Document?, selection: Selection?): Report? {
     if (document == null) return null
-    if (selection == null) return Report(document.path, null, null)
+    val offset = document.lineOffset
+    if (selection == null || offset == null) return Report(document.path, null, null)
     val lines = selection.first..selection.last
-    return Report(document.path, lines, sliceOf(document.markdown, lines))
+    return Report(document.path, lines.shift(offset), sliceOf(document.markdown, lines))
 }
+
+private fun IntRange.shift(by: Int) = (first + by)..(last + by)

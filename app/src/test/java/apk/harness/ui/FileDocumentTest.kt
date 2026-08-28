@@ -3,6 +3,7 @@ package apk.harness.ui
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -109,7 +110,7 @@ class FileDocumentTest {
         val file = folder.newFile("Main.kt")
         file.writeText("fun main() {}\n")
 
-        assertEquals("```kotlin\nfun main() {}\n```\n", documentFor(file))
+        assertEquals("```kotlin\nfun main() {}\n```\n", documentFor(file).markdown)
     }
 
     @Test
@@ -117,7 +118,7 @@ class FileDocumentTest {
         val file = folder.newFile("NOTES.md")
         file.writeText("# Title\n")
 
-        assertEquals("# Title\n", documentFor(file))
+        assertEquals("# Title\n", documentFor(file).markdown)
     }
 
     @Test
@@ -125,7 +126,7 @@ class FileDocumentTest {
         val file = folder.newFile("thing.bin")
         file.writeBytes(byteArrayOf(1, 2, 0, 3))
 
-        val document = documentFor(file)
+        val document = documentFor(file).markdown
         assertTrue(document.contains("Binary"))
         assertTrue(document.contains("4 bytes"))
         assertFalse(document.contains("```"))
@@ -139,7 +140,7 @@ class FileDocumentTest {
         bytes[sniffBytes - 10] = 0
         file.writeBytes(bytes)
 
-        val document = documentFor(file)
+        val document = documentFor(file).markdown
         assertTrue(document.contains("Binary"))
     }
 
@@ -148,7 +149,7 @@ class FileDocumentTest {
         val file = folder.newFile("big.txt")
         file.writeText("x".repeat((MAX_DOCUMENT_BYTES + 1).toInt()))
 
-        val document = documentFor(file)
+        val document = documentFor(file).markdown
         assertTrue(document.contains("Too large"))
         assertTrue(document.contains("${MAX_DOCUMENT_BYTES + 1} bytes"))
         assertFalse(document.contains("```"))
@@ -159,7 +160,7 @@ class FileDocumentTest {
         val file = folder.newFile("edge.txt")
         file.writeText("x".repeat(MAX_DOCUMENT_BYTES.toInt()))
 
-        assertTrue(documentFor(file).startsWith("```\nxxx"))
+        assertTrue(documentFor(file).markdown.startsWith("```\nxxx"))
     }
 
     @Test
@@ -169,10 +170,34 @@ class FileDocumentTest {
         file.setReadable(false)
 
         try {
-            val document = documentFor(file)
+            val document = documentFor(file).markdown
             assertTrue(document.contains("Cannot read"))
         } finally {
             file.setReadable(true)
         }
+    }
+
+    @Test
+    fun `a markdown file's lines are its own`() {
+        val file = folder.newFile("LINES.md")
+        file.writeText("# Title\n")
+
+        assertEquals(0, documentFor(file).lineOffset)
+    }
+
+    @Test
+    fun `a fenced source begins one line into its document`() {
+        val file = folder.newFile("Offset.kt")
+        file.writeText("val a = 1\n")
+
+        assertEquals(-1, documentFor(file).lineOffset)
+    }
+
+    @Test
+    fun `a described file has no lines of the file in it`() {
+        val file = folder.newFile("offset.bin")
+        file.writeBytes(byteArrayOf(1, 2, 0, 3))
+
+        assertNull(documentFor(file).lineOffset)
     }
 }

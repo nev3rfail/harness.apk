@@ -2,6 +2,7 @@ package apk.harness.ide
 
 import apk.harness.cells.CellProblem
 import apk.harness.cells.promoteCells
+import apk.harness.ui.Rendered
 import apk.harness.ui.markdownBlocks
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,7 +26,10 @@ class Tools(
     private val surfaces: Surfaces,
     private val openExternal: (String) -> Boolean,
     private val readFile: (String) -> String,
-    private val readDocument: (String) -> String,
+    // A document rather than its text: only the reader knows what kind of file
+    // it rendered, so the offset between the document's lines and the file's
+    // comes back with it rather than being guessed here.
+    private val readDocument: (String) -> Rendered,
 ) {
 
     fun editorDefinitions(): JSONArray = JSONArray()
@@ -131,26 +135,32 @@ class Tools(
 
             "openFile" -> {
                 val path = arguments.optString("filePath")
-                val text = runCatching { readDocument(path) }
+                val document = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                surfaces.show(Surface.Document(path, text), owner)
+                surfaces.show(
+                    Surface.Document(path, document.markdown, document.lineOffset),
+                    owner,
+                )
                 textContent("Showing $path")
             }
 
             "show_document_panel" -> {
                 val path = arguments.optString("filePath")
-                val text = runCatching { readDocument(path) }
+                val document = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                val problems = promoteCells(markdownBlocks(text)).problems
-                surfaces.show(Surface.Document(path, text), owner)
+                val problems = promoteCells(markdownBlocks(document.markdown)).problems
+                surfaces.show(
+                    Surface.Document(path, document.markdown, document.lineOffset),
+                    owner,
+                )
                 textContent("Showing $path" + report(problems))
             }
 
             "check_document_cells" -> {
                 val path = arguments.optString("filePath")
-                val text = runCatching { readDocument(path) }
+                val document = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                val problems = promoteCells(markdownBlocks(text)).problems
+                val problems = promoteCells(markdownBlocks(document.markdown)).problems
                 textContent(
                     if (problems.isEmpty()) "Every cell in $path checks"
                     else path + report(problems),

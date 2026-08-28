@@ -30,8 +30,13 @@ sealed interface Surface {
      * in a sentence. The path is not decoration -- it is the only field
      * `selection_changed` requires, so a surface without one could not be
      * reported to an agent at all.
+     *
+     * [lineOffset] is where these lines sit against the file's: a file line is a
+     * document line plus the offset, and null when the document describes the
+     * file rather than showing it. The wire carries the path, and whoever reads
+     * it opens the file, so the numbers beside the text have to be the file's.
      */
-    data class Document(val path: String, val markdown: String) : Surface
+    data class Document(val path: String, val markdown: String, val lineOffset: Int?) : Surface
 
     data class Place(
         val label: String,

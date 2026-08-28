@@ -95,10 +95,26 @@ fun refusalDocument(path: String, size: Long, reason: String): String {
 }
 
 /**
+ * A document, and where its lines sit against the file's.
+ *
+ * A file line is a document line plus [lineOffset]. Markdown is shown as itself,
+ * so the offset is zero; a source file is wrapped in a fence that pushes every
+ * line of it down by one, so the offset is minus one. A document that describes
+ * a file rather than showing it holds no line of the file at all, and its offset
+ * is null: a range in a sentence the app wrote is a claim about the file that
+ * nothing supports.
+ */
+data class Rendered(val markdown: String, val lineOffset: Int?)
+
+/**
  * The one reader. Both the tree and the agent's `openFile` come through here, so
  * a path shows the same document whoever asked for it.
+ *
+ * This is the last place that knows which kind the file is, so it answers with
+ * the offset rather than leaving a caller to derive it from a kind it no longer
+ * has.
  */
-fun documentFor(file: File): String {
+fun documentFor(file: File): Rendered {
     val size = file.length()
 
     val prefix = runCatching {
@@ -114,16 +130,20 @@ fun documentFor(file: File): String {
             }
             buffer.copyOf(filled)
         }
-    }.getOrElse { return refusalDocument(file.path, size, "Cannot read") }
+    }.getOrElse { return described(file.path, size, "Cannot read") }
 
     val kind = fileKind(file.path, prefix)
-    if (kind == FileKind.Binary) return refusalDocument(file.path, size, "Binary file")
-    if (size > MAX_DOCUMENT_BYTES) return refusalDocument(file.path, size, "Too large to show")
+    if (kind == FileKind.Binary) return described(file.path, size, "Binary file")
+    if (size > MAX_DOCUMENT_BYTES) return described(file.path, size, "Too large to show")
 
     val text = runCatching { file.readText() }
-        .getOrElse { return refusalDocument(file.path, size, "Cannot read") }
-    return fileDocument(kind, text)
+        .getOrElse { return described(file.path, size, "Cannot read") }
+    return Rendered(fileDocument(kind, text), if (kind == FileKind.Markdown) 0 else -1)
 }
+
+/** A refusal as a document: a description of the file, holding none of its lines. */
+private fun described(path: String, size: Long, reason: String) =
+    Rendered(refusalDocument(path, size, reason), null)
 
 private const val MIN_FENCE = 3
 private const val ZERO: Byte = 0
