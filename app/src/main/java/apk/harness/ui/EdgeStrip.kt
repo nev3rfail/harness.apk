@@ -4,6 +4,7 @@ import android.graphics.Rect
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -89,6 +90,12 @@ private const val ChevronHeightFraction = 0.125f
  * the width and names what it holds instead of painting a handle: a strip
  * 9.6dp wide has nowhere to say which document is parked, and a band that does
  * not say it is indistinguishable from one over any other document.
+ *
+ * The band answers a tap as well as a pull, and the side strips answer only a
+ * pull. A side strip is a handle at the screen's edge where a stray touch would
+ * open a drawer nobody asked for; the band is the full width, 34dp tall, and
+ * carries a filename, so it reads as a button and a tap on it that did nothing
+ * would land in the terminal underneath.
  */
 @Composable
 fun DrawerEdgeStrip(
@@ -111,7 +118,10 @@ fun DrawerEdgeStrip(
     Box(
         modifier = modifier
             .then(
-                if (band) Modifier.fillMaxWidth().height(BandHeight)
+                if (band) Modifier
+                    .fillMaxWidth()
+                    .height(BandHeight)
+                    .clickable(onClick = onOpen)
                 else Modifier.width(StripWidth).fillMaxHeight()
             )
             .onGloballyPositioned { coordinates ->
