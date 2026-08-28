@@ -2,6 +2,11 @@ package apk.harness.ide
 
 import apk.harness.cells.CellProblem
 import apk.harness.cells.promoteCells
+import apk.harness.intents.Handoff
+import apk.harness.intents.HandoffOutcome
+import apk.harness.intents.HandoffRefusalException
+import apk.harness.intents.confirmationNeeded
+import apk.harness.intents.handoffFor
 import apk.harness.ui.Rendered
 import apk.harness.ui.markdownBlocks
 import org.json.JSONArray
@@ -24,7 +29,15 @@ import org.json.JSONObject
  */
 class Tools(
     private val surfaces: Surfaces,
-    private val openExternal: (String) -> Boolean,
+    // Who would take a handoff, asked before the person is: the confirmation
+    // names the receiving app, and a fire nothing handles is refused as a
+    // sentence instead of thrown from inside the platform.
+    private val describeHandoff: (Handoff) -> String?,
+    private val fireHandoff: (Handoff) -> HandoffOutcome,
+    // The directories a file may be handed out of, which are the ones the agent
+    // can write. Passed in rather than read here, so everything that decides
+    // whether a handoff is allowed runs off the device too.
+    private val writable: List<String>,
     private val readFile: (String) -> String,
     // A document rather than its text: only the reader knows what kind of file
     // it rendered, so the offset between the document's lines and the file's
@@ -100,12 +113,34 @@ class Tools(
             listOf("filePath"),
         ))
         .put(tool(
-            "open_uri_in_phone_app",
-            "Hand a URI to the phone so the right installed app opens it: a geo: link opens " +
-                "maps, https: a browser, tel: the dialer. Use to leave the harness for " +
-                "something the phone already does well.",
-            JSONObject().put("uri", string("The URI to open.")),
-            listOf("uri"),
+            "open_in_phone_app",
+            "Hand something to another app on the phone: open a link, a place or a document " +
+                "in whatever handles it, share a file through the system share sheet, address " +
+                "a mail, put a number in the dialer, open a system settings screen, or bring " +
+                "an installed app to the front. action is one of view, share, share_many, " +
+                "compose, dial, settings, launch, and defaults to view. Anything that carries " +
+                "a file, names an app, or reaches past a plain link asks the person first.",
+            JSONObject()
+                .put("action", string(
+                    "What to do: view, share, share_many, compose, dial, settings, launch."
+                ))
+                .put("uri", string("For view, compose and dial: the URI to hand over."))
+                .put("mime_type", string("For share and share_many: what the content is."))
+                .put("extras", JSONObject()
+                    .put("type", "object")
+                    .put("description",
+                        "Values the receiving app reads by name: text, subject, to for a " +
+                            "mail or a share; screen for settings, one of developer, " +
+                            "app_details, battery. Strings, numbers, booleans and string " +
+                            "lists only."))
+                .put("package", string("Aim it at one installed app, by package name."))
+                .put("files", JSONObject()
+                    .put("type", "array")
+                    .put("items", JSONObject().put("type", "string"))
+                    .put("description",
+                        "Absolute paths inside this app's own directories. Anywhere else is " +
+                            "refused.")),
+            emptyList(),
         ))
 
     /**
@@ -180,11 +215,7 @@ class Tools(
                 textContent("Showing the map")
             }
 
-            "open_uri_in_phone_app" -> {
-                val uri = arguments.optString("uri")
-                if (openExternal(uri)) textContent("Handed $uri to the system")
-                else errorContent("nothing on this device handles $uri")
-            }
+            "open_in_phone_app" -> openInPhoneApp(arguments, owner)
 
             // The agent tells the editor which permission mode it is in, so an
             // editor can say so on screen. Answered because it is part of the
@@ -202,6 +233,36 @@ class Tools(
      */
     private fun report(problems: List<CellProblem>): String = problems.joinToString("") { problem ->
         "\n" + problem.line?.let { "line ${it + 1}: " }.orEmpty() + problem.reason
+    }
+
+    /**
+     * Hands something to another app, once whoever has to see it first has.
+     *
+     * Three things happen in order, and the order is the point: the request is
+     * checked into a [Handoff] before anything Android exists, the receiving app
+     * is resolved so the person is asked about a named app rather than about
+     * *an* app, and only then does the fire happen.
+     */
+    private suspend fun openInPhoneApp(arguments: JSONObject, owner: Long): JSONObject {
+        val handoff = handoffFor(arguments, writable).getOrElse {
+            return errorContent((it as HandoffRefusalException).refusal.reason)
+        }
+        val app = describeHandoff(handoff) ?: return errorContent(NOTHING_HANDLES_IT)
+
+        if (confirmationNeeded(handoff)) {
+            val asked = Surface.Handoff(handoff, app)
+            surfaces.show(asked, owner)
+            // The agent asked and a person said no, which is an answer to the
+            // question rather than a failure to carry it out.
+            if (!asked.decision.await()) return textContent(DECLINED)
+        }
+
+        return when (val outcome = fireHandoff(handoff)) {
+            is HandoffOutcome.Started -> textContent("${outcome.app} took it")
+            HandoffOutcome.NoHandler -> errorContent(NOTHING_HANDLES_IT)
+            HandoffOutcome.Declined -> textContent(DECLINED)
+            is HandoffOutcome.Failed -> errorContent(outcome.reason)
+        }
     }
 
     private suspend fun openDiff(arguments: JSONObject, owner: Long): JSONObject {
@@ -249,5 +310,10 @@ class Tools(
 
     private companion object {
         const val DEFAULT_ZOOM = 14.0
+
+        /** The same sentence whether nothing resolved or nothing took it. */
+        const val NOTHING_HANDLES_IT = "nothing on this device handles that"
+
+        const val DECLINED = "The operator declined"
     }
 }

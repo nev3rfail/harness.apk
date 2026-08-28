@@ -1,5 +1,6 @@
 package apk.harness.ide
 
+import apk.harness.intents.Action
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -21,6 +22,11 @@ class SurfacesTest {
     )
 
     private fun file() = Surface.Document("/a/c.kt", "```\nx\n```\n", -1)
+
+    private fun handoff() = Surface.Handoff(
+        handoff = apk.harness.intents.Handoff(Action.Launch, target = "org.mozilla.firefox"),
+        app = "Firefox",
+    )
 
     @Test
     fun `a surface nobody owes an answer to is replaced at once`() = runBlocking {
@@ -174,6 +180,65 @@ class SurfacesTest {
     fun `a diff cannot be parked`() = runBlocking {
         val surfaces = Surfaces()
         val pending = diff()
+        surfaces.show(pending, owner = 3L)
+
+        surfaces.park()
+
+        assertEquals(pending, surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+        assertFalse(pending.decision.isCompleted)
+    }
+
+    @Test
+    fun `showing over a pending handoff waits for the person`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = handoff()
+        surfaces.show(pending)
+
+        val second = async(Dispatchers.Default) { surfaces.show(file()) }
+        delay(SETTLE)
+
+        // A confirmation is a question with a tool call behind it, exactly as a
+        // diff is, so it holds the screen for the same reason.
+        assertFalse(second.isCompleted)
+        assertFalse(pending.decision.isCompleted)
+        assertEquals(pending, surfaces.visible.value)
+
+        surfaces.answer(pending, true)
+
+        withTimeout(SOON) { second.await() }
+        assertTrue(pending.decision.await())
+        assertTrue(surfaces.visible.value is Surface.Document)
+    }
+
+    @Test
+    fun `a handoff the operator dismisses is declined`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = handoff()
+        surfaces.show(pending)
+
+        surfaces.dismiss()
+
+        assertTrue(pending.decision.isCompleted)
+        assertFalse(pending.decision.await())
+    }
+
+    @Test
+    fun `an answered handoff keeps its answer`() = runBlocking {
+        val surfaces = Surfaces()
+        val answered = handoff()
+        surfaces.show(answered)
+        surfaces.answer(answered, true)
+
+        withTimeout(SOON) { surfaces.show(file()) }
+
+        assertTrue(answered.decision.await())
+    }
+
+    @Test
+    fun `a handoff cannot be parked`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = handoff()
         surfaces.show(pending, owner = 3L)
 
         surfaces.park()

@@ -1,10 +1,7 @@
 package apk.harness
 
-import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
@@ -55,6 +52,10 @@ import apk.harness.ide.Surfaces
 import apk.harness.ide.Tools
 import apk.harness.ide.label
 import apk.harness.ide.reportFor
+import apk.harness.intents.Action
+import apk.harness.intents.Handoff
+import apk.harness.intents.appFor
+import apk.harness.intents.fire
 import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.DrawerSide
@@ -103,7 +104,14 @@ class MainActivity : ComponentActivity() {
 
         tools = Tools(
             surfaces = surfaces,
-            openExternal = ::openExternally,
+            // Resolved before the operator is asked, and fired only after. Both
+            // are the activity's because both need a Context; everything that
+            // decides whether either may happen is off in `apk.harness.intents`.
+            describeHandoff = { handoff -> appFor(this, handoff) },
+            fireHandoff = { handoff -> fire(this, handoff) },
+            // The whole of what a handoff may carry out of the app: the two
+            // directories the agent can write.
+            writable = listOf(filesDir.path, cacheDir.path),
             // Raw bytes for a diff to line up against the proposed text; a
             // missing or unreadable file throws, which is the "no before text"
             // case a diff needs to detect rather than mask with a placeholder.
@@ -155,7 +163,7 @@ class MainActivity : ComponentActivity() {
                         scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
                         onViewCreated = { key, view -> views[key] = view },
                         onViewReleased = { key -> views.remove(key) },
-                        openLink = { openExternally(it) },
+                        openLink = ::follow,
                         copyText = { text -> runOnUiThread { copyToClipboard(text) } },
                         pasteText = ::clipboardAsInput,
                     )
@@ -255,19 +263,15 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Hands a URI to whatever on the device handles it. This is the embed story
-     * for anything the app has no business drawing itself: a `geo:` link is a
-     * map application, `tel:` is the dialer.
+     * Follows something already on screen out of the app: a hyperlink in the
+     * terminal, a source mark on a card.
+     *
+     * No confirmation. The tap is the person acting, on something they can see,
+     * and a `view` on a bare URI is the one fire that needs nobody's permission
+     * anyway.
      */
-    private fun openExternally(uri: String): Boolean = try {
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        })
-        true
-    } catch (e: ActivityNotFoundException) {
-        false
-    } catch (e: IllegalArgumentException) {
-        false
+    private fun follow(uri: String) {
+        fire(this, Handoff(Action.View, uri = uri))
     }
 
     private companion object {
@@ -463,6 +467,9 @@ private fun HarnessScreen(
                 SurfacePanel(
                     surface = shown,
                     onDecide = { diff, decision -> surfaces.decide(diff, decision) },
+                    // A handoff answers with a boolean rather than a
+                    // DiffDecision, because the fire either happens or does not.
+                    onAnswer = { asked, allowed -> surfaces.answer(asked, allowed) },
                     onDismiss = surfaces::dismiss,
                     // Offered only for a document a chat owns: parking is
                     // coming back to it later, and the band that comes back

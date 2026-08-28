@@ -46,6 +46,8 @@ import apk.harness.ide.Selection
 import apk.harness.ide.Surface
 import apk.harness.ide.label
 import apk.harness.ide.pointAt
+import apk.harness.intents.Action
+import apk.harness.intents.ExtraValue
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -59,8 +61,9 @@ import org.osmdroid.views.overlay.Marker
  * by the app instead of drawn with ANSI in a scrollback buffer.
  *
  * [onPark] puts a document away behind the band at the bottom of the screen.
- * Only a document offers it: a diff is a question an agent is blocked on and a
- * place is a look at one thing, and neither is something to come back to later.
+ * Only a document offers it: a diff and a handoff are questions an agent is
+ * blocked on and a place is a look at one thing, and none of those is something
+ * to come back to later.
  * Null for a document there is nowhere to park, which is one no chat owns.
  *
  * [scroll] and [onScroll] are how a parked document comes back where it was
@@ -74,11 +77,15 @@ import org.osmdroid.views.overlay.Marker
  *
  * [openExternal] is the way out of the app, which a document needs because a
  * cell's source mark is a reference to follow rather than a string to read.
+ *
+ * [onAnswer] is the same thing for a handoff that [onDecide] is for a diff: both
+ * carry a person's answer back to a tool call that is blocked on it.
  */
 @Composable
 fun SurfacePanel(
     surface: Surface,
     onDecide: (Surface.Diff, DiffDecision) -> Unit,
+    onAnswer: (Surface.Handoff, Boolean) -> Unit,
     onDismiss: () -> Unit,
     onPark: (() -> Unit)?,
     scroll: Int,
@@ -112,16 +119,33 @@ fun SurfacePanel(
                     is Surface.Diff -> DiffBody(surface)
                     is Surface.Document ->
                         Prose(surface, selection, onSelect, scroll, onScroll, openExternal)
+                    is Surface.Handoff -> HandoffBody(surface)
                     is Surface.Place -> Map(surface)
                 }
             }
 
-            if (surface is Surface.Diff) {
-                HorizontalDivider()
-                DiffActions(
-                    onAccept = { onDecide(surface, DiffDecision.Accepted) },
-                    onReject = { onDecide(surface, DiffDecision.Rejected) },
-                )
+            when (surface) {
+                is Surface.Diff -> {
+                    HorizontalDivider()
+                    Decision(
+                        no = "Reject",
+                        yes = "Apply",
+                        onNo = { onDecide(surface, DiffDecision.Rejected) },
+                        onYes = { onDecide(surface, DiffDecision.Accepted) },
+                    )
+                }
+
+                is Surface.Handoff -> {
+                    HorizontalDivider()
+                    Decision(
+                        no = "Cancel",
+                        yes = "Hand it over",
+                        onNo = { onAnswer(surface, false) },
+                        onYes = { onAnswer(surface, true) },
+                    )
+                }
+
+                else -> Unit
             }
         }
     }
@@ -130,13 +154,35 @@ fun SurfacePanel(
 private fun Surface.title(): String = when (this) {
     is Surface.Diff -> "Review edit"
     is Surface.Document -> path.substringAfterLast('/')
+    is Surface.Handoff -> handoff.said()
     is Surface.Place -> label
 }
 
 private fun Surface.subtitle(): String? = when (this) {
     is Surface.Diff -> path
     is Surface.Document -> path
+    // The app that would receive it, resolved before the question was asked.
+    // Directly under the title because it is half of what is being decided:
+    // the other half is what it carries, which is the body.
+    is Surface.Handoff -> app
     is Surface.Place -> "%.5f, %.5f".format(latitude, longitude)
+}
+
+/**
+ * What the fire is, said the way a person would say it.
+ *
+ * Not the `action` word and not Android's constant: the operator is answering a
+ * question about their own phone, and `share_many` is neither of those things
+ * said aloud.
+ */
+private fun apk.harness.intents.Handoff.said(): String = when (action) {
+    Action.View -> if (content.isEmpty()) "Open a link" else "Open a file elsewhere"
+    Action.Share -> if (content.isEmpty()) "Share some text" else "Share a file"
+    Action.ShareMany -> "Share ${content.size} files"
+    Action.Compose -> "Write a mail"
+    Action.Dial -> "Dial a number"
+    Action.Settings -> "Open a settings screen"
+    Action.Launch -> "Open another app"
 }
 
 /**
@@ -196,15 +242,91 @@ internal fun Header(
     }
 }
 
+/**
+ * The two ways to answer a question, in the words that question uses.
+ *
+ * One row for both kinds, because a diff and a handoff ask the same thing of the
+ * operator -- yes or no, with no way out of the panel that is neither -- and only
+ * the words differ. [no] is drawn as the quieter of the two: the answer that
+ * changes nothing should not be the one a thumb finds first.
+ */
 @Composable
-private fun DiffActions(onAccept: () -> Unit, onReject: () -> Unit) {
+private fun Decision(no: String, yes: String, onNo: () -> Unit, onYes: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f)) { Text("Reject") }
-        Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text("Apply") }
+        OutlinedButton(onClick = onNo, modifier = Modifier.weight(1f)) { Text(no) }
+        Button(onClick = onYes, modifier = Modifier.weight(1f)) { Text(yes) }
     }
+}
+
+/**
+ * What is about to leave the app, in the order it matters.
+ *
+ * A file is drawn as its basename with the rest of the path beneath it: the
+ * person is deciding whether *this file* goes out of the sandbox, and a long
+ * path truncated to one line hides exactly the end that says which file it is.
+ * The monospace is the diff body's, for the same reason -- these are strings to
+ * be read character by character, not prose.
+ */
+@Composable
+private fun HandoffBody(asked: Surface.Handoff) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        asked.handoff.content.forEach { path -> Carried(path) }
+        asked.handoff.uri?.let { Detail("Address", it) }
+        asked.handoff.mimeType?.let { Detail("Kind", it) }
+        asked.handoff.target?.let { Detail("Package", it) }
+        asked.handoff.extras.forEach { (name, value) -> Detail(name, value.written()) }
+    }
+}
+
+/** One file, named by the part of the path a person can recognise. */
+@Composable
+private fun Carried(path: String) {
+    Column {
+        Text(
+            path.substringAfterLast('/'),
+            style = MaterialTheme.typography.bodyLarge,
+            fontFamily = FontFamily.Monospace,
+        )
+        val directory = path.substringBeforeLast('/', missingDelimiterValue = "")
+        if (directory.isNotEmpty()) {
+            Text(
+                directory,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A labelled value: what a receiving app would read, under the name it reads it by. */
+@Composable
+private fun Detail(label: String, value: String) {
+    Column {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+    }
+}
+
+/** An extra as the person reads it, rather than as the receiving app takes it. */
+private fun ExtraValue.written(): String = when (this) {
+    is ExtraValue.Text -> value
+    is ExtraValue.Number -> if (value == value.toLong().toDouble()) "${value.toLong()}" else "$value"
+    is ExtraValue.Flag -> if (value) "yes" else "no"
+    is ExtraValue.Series -> values.joinToString(", ")
 }
 
 /**

@@ -38,6 +38,23 @@ sealed interface Surface {
      */
     data class Document(val path: String, val markdown: String, val lineOffset: Int?) : Surface
 
+    /**
+     * A handoff waiting on a person.
+     *
+     * The same shape as [Diff]: the tool call stays open until [decision]
+     * completes, and `Surfaces` will not replace it while it is undecided. The
+     * fire it describes reaches out of the sandbox, so the person answers before
+     * it happens rather than reading about it afterwards.
+     *
+     * [app] is what would receive it, resolved before the question was asked,
+     * because "an app" is not something a person can weigh.
+     */
+    data class Handoff(
+        val handoff: apk.harness.intents.Handoff,
+        val app: String,
+        val decision: CompletableDeferred<Boolean> = CompletableDeferred(),
+    ) : Surface
+
     data class Place(
         val label: String,
         val latitude: Double,
@@ -117,8 +134,8 @@ class Surfaces {
      * Puts [surface] on screen, once the screen is free.
      *
      * Free means: nothing there, or something there that nobody owes an answer
-     * to. A diff awaiting a decision is neither, so this waits for that decision
-     * rather than answering it. The caller is a tool call, which is already
+     * to. A question awaiting one is neither, so this waits for that answer
+     * rather than giving it. The caller is a tool call, which is already
      * something the agent waits on.
      *
      * [owner] is the chat the surface belongs to, which the tool call arrived
@@ -127,10 +144,7 @@ class Surfaces {
      */
     suspend fun show(surface: Surface, owner: Long = NO_CHAT) {
         screen.withLock {
-            val previous = _visible.value
-            if (previous is Surface.Diff && !previous.decision.isCompleted) {
-                previous.decision.await()
-            }
+            _visible.value?.pending?.await()
             // What arrives is what that chat has now, so whatever it had parked
             // is gone, along with the selection held in it. Another chat's
             // parked document is untouched: it is not on screen to be replaced.
@@ -160,8 +174,8 @@ class Surfaces {
      * Takes the document off screen and keeps it, with its selection, for the
      * chat that showed it.
      *
-     * Anything that is not a document stays: a diff is a question an agent is
-     * blocked on, and hiding it behind a band would strand them.
+     * Anything that is not a document stays: a diff and a handoff are questions
+     * an agent is blocked on, and hiding one behind a band would strand them.
      *
      * A document nobody owns stays too. The band is drawn from the entry for
      * the chat on screen and no chat holds [NO_CHAT], so parking one there
@@ -179,15 +193,14 @@ class Surfaces {
     /**
      * Puts [key]'s parked document back on screen, with its selection.
      *
-     * A diff on screen is left alone, for the reason [park] refuses one: the
-     * operator answers the question first, and the band is still there
-     * afterwards. This cannot wait for that answer the way [show] does, because
-     * it is called from a gesture rather than from a tool call.
+     * A question on screen is left alone, for the reason [park] refuses one: the
+     * operator answers it first, and the band is still there afterwards. This
+     * cannot wait for that answer the way [show] does, because it is called from
+     * a gesture rather than from a tool call.
      */
     fun restore(key: Long) {
         val put = _parked.value[key] ?: return
-        val current = _visible.value
-        if (current is Surface.Diff && !current.decision.isCompleted) return
+        if (_visible.value?.pending != null) return
         _parked.value = _parked.value - key
         _owner.value = key
         _visible.value = put.document
@@ -229,7 +242,44 @@ class Surfaces {
         if (_visible.value === diff) _visible.value = null
     }
 
-    private fun abandon(surface: Surface?) {
-        if (surface is Surface.Diff) surface.decision.complete(DiffDecision.Rejected)
+    /**
+     * Answers a handoff, the way [decide] answers a diff.
+     *
+     * [allowed] false is the operator declining, which the waiting tool call
+     * reports as an answer rather than as a failure: it asked, and a person said
+     * no.
+     */
+    fun answer(handoff: Surface.Handoff, allowed: Boolean) {
+        handoff.decision.complete(allowed)
+        if (_visible.value === handoff) _visible.value = null
     }
+
+    /**
+     * Refuses whatever was on screen on behalf of whoever is waiting behind it.
+     *
+     * A question taken off screen unanswered would strand the tool call that
+     * asked it, so going away is itself an answer, and the safe answer is no.
+     */
+    private fun abandon(surface: Surface?) {
+        when (surface) {
+            is Surface.Diff -> surface.decision.complete(DiffDecision.Rejected)
+            is Surface.Handoff -> surface.decision.complete(false)
+            else -> Unit
+        }
+    }
+
+    /**
+     * The answer a tool call is waiting behind this surface for, if there is one.
+     *
+     * A diff and a handoff are the same kind of thing -- a question nobody has
+     * answered yet -- and every rule about holding the screen is about that
+     * rather than about which of the two it is. One place to ask keeps a third
+     * kind of question from having to be added to a list of special cases.
+     */
+    private val Surface.pending: CompletableDeferred<*>?
+        get() = when (this) {
+            is Surface.Diff -> decision.takeIf { !it.isCompleted }
+            is Surface.Handoff -> decision.takeIf { !it.isCompleted }
+            else -> null
+        }
 }
