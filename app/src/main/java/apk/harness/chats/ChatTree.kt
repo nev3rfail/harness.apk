@@ -137,7 +137,7 @@ fun projects(agentHome: File): List<Project> {
         // them names the project. Flattening is lossy, so the directory name
         // answers only when no transcript does.
         val read = summaries.firstNotNullOfOrNull { it.cwd }
-        val path = read ?: unflatten(directory.name).also { guessedPaths += it }
+        val path = oneSpelling(read ?: unflatten(directory.name).also { guessedPaths += it })
 
         byPath.getOrPut(path) { mutableListOf() } += summaries.map { it.chat }
     }
@@ -240,6 +240,17 @@ private fun tail(file: File): List<String> = runCatching {
 fun unflatten(name: String): String = name.replace('-', '/')
 
 /**
+ * One spelling for a directory the system offers under two names.
+ *
+ * `/data/user/0` is the primary user's data, mounted over `/data/data`, so the
+ * two name one directory -- a transcript written under either records what its
+ * process was given, and keying by the string alone files one project as two.
+ * Only user zero: `/data/user/10` is a work profile and is a different place.
+ */
+fun oneSpelling(path: String): String =
+    if (path.startsWith(PRIMARY_USER)) DATA + path.removePrefix(PRIMARY_USER) else path
+
+/**
  * The typed text of a user turn, or null for a turn that carried none.
  *
  * Content is a string when the turn is plain text and a list of blocks when it
@@ -282,4 +293,6 @@ private fun clean(text: String): String? = text.lineSequence()
 private const val HOME_MARK = "~"
 private const val SUFFIX = ".jsonl"
 private const val NAME_SEGMENTS = 2
+private const val PRIMARY_USER = "/data/user/0/"
+private const val DATA = "/data/data/"
 private const val ID_PREFIX = 8

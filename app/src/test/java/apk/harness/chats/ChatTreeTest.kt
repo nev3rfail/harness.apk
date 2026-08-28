@@ -276,6 +276,25 @@ class ChatTreeTest {
     }
 
     @Test
+    fun `both spellings of the primary user's data are one project`() {
+        transcript("a", "one", user("/data/user/0/dev.harness/files"))
+        transcript("b", "two", user("/data/data/dev.harness/files"))
+
+        val found = projects(folder.root)
+        assertEquals(1, found.size)
+        assertEquals("/data/data/dev.harness/files", found[0].path)
+        assertEquals(2, found[0].chats.size)
+    }
+
+    @Test
+    fun `another user's data is another place`() {
+        transcript("a", "one", user("/data/user/10/dev.harness/files"))
+        transcript("b", "two", user("/data/data/dev.harness/files"))
+
+        assertEquals(2, projects(folder.root).size)
+    }
+
+    @Test
     fun `a home with no history is an empty list`() {
         assertEquals(emptyList<Project>(), projects(folder.root))
     }
