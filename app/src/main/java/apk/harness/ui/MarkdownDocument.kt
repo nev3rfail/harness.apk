@@ -1,6 +1,8 @@
 package apk.harness.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -80,12 +83,22 @@ fun MarkdownDocument(
                 .fillMaxWidth()
                 .then(if (covered) Modifier.background(highlight) else Modifier)
                 .then(
-                    if (onPoint == null) Modifier
-                    else Modifier.pointerInput(unit) {
-                        detectTapGestures(
-                            onLongPress = { point?.invoke(unit, true) },
-                            onTap = { point?.invoke(unit, false) },
-                        )
+                    when {
+                        onPoint == null -> Modifier
+                        // A tap inside a link reaches the renderer's own handler
+                        // first, so while a selection is held the tap is taken
+                        // before it gets there: pointing at a unit is what a tap
+                        // means then. With no selection held nothing is
+                        // intercepted and a link opens as it always does.
+                        selected != null -> Modifier.pointAhead(unit) { held ->
+                            point?.invoke(unit, held)
+                        }
+                        else -> Modifier.pointerInput(unit) {
+                            detectTapGestures(
+                                onLongPress = { point?.invoke(unit, true) },
+                                onTap = { point?.invoke(unit, false) },
+                            )
+                        }
                     }
                 )
 
@@ -113,6 +126,54 @@ fun MarkdownDocument(
         }
     }
 }
+
+/**
+ * Reports a press on this block ahead of anything drawn inside it.
+ *
+ * A block's handler sits outside the text it renders, so on the main pass it
+ * hears about a tap only after a link inside has taken it. This one listens on
+ * the initial pass, which reaches the outside first, and consumes the touch it
+ * acts on so the link never sees it.
+ *
+ * Nothing is consumed until the touch has settled into a tap or a hold: a drag
+ * starting here is the panel scrolling, and taking it would pin the document
+ * under a finger.
+ *
+ * [press] is told whether the touch was held long enough to be a long press,
+ * which is the same pair of answers a tap detector gives.
+ */
+private fun Modifier.pointAhead(key: Any, press: (held: Boolean) -> kotlin.Unit) =
+    pointerInput(key) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val tapped = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                var change = down
+                while (change.pressed) {
+                    change = awaitPointerEvent(PointerEventPass.Initial).changes
+                        .firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                    if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                        return@withTimeoutOrNull false
+                    }
+                }
+                change.consume()
+                true
+            }
+            when {
+                // Still down when the press timed out. What is left of the
+                // gesture is consumed as it arrives, or the release lands on the
+                // link as a click of its own.
+                tapped == null -> {
+                    press(true)
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
+                    } while (event.changes.any { it.pressed })
+                }
+
+                tapped -> press(false)
+            }
+        }
+    }
 
 @Composable
 private fun Table(table: MarkdownBlock.Table, modifier: Modifier = Modifier) {
