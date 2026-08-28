@@ -177,6 +177,26 @@ class CellCheckTest {
         assertTrue(checkCell(cell, emptyMap()).size >= 3)
     }
 
+    @Test
+    fun `columns that are not names fail rather than drawing an empty table`() {
+        val table = Cell(
+            kind = CellKind.Table,
+            attributes = mapOf("columns" to CellValue.Series(listOf(CellValue.Number(1.0)))),
+            rows = listOf(row("a", emptyMap())),
+        )
+        assertTrue(checkCell(table, emptyMap()).any { "columns" in it.reason })
+    }
+
+    @Test
+    fun `a coordinate problem names the row it is in`() {
+        val cell = mapCell(rows = listOf(
+            sourcedRow("good", 0.0, 0.0),
+            sourcedRow("bad", 91.0, 0.0),
+        ))
+        val problems = checkCell(cell, emptyMap())
+        assertTrue(problems.single().reason.startsWith("row 1:"))
+    }
+
     private fun mapCell(
         title: String? = "Famous residents of Montmartre",
         zoom: Double? = 15.0,

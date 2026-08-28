@@ -15,6 +15,9 @@ const val MAX_ZOOM = 21.0
 /** A coordinate is refused whole: half a pair places nothing. */
 private const val NOT_A_PAIR = "at is two numbers"
 
+/** The shape of a column list, which is the only shape a table can draw. */
+private const val COLUMN_SHAPE = "columns is a list of names"
+
 /**
  * Every rule in `spec/038`, over a document's cells at once.
  *
@@ -33,6 +36,16 @@ fun checkCell(cell: Cell, rowsById: Map<String, List<CellRow>>): List<CellProble
 
     for (name in schema.required) {
         if (name !in cell.attributes) problems += CellProblem("missing: $name")
+    }
+
+    // Present but malformed fails here, because `Cell.names` is all-or-nothing:
+    // `columns = [1, 2]` answers null, rule 6 then iterates nothing, and the
+    // table promotes and draws no columns -- the same silent pass a non-string
+    // `source` was.
+    if ("columns" in schema.required && "columns" in cell.attributes &&
+        cell.names("columns") == null
+    ) {
+        problems += CellProblem(COLUMN_SHAPE)
     }
 
     // A table with both reads one set of rows and draws another, and there is no
@@ -55,7 +68,9 @@ fun checkCell(cell: Cell, rowsById: Map<String, List<CellRow>>): List<CellProble
         }
     }
 
-    if (cell.kind == CellKind.Map) problems += cell.rows.flatMap(::coordinateProblems)
+    if (cell.kind == CellKind.Map) {
+        problems += cell.rows.withIndex().flatMap { (index, row) -> coordinateProblems(index, row) }
+    }
 
     // The wording is the text `spec/038` quotes, so an operator reading the spec
     // and an operator reading the fence see the same sentence.
@@ -104,20 +119,28 @@ fun rowsFor(cell: Cell, rowsById: Map<String, List<CellRow>>): List<CellRow> =
     cell.rows.ifEmpty { cell.from?.let(rowsById::get).orEmpty() }
 
 /**
- * Where one row of a map cell says it is.
+ * Where row [index] of a map cell says it is.
  *
  * A pin needs a latitude and a longitude and nothing else will do, so anything
  * that is not two numbers is one refusal rather than a description of how it
  * differs. A pair that is a pair is then checked against the globe: osmdroid
  * accepts 91 degrees north and draws it somewhere that does not exist.
+ *
+ * Every message names its row: a twenty-row map with two bad coordinates
+ * otherwise reports the same sentence twice and names neither.
  */
-private fun coordinateProblems(row: CellRow): List<CellProblem> {
+private fun coordinateProblems(index: Int, row: CellRow): List<CellProblem> {
+    val where = "row $index: "
     val pair = (row.fields["at"] as? CellValue.Series)?.values
-        ?.map { (it as? CellValue.Number)?.value ?: return listOf(CellProblem(NOT_A_PAIR)) }
-    if (pair == null || pair.size != 2) return listOf(CellProblem(NOT_A_PAIR))
+        ?.map { (it as? CellValue.Number)?.value ?: return listOf(CellProblem(where + NOT_A_PAIR)) }
+    if (pair == null || pair.size != 2) return listOf(CellProblem(where + NOT_A_PAIR))
 
     val problems = mutableListOf<CellProblem>()
-    if (pair[0] !in -90.0..90.0) problems += CellProblem("latitude out of range: ${pair[0]}")
-    if (pair[1] !in -180.0..180.0) problems += CellProblem("longitude out of range: ${pair[1]}")
+    if (pair[0] !in -90.0..90.0) {
+        problems += CellProblem("${where}latitude out of range: ${pair[0]}")
+    }
+    if (pair[1] !in -180.0..180.0) {
+        problems += CellProblem("${where}longitude out of range: ${pair[1]}")
+    }
     return problems
 }
