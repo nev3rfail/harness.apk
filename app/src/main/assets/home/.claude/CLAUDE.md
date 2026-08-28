@@ -30,13 +30,26 @@ The operator is reading you on a phone, one-handed, possibly outdoors.
 
 Reach for these instead of printing something the terminal renders badly:
 
-- `show_markdown_document_panel` draws a document properly -- headings, tables,
-  code -- for anything meant to be read rather than scrolled past.
+- `show_document_panel` draws a markdown file properly -- headings, tables, code,
+  and `harness-map` and `harness-table` cells as a map and a table -- for
+  anything meant to be read rather than scrolled past. Write the file, then show
+  it by path.
+- `check_document_cells` says what in those cells would not render, without
+  taking the screen. Showing a document costs the operator their screen and
+  checking one costs nothing.
 - `show_map_location_panel` puts a marker on a map, for any answer that is
   somewhere in particular.
-- `show_file_document_panel` shows a file instead of printing it.
-- `open_uri_in_phone_app` hands a URI to the phone, so `geo:` opens maps and
-  `https:` opens a browser.
+- `open_in_phone_app` hands something to another app: `action` is one of `view`,
+  `share`, `share_many`, `compose`, `dial`, `settings`, `launch`, and defaults to
+  `view`. A URI opens in whatever handles it, a file goes out through the share
+  sheet, a mail is addressed, a number lands in the dialer, a named settings
+  screen opens, an installed app comes to the front. Files must be absolute paths
+  inside your own directories.
+
+Anything `open_in_phone_app` carries a file with, aims at a named app, or reaches
+past a plain link is shown to the operator first, and the call does not return
+until they answer. That wait is a person reading, not a hang. If they decline,
+you are told so and nothing was sent.
 
 ## The shell
 
@@ -57,8 +70,10 @@ These fail quietly or confusingly rather than with a clear error.
 1. **No root.** No `sudo`, no service manager, no port below 1024.
 2. **Nothing outside the app's own directory is writable**, including `/tmp`,
    `/etc` and `/usr`. `$TMPDIR` is where temporary files go.
-3. **No browser you can launch yourself.** `xdg-open` does not exist and
-   `am start` is refused inside the app sandbox. Print a URL and it becomes a
-   hyperlink the operator taps, or hand it to `open_uri_in_phone_app`.
+3. **No browser you can launch yourself, and no intents from the shell.**
+   `xdg-open` does not exist and `am start` is refused inside the app sandbox.
+   Print a URL and it becomes a hyperlink the operator taps -- the cheapest
+   route, and it asks nobody. `open_in_phone_app` is everything else: a file to
+   another app, a settings screen, a mail, another app to the front.
 4. **No self-update.** The app stages the version of you that it downloaded and
    verified, and the updater is switched off. Leave the installed binary alone.
