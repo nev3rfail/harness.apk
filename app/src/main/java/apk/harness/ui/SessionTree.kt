@@ -221,6 +221,9 @@ private fun ProjectEntry(
                 }
             }
         }
+        // The column ends where its text ends, so without this the count is
+        // butted against whatever the row's last word was.
+        Spacer(modifier = Modifier.width(IconGap))
         Text(
             text = "${project.chats.size}",
             fontFamily = FontFamily.Monospace,
