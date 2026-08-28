@@ -1,5 +1,8 @@
 package apk.harness.ide
 
+import apk.harness.cells.CellProblem
+import apk.harness.cells.promoteCells
+import apk.harness.ui.markdownBlocks
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -74,9 +77,22 @@ class Tools(
             listOf("latitude", "longitude"),
         ))
         .put(tool(
-            "show_file_document_panel",
-            "Show a file's contents on the phone screen instead of printing it to the terminal.",
-            JSONObject().put("filePath", string("Absolute path of the file to show.")),
+            "show_document_panel",
+            "Render a markdown document from a file on the phone screen: headings, lists, " +
+                "tables, links and code displayed properly instead of as terminal text, and " +
+                "harness-map or harness-table cells drawn as a map and a table. Use for " +
+                "anything meant to be read rather than scrolled past -- an itinerary, a " +
+                "summary, a comparison table. Write the file first, then show it by path.",
+            JSONObject().put("filePath", string("Absolute path of the document to show.")),
+            listOf("filePath"),
+        ))
+        .put(tool(
+            "check_document_cells",
+            "Check the harness-map and harness-table cells in a markdown file without putting " +
+                "anything on the phone screen. Answers with what would not render and why. " +
+                "Call this before finishing a turn: showing a document costs the person their " +
+                "screen, and checking one costs nothing.",
+            JSONObject().put("filePath", string("Absolute path of the document to check.")),
             listOf("filePath"),
         ))
         .put(tool(
@@ -105,12 +121,32 @@ class Tools(
             // No language server of the app's own, so nothing is ever wrong.
             "getDiagnostics" -> textContent(JSONArray().toString())
 
-            "openFile", "show_file_document_panel" -> {
+            "openFile" -> {
                 val path = arguments.optString("filePath")
                 val text = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
                 surfaces.show(Surface.Document(path, text))
                 textContent("Showing $path")
+            }
+
+            "show_document_panel" -> {
+                val path = arguments.optString("filePath")
+                val text = runCatching { readDocument(path) }
+                    .getOrElse { return errorContent("cannot read $path: ${it.message}") }
+                val problems = promoteCells(markdownBlocks(text)).problems
+                surfaces.show(Surface.Document(path, text))
+                textContent("Showing $path" + report(problems))
+            }
+
+            "check_document_cells" -> {
+                val path = arguments.optString("filePath")
+                val text = runCatching { readDocument(path) }
+                    .getOrElse { return errorContent("cannot read $path: ${it.message}") }
+                val problems = promoteCells(markdownBlocks(text)).problems
+                textContent(
+                    if (problems.isEmpty()) "Every cell in $path checks"
+                    else path + report(problems),
+                )
             }
 
             "show_map_location_panel" -> {
@@ -136,6 +172,16 @@ class Tools(
 
             else -> errorContent("unknown tool: $name")
         }
+
+    /**
+     * What did not render, one line each, or nothing when everything did.
+     *
+     * A tool result is read by a person as often as by an agent, so the line is
+     * the one they would count to in the file.
+     */
+    private fun report(problems: List<CellProblem>): String = problems.joinToString("") { problem ->
+        "\n" + problem.line?.let { "line ${it + 1}: " }.orEmpty() + problem.reason
+    }
 
     private suspend fun openDiff(arguments: JSONObject): JSONObject {
         val path = arguments.optString("new_file_path")
