@@ -318,6 +318,70 @@ class FileTreeRowsTest {
     }
 
     @Test
+    fun `an expanded directory with children has children`() {
+        val open = folder.newFolder("open")
+        File(open, "inside.txt").writeText("x")
+
+        val rows = visibleRows(folder.root, setOf(open.path), noLinks)
+
+        assertTrue(rows[0].hasChildren)
+        assertFalse(rows[1].hasChildren)
+    }
+
+    @Test
+    fun `an expanded directory with an empty listing has no children`() {
+        val empty = folder.newFolder("empty")
+
+        val rows = visibleRows(folder.root, setOf(empty.path), noLinks)
+
+        assertEquals(listOf("empty"), rows.map { it.file.name })
+        assertFalse(rows[0].hasChildren)
+    }
+
+    @Test
+    fun `a collapsed directory has no children on screen`() {
+        val shut = folder.newFolder("shut")
+        File(shut, "unseen.txt").writeText("x")
+        folder.newFile("after.txt")
+
+        val rows = visibleRows(folder.root, emptySet(), noLinks)
+
+        assertFalse(rows[0].hasChildren)
+    }
+
+    @Test
+    fun `the last row has no children`() {
+        val open = folder.newFolder("open")
+        File(open, "inside.txt").writeText("x")
+
+        val rows = visibleRows(folder.root, setOf(open.path), noLinks)
+
+        assertFalse(rows.last().hasChildren)
+    }
+
+    @Test
+    fun `a last child of a last child carries the answer for its own level`() {
+        val one = folder.newFolder("one")
+        val two = File(one, "two").also { it.mkdir() }
+        File(two, "three.txt").writeText("x")
+
+        val rows = visibleRows(folder.root, setOf(one.path, two.path), noLinks)
+
+        assertEquals(listOf(true, true, false), rows.map { it.hasChildren })
+        assertEquals(listOf(true, true, true), rows.map { it.isLastSibling })
+    }
+
+    @Test
+    fun `a directory listed on its own reports no children`() {
+        val open = folder.newFolder("open")
+        File(open, "inside.txt").writeText("x")
+
+        // childRows walks one directory, so what is on screen below a row is
+        // not a question it can answer.
+        assertFalse(childRows(folder.root, emptyList(), noLinks).single().hasChildren)
+    }
+
+    @Test
     fun `a row following a collapsed directory carries no ancestors`() {
         folder.newFolder("shut").also { File(it, "unseen.txt").writeText("x") }
         folder.newFile("after.txt")

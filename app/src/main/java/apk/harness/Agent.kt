@@ -27,7 +27,7 @@ class Agent(private val context: Context) {
      * [directory] is the working directory the agent runs in and not its `HOME`:
      * one home holds every project's transcripts and one set of credentials,
      * while the working directory is what decides which project a conversation
-     * belongs to and therefore what `--resume` can find.
+     * belongs to and therefore which conversations can be reopened in it.
      *
      * [idePort] is the port the app is listening on for this session alone.
      * Discovery otherwise picks a lockfile by matching its workspace against the
@@ -35,14 +35,17 @@ class Agent(private val context: Context) {
      * is several answers to one question; the port names one of them.
      *
      * [arguments] reach the agent through `launcher.sh`, which forwards them to
-     * `agent.sh`. That script stands its own `--resume` default down when it is
-     * given arguments, so a session opened on a named conversation is not also
-     * offered the picker.
+     * [script]. That script stands its own default down when it is given
+     * arguments, so a session opened on a named conversation stays in it.
+     *
+     * [script] is the file under `HARNESS_HOME` the launcher runs, which is how
+     * a backend brings its own invocation along with its own flags.
      */
     fun session(
-        directory: File = stage.home,
-        idePort: Int = 0,
-        arguments: List<String> = emptyList(),
+        directory: File,
+        idePort: Int,
+        arguments: List<String>,
+        script: String,
     ): TerminalSession {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
@@ -59,6 +62,7 @@ class Agent(private val context: Context) {
         ).toMutableMap()
         environment += stage.environment()
         if (idePort > 0) environment["CLAUDE_CODE_SSE_PORT"] = idePort.toString()
+        environment["HARNESS_AGENT_SCRIPT"] = script
         // Word-split by the shell that reads it, which is why nothing here may
         // carry a space. Session ids are UUIDs and paths are the app's own.
         if (arguments.isNotEmpty()) environment["HARNESS_AGENT_ARGS"] = arguments.joinToString(" ")

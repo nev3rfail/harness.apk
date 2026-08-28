@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -24,14 +23,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import apk.harness.agents.BACKENDS
+import apk.harness.agents.OpenTab
+import apk.harness.agents.RunningSession
+import apk.harness.agents.mergedProjects
+import apk.harness.agents.withOpenTabs
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.bootstrap.BootstrapProgress
 import apk.harness.chats.Chat
@@ -52,12 +59,14 @@ import apk.harness.ui.InputToolbar
 import apk.harness.ui.SessionTree
 import apk.harness.ui.SideDrawer
 import apk.harness.ui.SurfacePanel
-import apk.harness.ui.TabStrip
 import apk.harness.ui.TerminalPane
 import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -136,7 +145,7 @@ class MainActivity : ComponentActivity() {
                         tabs = holder,
                         surfaces = surfaces,
                         root = home,
-                        agentHome = File(home, AGENT_CONFIG_DIRECTORY),
+                        agentHome = home,
                         // Zero at this boundary means "unasked": the renderer leaves the
                         // terminal library its own default rather than disabling history.
                         scrollbackBytes = TerminalSettings.scrollbackBytes(home) ?: 0L,
@@ -172,7 +181,6 @@ class MainActivity : ComponentActivity() {
      * several answers to one question.
      */
     private fun openTabs(home: File): AgentTabs = AgentTabs(
-        scope = lifecycleScope,
         agent = Agent(this),
         editorFor = { workspace ->
             IdeServer(
@@ -287,8 +295,10 @@ private fun HarnessScreen(
 
     val open by tabs.tabs.collectAsState()
     val activeKey by tabs.activeKey.collectAsState()
-    val live by tabs.live.collectAsState()
     val active = open.firstOrNull { it.key == activeKey }
+    // A typed command reaches an agent only while its process is up, which is
+    // what decides whether the drawer offers to continue a chat in this tab.
+    val agentRunning by (active?.session?.isRunning ?: NO_AGENT).collectAsState()
 
     // The terminal the toolbar types into: whichever one is showing.
     val views = remember { mutableStateMapOf<Long, GhosttyGLSurfaceView>() }
@@ -310,18 +320,6 @@ private fun HarnessScreen(
         // The status bar inset lives here, so the terminal's first line is never
         // under the bar when the bar is showing.
         Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
-            // One agent is the ordinary case, and it gives up no height for a
-            // row of one.
-            if (open.size > 1) {
-                TabStrip(
-                    tabs = open,
-                    activeKey = activeKey,
-                    onSelect = tabs::select,
-                    onClose = tabs::close,
-                )
-                HorizontalDivider()
-            }
-
             // The strips overlay the terminal's edges and are declared after
             // it, so a drag starting there reaches a strip rather than the
             // surface underneath.
@@ -426,9 +424,58 @@ private fun HarnessScreen(
 
         if (chatsOpen) {
             SideDrawer(side = DrawerSide.Left, onClosed = { chatsOpen = false }) { close ->
+                // Read here rather than in the tree, so the tree draws what it
+                // is given and the backends stay out of it. Both reads are
+                // scoped to this branch: nothing is stat-ed behind a shut panel.
+                val projects by produceState(emptyList<Project>(), agentHome) {
+                    value = withContext(Dispatchers.IO) { mergedProjects(BACKENDS, agentHome) }
+                }
+                // Every tab is a row whether or not a transcript names it: a tab
+                // with no row is one nothing can reach, switch to or close.
+                val listed = remember(projects, open) {
+                    withOpenTabs(
+                        projects,
+                        open.map {
+                            OpenTab(it.sessionId, it.directory, it.label, it.backend.id)
+                        },
+                    )
+                }
+
+                // The replacement for this local lives in lifecycle-runtime-compose,
+                // an artifact the app does not depend on for one composition local.
+                @Suppress("DEPRECATION")
+                val owner = LocalLifecycleOwner.current
+                // Polled rather than watched: a process writes its own record
+                // and there is nothing to subscribe to. Two seconds is slow
+                // enough to cost nothing and quick enough that a dot follows
+                // what the agent is doing.
+                //
+                // The poll follows the lifecycle rather than the composition: it
+                // runs while the Activity is started, so a drawer left open
+                // behind a locked screen reads again when the screen comes back
+                // and holds the roster it last read until then.
+                var running by remember { mutableStateOf(emptyMap<String, RunningSession>()) }
+                LaunchedEffect(owner, agentHome) {
+                    owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                        while (true) {
+                            running = withContext(Dispatchers.IO) {
+                                BACKENDS.flatMap { it.running(agentHome) }
+                                    .associateBy { session -> session.sessionId }
+                            }
+                            delay(ROSTER_INTERVAL_MS)
+                        }
+                    }
+                }
+
                 SessionTree(
-                    agentHome = agentHome,
-                    live = live,
+                    projects = listed,
+                    running = running,
+                    current = active?.sessionId,
+                    activeDirectory = active?.directory?.absolutePath,
+                    openTabs = open.mapTo(mutableSetOf()) { it.sessionId },
+                    // The last tab does not close, so no row offers to.
+                    canClose = open.size > 1,
+                    canContinue = agentRunning,
                     expanded = expandedProjects,
                     onToggle = { path ->
                         expandedProjects =
@@ -446,6 +493,15 @@ private fun HarnessScreen(
                             }
                         }
                     },
+                    // A line into a pty the app already holds, so there is
+                    // nothing here to take off the main thread.
+                    onContinueHere = { project: Project, chat: Chat ->
+                        close()
+                        tabs.continueHere(chat, File(project.path))
+                    },
+                    // The drawer stays open: closing an agent is a thing done to
+                    // a list, and the next row is usually the next tap.
+                    onCloseChat = { chat: Chat -> tabs.closeSession(chat.sessionId) },
                     onNewChat = { project: Project ->
                         close()
                         scope.launch {
@@ -464,3 +520,9 @@ private fun HarnessScreen(
     // so a tab switch leaves something to type into.
     LaunchedEffect(view) { view?.showKeyboard() }
 }
+
+/** How often the drawer rereads the roster while it is open. */
+private const val ROSTER_INTERVAL_MS = 2_000L
+
+/** The liveness of a tab that is not there. */
+private val NO_AGENT: StateFlow<Boolean> = MutableStateFlow(false)

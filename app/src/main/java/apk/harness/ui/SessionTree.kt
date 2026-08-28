@@ -6,13 +6,17 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,7 +30,6 @@ import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,39 +39,45 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import apk.harness.agents.RunningSession
 import apk.harness.chats.Chat
 import apk.harness.chats.Project
-import apk.harness.chats.projects
-import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * The chats an agent home holds, as rows that open and close.
  *
- * A project's directory is a directory on this device, and its chats are the
- * transcripts filed under it. Both come off the filesystem: see
- * `apk.harness.chats.ChatTree`.
+ * The tree draws what it is handed. Reading belongs to the caller, so the
+ * drawer polls the roster while it is open and the tree draws the result.
+ *
+ * [running] is keyed by session id, [current] is the session on screen, and
+ * [openTabs] is the sessions that have a tab: between them they decide the
+ * marker, the background and the trailing control of every chat row. [canClose]
+ * and [canContinue] say whether those two controls can act, which is a fact
+ * about the tabs rather than about any one chat.
+ *
+ * [activeDirectory] is the working directory of the tab on screen. Continuing a
+ * chat types into that tab, and the directory that tab runs in is what a
+ * conversation id resolves against and what the conversation is then filed
+ * under, so the control is offered on chats of that project alone.
  */
 @Composable
 fun SessionTree(
-    /** The agent's config directory -- `~/.claude`. */
-    agentHome: File,
-    /** The conversations with a running agent behind them. */
-    live: Set<String>,
+    projects: List<Project>,
+    running: Map<String, RunningSession>,
+    current: String?,
+    activeDirectory: String?,
+    openTabs: Set<String>,
+    canClose: Boolean,
+    canContinue: Boolean,
     expanded: Set<String>,
     onToggle: (String) -> Unit,
     onOpenChat: (Project, Chat) -> Unit,
+    onContinueHere: (Project, Chat) -> Unit,
+    onCloseChat: (Chat) -> Unit,
     onNewChat: (Project) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Off the composition thread: this reads the end of every transcript in the
-    // home, which is a hundred files on a device that has been used.
-    val found by produceState(initialValue = emptyList<Project>(), agentHome) {
-        value = withContext(Dispatchers.IO) { projects(agentHome) }
-    }
-
-    val rows = remember(found, expanded) { flatten(found, expanded) }
+    val rows = remember(projects, expanded) { sessionRows(projects, expanded) }
 
     MaterialSurface(
         modifier = Modifier.fillMaxSize(),
@@ -78,7 +87,7 @@ fun SessionTree(
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
             Header(
                 title = "Chats",
-                subtitle = summary(found),
+                subtitle = summary(projects),
                 onDismiss = onDismiss,
             )
             HorizontalDivider()
@@ -87,17 +96,23 @@ fun SessionTree(
                 items(rows, key = { it.id }) { row ->
                     when (row) {
                         is SessionRow.ProjectRow -> ProjectEntry(
-                            project = row.project,
+                            row = row,
                             isOpen = row.project.path in expanded,
                             onClick = { onToggle(row.project.path) },
                             onNew = { onNewChat(row.project) },
                         )
 
                         is SessionRow.ChatRow -> ChatEntry(
-                            chat = row.chat,
-                            isLive = row.chat.sessionId in live,
-                            enabled = row.project.reachable,
+                            row = row,
+                            agent = running[row.chat.sessionId],
+                            isCurrent = row.chat.sessionId == current,
+                            hasTab = row.chat.sessionId in openTabs,
+                            canClose = canClose,
+                            canContinue = canContinue,
+                            inActiveDirectory = row.project.path == activeDirectory,
                             onClick = { onOpenChat(row.project, row.chat) },
+                            onContinue = { onContinueHere(row.project, row.chat) },
+                            onClose = { onCloseChat(row.chat) },
                         )
                     }
                 }
@@ -106,52 +121,52 @@ fun SessionTree(
     }
 }
 
-/** A flattened row, so the list is lazy over one list rather than nested columns. */
-private sealed interface SessionRow {
-    val id: String
-
-    class ProjectRow(val project: Project) : SessionRow {
-        override val id: String get() = "p:" + project.path
-    }
-
-    class ChatRow(val project: Project, val chat: Chat) : SessionRow {
-        override val id: String get() = "c:" + chat.transcript.path
-    }
-}
-
-private fun flatten(projects: List<Project>, expanded: Set<String>): List<SessionRow> =
-    buildList {
-        for (project in projects) {
-            add(SessionRow.ProjectRow(project))
-            if (project.path in expanded) {
-                project.chats.forEach { add(SessionRow.ChatRow(project, it)) }
-            }
-        }
-    }
-
 private fun summary(projects: List<Project>): String {
     val chats = projects.sumOf { it.chats.size }
     return "${projects.size} projects, $chats chats"
 }
 
-// One level of indentation, matching the file tree's, so the two drawers read
-// as one shape from two sides.
-private val IndentStep = 12.dp
-private val IconGap = 6.dp
-
-// The live marker. Small enough to sit inside a row's height and bright enough
-// to be the only thing on the row that is not text.
+// The live marker. Small enough to sit inside a row's height and still be the
+// only thing on the row that is not text.
 private val DotSize = 8.dp
 private const val DotDimmest = 0.25f
+private const val DotFull = 1f
 private const val PulseMillis = 900
+
+// The row's own text and the note under it. The sizes the file tree uses, so
+// the two drawers side by side read as one application.
+private val RowFontSize = 13.sp
+private val NoteFontSize = 11.sp
+
+// The space above and below a row's text. Small, because the row carries two
+// lines of text against the file tree's one, and the two drawers stand beside
+// each other at a height the operator reads as the same.
+private val RowPadding = 6.dp
+
+// The platform's minimum tap area, spent on width. A trailing control is this
+// wide and as tall as the row, which puts a finger's worth of target under a
+// glyph while the row keeps the height its text asks for.
+private val TouchTarget = 48.dp
+
+// The glyph inside that area, large enough to read as a control rather than as
+// more of the row's text.
+private val ControlFontSize = 18.sp
+
+// What a row's icon occupies, given to the rows that carry one and reserved by
+// the rows that do not. Text then starts at the same offset for a given depth
+// whatever the row is, so a chat sits to the right of the project above it
+// rather than under its icon.
+private val IconSlot = 16.dp
 
 @Composable
 private fun ProjectEntry(
-    project: Project,
+    row: SessionRow.ProjectRow,
     isOpen: Boolean,
     onClick: () -> Unit,
     onNew: () -> Unit,
 ) {
+    val project = row.project
+    val guide = MaterialTheme.colorScheme.outline.copy(alpha = GuideAlpha)
     val icon = when {
         !project.reachable -> "🚫"
         isOpen -> "📂"
@@ -161,11 +176,28 @@ private fun ProjectEntry(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // The row's text settles the height, and the height is definite, so
+            // a trailing control fills it top to bottom.
+            .height(IntrinsicSize.Min)
             .clickable(onClick = onClick)
-            .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+            .treeGuides(
+                depth = row.depth,
+                ancestorsContinue = row.ancestorsContinue,
+                isLastSibling = row.isLastSibling,
+                hasChildren = row.hasChildren,
+                colour = guide,
+            )
+            .padding(
+                start = guideIndent(row.depth),
+                end = 4.dp,
+                top = RowPadding,
+                bottom = RowPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = icon, fontSize = 13.sp)
+        Box(modifier = Modifier.width(IconSlot), contentAlignment = Alignment.CenterStart) {
+            Text(text = icon, fontSize = RowFontSize)
+        }
         Spacer(modifier = Modifier.width(IconGap))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -173,7 +205,7 @@ private fun ProjectEntry(
                 // screen this narrow. The whole path is underneath it.
                 text = project.name,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
+                fontSize = RowFontSize,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = if (project.reachable) MaterialTheme.colorScheme.onSurface
@@ -183,7 +215,8 @@ private fun ProjectEntry(
                 // A guessed path is marked, because flattening a directory name
                 // cannot be undone and the result is often wrong.
                 text = project.path + if (project.guessed) "  (guessed)" else "",
-                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontSize = NoteFontSize,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -191,41 +224,75 @@ private fun ProjectEntry(
         }
         Text(
             text = "${project.chats.size}",
-            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            fontSize = NoteFontSize,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         // A project whose directory is gone can be read and not entered, so it
         // is offered no way to start a conversation in it.
         if (project.reachable) {
-            Text(
-                text = "＋",
-                modifier = Modifier
-                    .clickable(onClick = onNew)
-                    .padding(horizontal = 10.dp, vertical = 2.dp),
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.primary,
+            Control(
+                glyph = "＋",
+                colour = MaterialTheme.colorScheme.primary,
+                onClick = onNew,
             )
         }
     }
 }
 
 @Composable
-private fun ChatEntry(chat: Chat, isLive: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun ChatEntry(
+    row: SessionRow.ChatRow,
+    agent: RunningSession?,
+    isCurrent: Boolean,
+    hasTab: Boolean,
+    canClose: Boolean,
+    canContinue: Boolean,
+    inActiveDirectory: Boolean,
+    onClick: () -> Unit,
+    onContinue: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val chat = row.chat
+    val enabled = row.project.reachable
+    val guide = MaterialTheme.colorScheme.outline.copy(alpha = GuideAlpha)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // The row's text settles the height, and the height is definite, so
+            // a trailing control fills it top to bottom.
+            .height(IntrinsicSize.Min)
+            // Under the tap feedback, so the ripple lands on top of the marked
+            // row's colour, and under the guides, so the column the drawer
+            // draws runs across that row.
+            .background(
+                if (isCurrent) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+            )
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(start = IndentStep * 2, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            .treeGuides(
+                depth = row.depth,
+                ancestorsContinue = row.ancestorsContinue,
+                isLastSibling = row.isLastSibling,
+                hasChildren = row.hasChildren,
+                colour = guide,
+            )
+            .padding(
+                start = guideIndent(row.depth),
+                end = 4.dp,
+                top = RowPadding,
+                bottom = RowPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(DotSize), contentAlignment = Alignment.Center) {
-            if (isLive) LiveDot()
-        }
-        Spacer(modifier = Modifier.width(IconGap))
+        // A chat carries no icon, and reserves the width of one so its text
+        // lines up a step to the right of the project holding it.
+        Spacer(modifier = Modifier.width(IconSlot + IconGap))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = chat.label,
-                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                fontSize = RowFontSize,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface
@@ -233,26 +300,97 @@ private fun ChatEntry(chat: Chat, isLive: Boolean, enabled: Boolean, onClick: ()
             )
             Text(
                 text = DateUtils.getRelativeTimeSpanString(chat.modified).toString(),
-                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontSize = NoteFontSize,
                 maxLines = 1,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        // The marker comes from the roster and from nothing else: a chat the
+        // roster does not name has no agent behind it and takes no marker. The
+        // slot keeps its width when it is empty, so the control beside it sits
+        // at the same offset on every row.
+        if (agent == null) {
+            Spacer(modifier = Modifier.width(DotSize))
+        } else when (agent.status) {
+            // Alive with nothing in hand, which is a thing at rest.
+            "idle" -> Dot(colour = LiveGreen, alpha = DotFull)
+            // Stopped on a question, which is the state that wants a person, so
+            // it takes a colour of its own.
+            "waiting" -> Dot(colour = LiveAmber, alpha = DotFull)
+            // Busy, and equally a record that has not said yet: unknown is
+            // nearer to working than to waiting.
+            else -> LiveDot()
+        }
+        // One control at most, and only where it has something to do.
+        when {
+            // The last tab does not close, so its row carries no ×.
+            hasTab && canClose -> Control(
+                glyph = "×",
+                colour = MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = onClose,
+            )
+            // Continuing types into the agent on screen, so it needs an agent
+            // running there, standing in this chat's own project, and a
+            // conversation other than the one it is already in.
+            !hasTab && canContinue && inActiveDirectory && !isCurrent -> Control(
+                glyph = "↩",
+                colour = MaterialTheme.colorScheme.primary,
+                onClick = onContinue,
+            )
+            // The slot keeps its width with nothing in it, so every row ends at
+            // the same edge whether it carries a control or not.
+            else -> Spacer(modifier = Modifier.width(TouchTarget))
         }
     }
 }
 
 /**
- * The marker for a conversation with a running agent behind it.
+ * One trailing control: a glyph centred in a tap area of its own, a tap
+ * target's width across and the row's full height down, so a finger aimed at it
+ * lands on it and the row's own tap covers everything else.
+ */
+@Composable
+private fun Control(glyph: String, colour: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(TouchTarget)
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = glyph, fontSize = ControlFontSize, color = colour)
+    }
+}
+
+/**
+ * The marker itself, in [colour] at [alpha].
  *
- * It pulses rather than sitting still, because a still dot beside a row of text
- * is read as punctuation. What it says is only that the process is alive: what
- * that agent is doing is not something the app can see from outside it.
+ * Drawn rather than given a background colour, so a frame of the pulse redraws
+ * the dot and leaves the row alone.
+ */
+@Composable
+private fun Dot(colour: Color, alpha: Float) {
+    Box(
+        modifier = Modifier
+            .size(DotSize)
+            .drawBehind {
+                drawCircle(color = colour, alpha = alpha, radius = size.minDimension / 2f)
+            },
+    )
+}
+
+/**
+ * The marker for a conversation whose agent is working.
+ *
+ * It pulses, which is what separates it from the steady markers a resting agent
+ * takes: a still dot beside a row of text is read as punctuation.
  */
 @Composable
 private fun LiveDot() {
     val transition = rememberInfiniteTransition(label = "live")
     val alpha by transition.animateFloat(
-        initialValue = 1f,
+        initialValue = DotFull,
         targetValue = DotDimmest,
         animationSpec = infiniteRepeatable(
             animation = tween(PulseMillis),
@@ -261,17 +399,12 @@ private fun LiveDot() {
         label = "alpha",
     )
 
-    Box(
-        modifier = Modifier
-            .size(DotSize)
-            // Drawn rather than given a background colour, so a frame of the
-            // pulse redraws the dot rather than recomposing the row.
-            .drawBehind {
-                drawCircle(color = LiveGreen, alpha = alpha, radius = size.minDimension / 2f)
-            },
-    )
+    Dot(colour = LiveGreen, alpha = alpha)
 }
 
 // Bright enough to read against both themes' surfaces, which neither the
 // scheme's primary nor its tertiary is on this palette.
 private val LiveGreen = Color(0xFF3DDC84)
+
+// An agent stopped at a question only a person can answer.
+private val LiveAmber = Color(0xFFFFB300)

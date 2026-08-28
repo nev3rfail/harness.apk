@@ -24,9 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -108,20 +105,6 @@ fun FileTree(
     }
 }
 
-// One level of indentation. The smallest step that still keeps two adjacent
-// guide lines apart, so a row's own guide reads as belonging to its icon
-// rather than to the level beside it.
-private val IndentStep = 12.dp
-
-// The horizontal run from a row's guide to its icon, and the hair of space
-// after it, so the guide and the icon read as one unit.
-private val GuideStub = 5.dp
-private val GuideGap = 2.dp
-private val IconGap = 6.dp
-
-// Structure rather than content: the outline colour, well under full strength.
-private const val GuideAlpha = 0.35f
-
 // A note beside the name rather than a second name: smaller than the row's own
 // text, in the colour the tree already uses for what it will not open.
 private val TargetFontSize = 11.sp
@@ -149,44 +132,15 @@ private fun Entry(row: TreeRow, isOpen: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            // Behind the content and before the padding, so the lines are
-            // painted across the indentation the padding creates.
-            .drawBehind {
-                val step = IndentStep.toPx()
-                val middle = size.height / 2f
-                // A level above this row draws a full-height line when its
-                // directory has a sibling still to come, and nothing when it
-                // does not -- that blank space is what ends a subtree.
-                row.ancestorsContinue.forEachIndexed { level, continues ->
-                    if (continues) {
-                        val x = (level + 0.5f) * step
-                        drawLine(
-                            color = guide,
-                            start = Offset(x, 0f),
-                            end = Offset(x, size.height),
-                            strokeWidth = Stroke.HairlineWidth,
-                        )
-                    }
-                }
-                // The row's own level: down to the middle always, on to the
-                // bottom only when a sibling follows. Stopping at the middle
-                // is what draws the elbow under the last child.
-                val own = (row.depth + 0.5f) * step
-                drawLine(
-                    color = guide,
-                    start = Offset(own, 0f),
-                    end = Offset(own, if (row.isLastSibling) middle else size.height),
-                    strokeWidth = Stroke.HairlineWidth,
-                )
-                drawLine(
-                    color = guide,
-                    start = Offset(own, middle),
-                    end = Offset(own + GuideStub.toPx(), middle),
-                    strokeWidth = Stroke.HairlineWidth,
-                )
-            }
+            .treeGuides(
+                depth = row.depth,
+                ancestorsContinue = row.ancestorsContinue,
+                isLastSibling = row.isLastSibling,
+                hasChildren = row.hasChildren,
+                colour = guide,
+            )
             .padding(
-                start = IndentStep * (row.depth + 0.5f) + GuideStub + GuideGap,
+                start = guideIndent(row.depth),
                 end = 12.dp,
                 top = 10.dp,
                 bottom = 10.dp,

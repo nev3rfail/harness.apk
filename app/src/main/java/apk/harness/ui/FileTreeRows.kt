@@ -32,6 +32,11 @@ data class SymbolicLink(val target: String?)
  * ancestor has a sibling below it, and whether this row is the last of its own.
  * Together they are what a guide line is drawn from -- indentation alone cannot
  * say whether a level above continues past this row.
+ *
+ * [hasChildren] says the row on screen below this one is inside it, which is
+ * what the guide from a row into its children is drawn from. It is a fact about
+ * the flattened list rather than about the directory, so [childRows] leaves it
+ * false and [visibleRows] settles it.
  */
 data class TreeRow(
     val file: File,
@@ -42,6 +47,7 @@ data class TreeRow(
     val unreadable: Boolean,
     val ancestorsContinue: List<Boolean>,
     val isLastSibling: Boolean,
+    val hasChildren: Boolean,
 )
 
 /**
@@ -94,6 +100,7 @@ fun childRows(
                 !child.file.canRead(),
             ancestorsContinue = ancestorsContinue,
             isLastSibling = index == ordered.lastIndex,
+            hasChildren = false,
         )
     }
 }
@@ -134,5 +141,9 @@ fun visibleRows(
     }
 
     walk(root, emptyList())
-    return rows
+    // A row has children on screen exactly when the row after it is deeper.
+    return rows.mapIndexed { index, row ->
+        val next = rows.getOrNull(index + 1)
+        row.copy(hasChildren = next != null && next.depth > row.depth)
+    }
 }

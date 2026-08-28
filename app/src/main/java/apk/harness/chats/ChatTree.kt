@@ -35,6 +35,12 @@ data class Chat(
     /** The transcript's modification time, which is when the chat last moved. */
     val modified: Long,
     val transcript: File,
+    /**
+     * The [apk.harness.agents.AgentBackend] this was read from, empty for a chat
+     * no backend has claimed. Reading fills it in: this package knows the layout
+     * and not whose it is.
+     */
+    val backendId: String = "",
 ) {
     /**
      * What to call this in a list. A named chat is named; an unnamed one is what
@@ -61,8 +67,7 @@ data class Project(
     val modified: Long get() = chats.maxOfOrNull { it.modified } ?: 0L
 
     /**
-     * A short name for the project, for a strip or a row that has no room for a
-     * path.
+     * A short name for the project, for a row with no room for a path.
      *
      * The last two segments rather than the last one: every project on this
      * device is a `files` directory under an application id, so one segment

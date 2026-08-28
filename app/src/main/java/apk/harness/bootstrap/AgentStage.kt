@@ -113,7 +113,10 @@ class AgentStage(private val context: Context) {
      *
      * A missing launcher also brings the copy forward, whatever the stamp says,
      * because deleting a staged file is how a device asks for the shipped one
-     * back and the launcher is the file a session cannot start without.
+     * back and the launcher is the file a session cannot start without. The
+     * operator-owned scripts follow the same rule ahead of the stamp, each
+     * written when it is absent, so deleting one restores it on the next
+     * session start.
      */
     fun stageHome() {
         val installed = File(context.applicationInfo.sourceDir).lastModified().toString()
@@ -122,9 +125,14 @@ class AgentStage(private val context: Context) {
         // permissions, [isStaged] reads this bit, and an editor on the device
         // can take it off a file the stamp otherwise considers current. Losing
         // it that way would put the app back to downloading the agent again.
-        // Owner only, like the scripts [configure] writes. False on a device
-        // that has no launcher yet, which the copy below answers.
+        // Owner only, like the scripts. False on a device that has no launcher
+        // yet, which the copy below answers.
         launcher.setExecutable(true, true)
+
+        // Ahead of the guard, because a current stamp says the app's own
+        // statements are staged and says nothing about a script the device
+        // deleted. One stat per script when both are there.
+        stageScripts(SCRIPTS, { context.assets.open(it) }, home)
 
         if (!payloadDue(payload, installed) && launcher.isFile) return
 
@@ -162,7 +170,7 @@ class AgentStage(private val context: Context) {
 
     /**
      * The files around the binary: a resolver for the two runtimes that look for
-     * one, the answer to the account question, and the scripts that start it.
+     * one, and the answer to the account question.
      */
     private fun configure() {
         etc.mkdirs()
@@ -175,19 +183,6 @@ class AgentStage(private val context: Context) {
         // answer it, so the file it looks in is seeded once, and left alone
         // afterwards because the agent owns it.
         File(home, CONFIG_NAME).let { if (!it.exists()) it.writeText(ONBOARDED) }
-
-        // Written only when absent, which is what makes an edit on a device
-        // survive a relaunch. Deleting one restores it. The launcher is not
-        // among them: it is app-owned, and arrives with the payload.
-        for (name in SCRIPTS) {
-            val script = File(home, name)
-            if (!script.isFile) {
-                context.assets.open(name).use { input ->
-                    script.outputStream().use { output -> input.copyTo(output) }
-                }
-            }
-            script.setExecutable(true, true)
-        }
     }
 
     /**

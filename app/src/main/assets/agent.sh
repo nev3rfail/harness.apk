@@ -19,14 +19,32 @@ export BUN_OPTIONS="--preload $HARNESS_ETC/setdns.js"
 # The staged binary is the one the app downloaded and verified.
 export DISABLE_AUTOUPDATER=1
 
-# --resume with nothing to resume exits, so it is passed only with a transcript.
-# Arguments take its place, which is how a shell asks for something else.
-resume=
-if [ -n "$(ls -A "$HOME/.claude/projects" 2>/dev/null)" ]; then
-    resume=--resume
+# --continue reopens the most recent conversation in this directory, which is the
+# one the app resolves for a tab it opens itself. With nothing to continue it
+# exits, so it is passed only once a transcript exists. Arguments given on the
+# command line skip the guard and reach the agent as they are.
+if [ "$#" -eq 0 ]; then
+    # The agent files a project under its working directory with '/', '\', '.'
+    # and ':' folded to '-', and names each transcript for the conversation it
+    # holds. That directory also holds memory and a subdirectory per session, so
+    # a *.jsonl in it is the only thing that says there is a conversation to
+    # continue. The folding is ${var//pat/rep}, a ksh extension that Android's
+    # /system/bin/sh has because it is mksh.
+    project=$(pwd)
+    project=${project//\//-}
+    project=${project//\\/-}
+    project=${project//./-}
+    project=${project//:/-}
+    # An unmatched glob comes back as the pattern itself, so the test is whether
+    # the first word names a file. Taking the positional parameters is safe:
+    # this branch is reached only when there are none.
+    set -- "$HOME/.claude/projects/$project"/*.jsonl
+    if [ -e "$1" ]; then
+        set -- --continue
+    else
+        set --
+    fi
 fi
-
-[ "$#" -gt 0 ] || set -- $resume
 
 if [ -n "$HARNESS_SHIM" ]; then
     exec "$HARNESS_SHIM" "$HARNESS_LOADER" "$HARNESS_AGENT" --ide "$@"

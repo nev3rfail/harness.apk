@@ -69,6 +69,27 @@ fun copyAssets(
 }
 
 /**
+ * Writes each of [names] into [into] from the assets root.
+ *
+ * A name already on the device is left exactly as it is, so an edit made there
+ * stands and deleting the file is how the device asks for the shipped one back.
+ * The execute bit is set whichever way the file got there: a copy carries
+ * content and not permissions, and an editor on the device can take the bit off
+ * a file this leaves alone.
+ */
+fun stageScripts(names: List<String>, open: (String) -> InputStream, into: File) {
+    for (name in names) {
+        val script = File(into, name)
+        if (!script.isFile) {
+            open(name).use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+        script.setExecutable(true, true)
+    }
+}
+
+/**
  * Whether the payload has yet to be staged for [installed].
  *
  * The stamp holds the installed APK's own timestamp rather than a version name,

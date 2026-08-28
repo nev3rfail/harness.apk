@@ -3,6 +3,7 @@ package apk.harness.bootstrap
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -22,6 +23,7 @@ class HomePayloadTest {
         "home/.claude/CLAUDE.md" to "the environment",
         "home/.claude/skills/harness-userland/SKILL.md" to "the userland",
         "seed/.claude/settings.local.json" to "{}",
+        "agent.sh" to "the invocation",
     )
 
     private fun list(path: String): Array<String> {
@@ -73,6 +75,30 @@ class HomePayloadTest {
             copyAssets(listOf(".claude/CLAUDE.md"), ::open, "home", into, overwrite = true),
         )
         assertEquals("the environment", target.readText())
+    }
+
+    @Test
+    fun `a missing script is written and made executable`() {
+        val into = folder.newFolder()
+
+        stageScripts(listOf("agent.sh"), ::open, into)
+
+        val script = File(into, "agent.sh")
+        assertEquals("the invocation", script.readText())
+        assertTrue(script.canExecute())
+    }
+
+    @Test
+    fun `a script that is there is left byte for byte and made executable`() {
+        val into = folder.newFolder()
+        val script = File(into, "agent.sh").apply { writeText("edited on the device") }
+        val bytes = script.readBytes()
+        script.setExecutable(false, false)
+
+        stageScripts(listOf("agent.sh"), ::open, into)
+
+        assertArrayEquals(bytes, script.readBytes())
+        assertTrue(script.canExecute())
     }
 
     @Test
