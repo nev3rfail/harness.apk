@@ -68,8 +68,7 @@ fun SurfacePanel(
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
                 when (surface) {
                     is Surface.Diff -> DiffBody(surface)
-                    is Surface.FileView -> Prose(surface.text)
-                    is Surface.Markdown -> Prose(surface.text)
+                    is Surface.Document -> Prose(surface.markdown)
                     is Surface.Place -> Map(surface)
                 }
             }
@@ -87,15 +86,13 @@ fun SurfacePanel(
 
 private fun Surface.title(): String = when (this) {
     is Surface.Diff -> "Review edit"
-    is Surface.FileView -> path.substringAfterLast('/')
-    is Surface.Markdown -> title
+    is Surface.Document -> path.substringAfterLast('/')
     is Surface.Place -> label
 }
 
 private fun Surface.subtitle(): String? = when (this) {
     is Surface.Diff -> path
-    is Surface.FileView -> path
-    is Surface.Markdown -> null
+    is Surface.Document -> path
     is Surface.Place -> "%.5f, %.5f".format(latitude, longitude)
 }
 

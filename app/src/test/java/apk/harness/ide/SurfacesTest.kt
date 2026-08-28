@@ -19,16 +19,16 @@ class SurfacesTest {
         newText = "after",
     )
 
-    private fun file() = Surface.FileView("/a/c.kt", "```\nx\n```\n")
+    private fun file() = Surface.Document("/a/c.kt", "```\nx\n```\n")
 
     @Test
     fun `a surface nobody owes an answer to is replaced at once`() = runBlocking {
         val surfaces = Surfaces()
         surfaces.show(file())
 
-        withTimeout(SOON) { surfaces.show(Surface.Markdown("note", "hello")) }
+        withTimeout(SOON) { surfaces.show(Surface.Document("/a/d.md", "hello")) }
 
-        assertTrue(surfaces.visible.value is Surface.Markdown)
+        assertEquals("/a/d.md", (surfaces.visible.value as Surface.Document).path)
     }
 
     @Test
@@ -50,7 +50,7 @@ class SurfacesTest {
 
         withTimeout(SOON) { second.await() }
         assertEquals(DiffDecision.Accepted, pending.decision.await())
-        assertTrue(surfaces.visible.value is Surface.FileView)
+        assertTrue(surfaces.visible.value is Surface.Document)
     }
 
     @Test
@@ -77,7 +77,7 @@ class SurfacesTest {
 
         withTimeout(SOON) { second.await() }
         assertEquals(DiffDecision.Rejected, pending.decision.await())
-        assertTrue(surfaces.visible.value is Surface.FileView)
+        assertTrue(surfaces.visible.value is Surface.Document)
     }
 
     @Test

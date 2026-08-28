@@ -63,17 +63,6 @@ class Tools(
 
     fun panelDefinitions(): JSONArray = JSONArray()
         .put(tool(
-            "show_markdown_document_panel",
-            "Render a markdown document on the phone screen: headings, lists, tables, links " +
-                "and code displayed properly instead of as terminal text. Use for anything " +
-                "meant to be read rather than scrolled past -- an itinerary, a summary, " +
-                "a comparison table.",
-            JSONObject()
-                .put("title", string("A short heading for the panel."))
-                .put("markdown", string("The markdown to render.")),
-            listOf("markdown"),
-        ))
-        .put(tool(
             "show_map_location_panel",
             "Show a place on a map on the phone screen, with a marker. Use whenever the " +
                 "answer involves somewhere in particular: a restaurant, a trailhead, a hotel.",
@@ -120,16 +109,8 @@ class Tools(
                 val path = arguments.optString("filePath")
                 val text = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                surfaces.show(Surface.FileView(path, text))
+                surfaces.show(Surface.Document(path, text))
                 textContent("Showing $path")
-            }
-
-            "show_markdown_document_panel" -> {
-                surfaces.show(Surface.Markdown(
-                    title = arguments.optString("title", "Note"),
-                    text = arguments.optString("markdown"),
-                ))
-                textContent("Rendered on screen")
             }
 
             "show_map_location_panel" -> {

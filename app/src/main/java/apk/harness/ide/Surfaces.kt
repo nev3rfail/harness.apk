@@ -22,9 +22,16 @@ sealed interface Surface {
         val decision: CompletableDeferred<DiffDecision> = CompletableDeferred(),
     ) : Surface
 
-    data class FileView(val path: String, val text: String) : Surface
-
-    data class Markdown(val title: String, val text: String) : Surface
+    /**
+     * A document on screen, and where it came from.
+     *
+     * Everything the panel shows is a markdown document: `documentFor` renders
+     * markdown as itself, wraps source in a numbered fence, and describes a blob
+     * in a sentence. The path is not decoration -- it is the only field
+     * `selection_changed` requires, so a surface without one could not be
+     * reported to an agent at all.
+     */
+    data class Document(val path: String, val markdown: String) : Surface
 
     data class Place(
         val label: String,

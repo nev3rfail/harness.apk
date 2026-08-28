@@ -410,7 +410,7 @@ private fun HarnessScreen(
                     onPick = { file ->
                         scope.launch {
                             val document = withContext(Dispatchers.IO) { documentFor(file) }
-                            surfaces.show(Surface.FileView(file.path, document))
+                            surfaces.show(Surface.Document(file.path, document))
                         }
                     },
                     onDismiss = close,
