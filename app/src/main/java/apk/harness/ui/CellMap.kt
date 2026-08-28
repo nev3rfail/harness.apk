@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -67,7 +68,10 @@ internal fun CellMapBody(
     // usable coordinates is left off both the map and the carousel rather than
     // drawn somewhere it is not.
     val places = remember(rows) { rows.mapNotNull { row -> pointOf(row)?.let { row to it } } }
-    val carousel = rememberLazyListState()
+    // Keyed on the cell, because this composition outlives the document it was
+    // drawn for: a fresh map arriving into the same slot would otherwise open on
+    // whatever card the last one was left on.
+    val carousel = rememberSaveable(cell, rows, saver = LazyListState.Saver) { LazyListState() }
     // Derived from the list rather than stored beside it, so the pin and the
     // card in front of the person cannot come to disagree.
     val selected by remember {

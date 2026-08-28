@@ -316,11 +316,14 @@ private fun HarnessScreen(
     val parked by surfaces.parked.collectAsState()
     val selection by surfaces.selection.collectAsState()
 
-    // Where each chat's document was scrolled to. Here rather than in Surfaces
-    // because nothing outside the composition reads it, and this composition
-    // outlives every dialog it opens -- which is what a parked document needs,
-    // since parking it destroys the panel that was drawing it.
-    val offsets = remember { mutableStateMapOf<Long, Int>() }
+    // Where each document was scrolled to, keyed by the chat it belongs to and
+    // the document itself: a chat shows many documents over its life and they
+    // are not the same length, so where one was left is not where another
+    // starts. Here rather than in Surfaces because nothing outside the
+    // composition reads it, and this composition outlives every dialog it opens
+    // -- which is what a parked document needs, since parking it destroys the
+    // panel that was drawing it.
+    val offsets = remember { mutableStateMapOf<Pair<Long, String>, Int>() }
 
     // The document on screen belongs to a chat, so it cannot stay over another
     // one. Switching parks it for its own chat, which draws that chat's band.
@@ -451,6 +454,8 @@ private fun HarnessScreen(
         }
 
         surface?.let { shown ->
+            // Which document's scroll offset this panel reads and writes.
+            val place = documentOwner to (shown as? Surface.Document)?.path.orEmpty()
             Dialog(
                 onDismissRequest = surfaces::dismiss,
                 properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -467,8 +472,8 @@ private fun HarnessScreen(
                     // the chat on screen: a document a background agent showed
                     // parks for its own chat and comes back where that chat
                     // left it.
-                    scroll = offsets[documentOwner] ?: 0,
-                    onScroll = { offset -> offsets[documentOwner] = offset },
+                    scroll = offsets[place] ?: 0,
+                    onScroll = { offset -> offsets[place] = offset },
                     // Held in Surfaces rather than in the panel: the document is
                     // put away and talked about afterwards, and the panel that
                     // made the selection is gone by then.
