@@ -104,9 +104,17 @@ class Tools(
             listOf("uri"),
         ))
 
-    suspend fun call(name: String, arguments: JSONObject): JSONObject =
+    /**
+     * Runs the tool [name] names, for the chat that asked for it.
+     *
+     * One of these serves every agent, so [owner] is how a surface it puts on
+     * screen is attributed to the chat it came up in. It is the channel's to
+     * supply: the editor knows its tab, and the panel server knows which token
+     * it was presented. [NO_CHAT] is a call nobody's chat made.
+     */
+    suspend fun call(name: String, arguments: JSONObject, owner: Long): JSONObject =
         when (name) {
-            "openDiff" -> openDiff(arguments)
+            "openDiff" -> openDiff(arguments, owner)
 
             "close_tab" -> {
                 surfaces.closeTab(arguments.optString("tab_name"))
@@ -125,7 +133,7 @@ class Tools(
                 val path = arguments.optString("filePath")
                 val text = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
-                surfaces.show(Surface.Document(path, text))
+                surfaces.show(Surface.Document(path, text), owner)
                 textContent("Showing $path")
             }
 
@@ -134,7 +142,7 @@ class Tools(
                 val text = runCatching { readDocument(path) }
                     .getOrElse { return errorContent("cannot read $path: ${it.message}") }
                 val problems = promoteCells(markdownBlocks(text)).problems
-                surfaces.show(Surface.Document(path, text))
+                surfaces.show(Surface.Document(path, text), owner)
                 textContent("Showing $path" + report(problems))
             }
 
@@ -150,12 +158,15 @@ class Tools(
             }
 
             "show_map_location_panel" -> {
-                surfaces.show(Surface.Place(
-                    label = arguments.optString("label", "Here"),
-                    latitude = arguments.optDouble("latitude"),
-                    longitude = arguments.optDouble("longitude"),
-                    zoom = arguments.optDouble("zoom", DEFAULT_ZOOM),
-                ))
+                surfaces.show(
+                    Surface.Place(
+                        label = arguments.optString("label", "Here"),
+                        latitude = arguments.optDouble("latitude"),
+                        longitude = arguments.optDouble("longitude"),
+                        zoom = arguments.optDouble("zoom", DEFAULT_ZOOM),
+                    ),
+                    owner,
+                )
                 textContent("Showing the map")
             }
 
@@ -183,7 +194,7 @@ class Tools(
         "\n" + problem.line?.let { "line ${it + 1}: " }.orEmpty() + problem.reason
     }
 
-    private suspend fun openDiff(arguments: JSONObject): JSONObject {
+    private suspend fun openDiff(arguments: JSONObject, owner: Long): JSONObject {
         val path = arguments.optString("new_file_path")
             .ifEmpty { arguments.optString("old_file_path") }
         val proposed = arguments.optString("new_file_contents")
@@ -195,7 +206,7 @@ class Tools(
             oldText = current,
             newText = proposed,
         )
-        surfaces.show(diff)
+        surfaces.show(diff, owner)
 
         // The reply is read positionally: FILE_SAVED means the second block is
         // the text to use.

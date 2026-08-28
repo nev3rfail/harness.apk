@@ -9,6 +9,19 @@ import org.json.JSONObject
 const val APP_NAME = "harness.apk"
 
 /**
+ * The chat a call came from, or the absence of one.
+ *
+ * A tool call arrives with no caller, so each channel is given one: the editor
+ * binds its tab's key, and the panel server maps the token it was presented
+ * back to the chat it handed that token to. [NO_CHAT] is what a call carries
+ * when nothing is asking on a chat's behalf -- the app itself, or a session
+ * started outside it that found the app-wide config in its working directory.
+ *
+ * Zero, because `AgentTabs` counts keys from one, so no chat can ever hold it.
+ */
+const val NO_CHAT = 0L
+
+/**
  * A secret the agent presents to prove it is the one that read the file naming
  * the port, rather than anything else on the device that found it open.
  */
@@ -42,11 +55,19 @@ fun errorContent(message: String): JSONObject =
 class McpEndpoint(
     private val serverName: String,
     private val definitions: () -> JSONArray,
-    private val call: suspend (String, JSONObject) -> JSONObject,
+    /** Runs one tool for one chat: its name, its arguments, and who is asking. */
+    private val call: suspend (String, JSONObject, Long) -> JSONObject,
 ) {
 
-    /** Answers one message, or nothing at all if it was a notification. */
-    suspend fun handle(request: JSONObject): JSONObject? {
+    /**
+     * Answers one message, or nothing at all if it was a notification.
+     *
+     * [owner] is the chat the message came from, which only `tools/call` needs
+     * and which is the transport's to know: the editor has one chat for its
+     * whole life, and the panel server has one per token. Everything else here
+     * answers the same way for everyone.
+     */
+    suspend fun handle(request: JSONObject, owner: Long): JSONObject? {
         val method = request.optString("method")
         val hasId = request.has("id") && !request.isNull("id")
         val params = request.optJSONObject("params") ?: JSONObject()
@@ -64,6 +85,7 @@ class McpEndpoint(
             "tools/call" -> call(
                 params.optString("name"),
                 params.optJSONObject("arguments") ?: JSONObject(),
+                owner,
             )
 
             else -> {

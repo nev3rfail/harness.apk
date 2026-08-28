@@ -7,6 +7,7 @@ import java.io.OutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,27 +27,38 @@ import org.json.JSONObject
  * The transport is MCP over HTTP, which is one POST carrying one JSON-RPC
  * message. That is little enough to answer directly on a socket, and saves the
  * app an HTTP dependency it would otherwise use once.
+ *
+ * One server serves every agent, so the token a request presents is what says
+ * who is calling: each chat is handed a config file carrying a token of its
+ * own, and [tokens] maps that token back to the chat.
  */
 class PanelServer(
     private val workspace: File,
     private val endpoint: McpEndpoint,
 ) {
-    private val token = newToken()
+    /**
+     * The token a session started outside the app presents.
+     *
+     * Such a session is handed no config path and finds the app-wide
+     * `.mcp.json` in its working directory instead, so it reaches the tools
+     * with no chat behind it.
+     */
+    private val appToken = newToken()
+
+    /**
+     * Every token this server has issued, and the chat it was issued to.
+     *
+     * Read on the sockets' threads and written when a tab opens, hence
+     * concurrent. A token that is not in here is refused: it is either a guess
+     * or a credential from a chat that has since gone.
+     */
+    private val tokens = ConcurrentHashMap<String, Long>()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var socket: ServerSocket? = null
     private var config: File? = null
 
     val port: Int get() = socket?.localPort ?: 0
-
-    /**
-     * The config file naming this server, once it is running.
-     *
-     * The agent reads this out of its working directory, which is right for a
-     * session started in the workspace and wrong for one started anywhere else,
-     * so a session that starts elsewhere is given the path on its command line
-     * instead. Public for that.
-     */
-    val configFile: File? get() = config
 
     fun start() {
         val listening = ServerSocket(0, BACKLOG, InetAddress.getByName(IPV4_LOOPBACK))
@@ -65,19 +77,69 @@ class PanelServer(
     fun stop() {
         config?.delete()
         config = null
+        tokens.clear()
         runCatching { socket?.close() }
         socket = null
         scope.cancel()
     }
 
     /**
-     * Tells the agent where to find this server.
+     * The config naming this server for one chat, or null while nothing is
+     * listening.
      *
-     * The port is asked for fresh each run, so the file is written each run too.
-     * It names the workspace it sits in, which is the directory the agent is
-     * started in, and that is what makes the agent read it at all.
+     * One server for every agent, so the token is what says who is calling:
+     * each chat gets a file of its own carrying a token of its own, and the
+     * server maps the token back to the chat. A port and a socket per agent
+     * would answer the same question at a much higher price.
+     *
+     * The file is handed to the chat's agent on its command line, so it is
+     * written where nothing else looks for it -- an agent that stumbled on it
+     * would be speaking as a chat that is not its own.
+     */
+    fun configFor(key: Long): File? {
+        val listening = socket ?: return null
+        // A key issued a token twice keeps only the newer one, so the file and
+        // what the server honours never disagree.
+        tokens.values.removeAll { it == key }
+        val token = newToken()
+        tokens[token] = key
+
+        val directory = File(workspace, PANEL_DIRECTORY)
+        directory.mkdirs()
+        val file = File(directory, "$key$CONFIG_SUFFIX")
+        file.writeText(configText(listening.localPort, token))
+        return file
+    }
+
+    /**
+     * Forgets a chat's config and its token.
+     *
+     * Called when the chat goes, because a token outliving the chat it was
+     * issued to is a credential nobody owns.
+     */
+    fun discard(key: Long) {
+        tokens.values.removeAll { it == key }
+        File(File(workspace, PANEL_DIRECTORY), "$key$CONFIG_SUFFIX").delete()
+    }
+
+    /**
+     * Tells a session started outside the app where to find this server.
+     *
+     * The agent reads this out of its working directory, which is right for a
+     * session started in the workspace and wrong for one started anywhere else,
+     * so a session that starts elsewhere is handed [configFor] on its command
+     * line instead. The port is asked for fresh each run, so the file is
+     * written each run too.
      */
     private fun writeConfig(port: Int) {
+        tokens[appToken] = NO_CHAT
+        val file = File(workspace, CONFIG_NAME)
+        file.writeText(configText(port, appToken))
+        config = file
+    }
+
+    /** The config an agent reads to reach this server, presenting [token]. */
+    private fun configText(port: Int, token: String): String {
         val servers = JSONObject().put(
             SERVER_NAME,
             JSONObject()
@@ -85,9 +147,7 @@ class PanelServer(
                 .put("url", "http://$IPV4_LOOPBACK:$port$ENDPOINT_PATH")
                 .put("headers", JSONObject().put(AUTH_HEADER, token)),
         )
-        val file = File(workspace, CONFIG_NAME)
-        file.writeText(JSONObject().put("mcpServers", servers).toString(2))
-        config = file
+        return JSONObject().put("mcpServers", servers).toString(2)
     }
 
     private suspend fun serve(client: Socket) {
@@ -96,7 +156,8 @@ class PanelServer(
             val request = readRequest(input) ?: return
             val output = client.getOutputStream()
 
-            if (request.authorization != token) {
+            val owner = request.authorization?.let { tokens[it] }
+            if (owner == null) {
                 respond(output, "401 Unauthorized", null)
                 return
             }
@@ -107,7 +168,7 @@ class PanelServer(
                 return
             }
 
-            val reply = runCatching { endpoint.handle(JSONObject(request.body)) }
+            val reply = runCatching { endpoint.handle(JSONObject(request.body), owner) }
                 .onFailure { Log.e(TAG, "failed to handle a request", it) }
                 .getOrNull()
 
@@ -169,6 +230,8 @@ class PanelServer(
         const val TAG = "PanelServer"
         const val SERVER_NAME = "harness"
         const val CONFIG_NAME = ".mcp.json"
+        const val PANEL_DIRECTORY = ".claude/panels"
+        const val CONFIG_SUFFIX = ".json"
         const val ENDPOINT_PATH = "/mcp"
         const val IPV4_LOOPBACK = "127.0.0.1"
         const val AUTH_HEADER = "X-Harness-Authorization"

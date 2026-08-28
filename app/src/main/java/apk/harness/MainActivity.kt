@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun openTabs(home: File): AgentTabs = AgentTabs(
         agent = Agent(this),
-        editorFor = { workspace ->
+        editorFor = { workspace, key ->
             IdeServer(
                 workspace = workspace,
                 // The agent finds an editor by reading lockfiles out of its own
@@ -189,9 +189,13 @@ class MainActivity : ComponentActivity() {
                 // every agent is given.
                 lockDirectory = File(home, "$AGENT_CONFIG_DIRECTORY/ide"),
                 endpoint = McpEndpoint(APP_NAME, tools::editorDefinitions, tools::call),
+                // One editor to one tab, so every call it answers is this
+                // chat's.
+                owner = key,
             )
         },
-        panelConfig = { panels.configFile },
+        panelConfigFor = { key -> panels.configFor(key) },
+        releasePanelConfig = { key -> panels.discard(key) },
     ).also {
         tabs = it
         it.openDefault()

@@ -54,11 +54,22 @@ enum class DiffDecision { Accepted, Rejected }
  * waiting in [show] necessary rather than fussy: with one agent, replacing a
  * pending diff meant that same agent moving on, and with several it would be one
  * agent answering another's question as *Rejected* without either of them
- * hearing about it.
+ * hearing about it. What is on screen carries the chat that showed it, so the
+ * screen holds one surface and still says whose it is.
  */
 class Surfaces {
     private val _visible = MutableStateFlow<Surface?>(null)
     val visible: StateFlow<Surface?> = _visible.asStateFlow()
+
+    private val _owner = MutableStateFlow(NO_CHAT)
+
+    /**
+     * Who owns what is on screen.
+     *
+     * [NO_CHAT] for a surface the app put there itself, which is the one case
+     * with no agent to tell about it.
+     */
+    val owner: StateFlow<Long> = _owner.asStateFlow()
 
     /**
      * Serialises the screen. Held across the wait below, so a third caller
@@ -74,13 +85,20 @@ class Surfaces {
      * to. A diff awaiting a decision is neither, so this waits for that decision
      * rather than answering it. The caller is a tool call, which is already
      * something the agent waits on.
+     *
+     * [owner] is the chat the surface belongs to, which the tool call arrived
+     * carrying. It defaults to [NO_CHAT] for the app showing something of its
+     * own, such as a file picked out of the tree.
      */
-    suspend fun show(surface: Surface) {
+    suspend fun show(surface: Surface, owner: Long = NO_CHAT) {
         screen.withLock {
             val previous = _visible.value
             if (previous is Surface.Diff && !previous.decision.isCompleted) {
                 previous.decision.await()
             }
+            // The owner first, so a collector woken by the surface reads the
+            // chat that surface belongs to rather than the one before it.
+            _owner.value = owner
             _visible.value = surface
         }
     }

@@ -48,10 +48,21 @@ data class AgentTab(
  */
 class AgentTabs(
     private val agent: Agent,
-    /** Builds an editor for a workspace. */
-    private val editorFor: (File) -> IdeServer,
-    /** The MCP config naming the app's panel server, or null when it has none. */
-    private val panelConfig: () -> File?,
+    /**
+     * Builds an editor for a workspace, bound to the tab's key.
+     *
+     * The key goes in because an editor serves one tab: it is what lets a tool
+     * call arriving there say which chat made it.
+     */
+    private val editorFor: (File, Long) -> IdeServer,
+    /**
+     * The MCP config naming the app's panel server for one chat, or null when
+     * there is none. One server serves every chat, so the config is what
+     * carries the chat's own token.
+     */
+    private val panelConfigFor: (Long) -> File?,
+    /** Drops a chat's panel config when the chat goes. */
+    private val releasePanelConfig: (Long) -> Unit,
 ) {
     private var nextKey = 1L
 
@@ -232,12 +243,16 @@ class AgentTabs(
         backend: AgentBackend,
         arguments: List<String>,
     ): AgentTab {
+        // The key is settled first: the editor and the panel config are both
+        // bound to it, and both are built before the agent starts.
+        val key = nextKey++
+
         // The editor is bound before the agent starts, because the port travels
         // to the agent in its environment rather than being found on disk.
-        val editor = editorFor(directory)
+        val editor = editorFor(directory, key)
         val port = editor.start()
 
-        val configured = panelConfig()?.let { arguments + backend.mcpConfig(it) } ?: arguments
+        val configured = panelConfigFor(key)?.let { arguments + backend.mcpConfig(it) } ?: arguments
 
         val session = agent.session(
             directory = directory,
@@ -246,7 +261,6 @@ class AgentTabs(
             script = backend.script,
         )
 
-        val key = nextKey++
         val tab = AgentTab(key, sessionId, directory, label, backend, session, editor)
         _tabs.value = _tabs.value + tab
         _activeKey.value = key
@@ -257,6 +271,10 @@ class AgentTabs(
     private fun release(tab: AgentTab) {
         runCatching { tab.session.stop() }
         runCatching { tab.ide.stop() }
+        // The panel config goes with the tab: its token is what says calls come
+        // from this chat, and a token outliving its chat is a credential nobody
+        // owns.
+        runCatching { releasePanelConfig(tab.key) }
     }
 
     private companion object {

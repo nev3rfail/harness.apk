@@ -36,6 +36,15 @@ class IdeServer(
     private val workspace: File,
     private val lockDirectory: File,
     private val endpoint: McpEndpoint,
+    /**
+     * The chat this editor belongs to.
+     *
+     * One editor serves one tab for as long as that tab exists, so the caller of
+     * every tool call arriving here is known at the moment the server is built
+     * and travels with it. [NO_CHAT] leaves a call unattributed, which is what
+     * an editor built outside a tab would be.
+     */
+    private val owner: Long = NO_CHAT,
 ) {
     private val authToken = newToken()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -179,7 +188,7 @@ class IdeServer(
             // Answering can take arbitrarily long -- a diff waits for a person --
             // so nothing is handled on the socket's own thread.
             scope.launch {
-                val reply = runCatching { endpoint.handle(JSONObject(message)) }
+                val reply = runCatching { endpoint.handle(JSONObject(message), owner) }
                     .onFailure { Log.e(TAG, "failed to handle a request", it) }
                     .getOrNull()
                 if (reply != null) runCatching { conn.send(reply.toString()) }

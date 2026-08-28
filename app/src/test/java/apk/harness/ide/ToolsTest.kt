@@ -23,8 +23,11 @@ class ToolsTest {
         readDocument = { path -> documents[path] ?: error("no such file: $path") },
     )
 
-    private fun call(name: String, arguments: JSONObject = JSONObject()): JSONObject =
-        runBlocking { tools.call(name, arguments) }
+    private fun call(
+        name: String,
+        arguments: JSONObject = JSONObject(),
+        owner: Long = NO_CHAT,
+    ): JSONObject = runBlocking { tools.call(name, arguments, owner) }
 
     private fun JSONObject.text(): String =
         getJSONArray("content").getJSONObject(0).getString("text")
@@ -74,6 +77,20 @@ class ToolsTest {
         assertTrue(result.optBoolean("isError"))
         assertTrue(result.text().startsWith("cannot read /nowhere.md"))
         assertNull(surfaces.visible.value)
+    }
+
+    @Test
+    fun `a document shown by a chat belongs to that chat`() {
+        call("show_document_panel", path(CLEAN_PATH), owner = 3L)
+
+        assertEquals(3L, surfaces.owner.value)
+    }
+
+    @Test
+    fun `a document shown by no chat belongs to no chat`() {
+        call("show_document_panel", path(CLEAN_PATH))
+
+        assertEquals(NO_CHAT, surfaces.owner.value)
     }
 
     @Test
