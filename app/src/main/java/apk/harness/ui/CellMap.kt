@@ -185,10 +185,10 @@ private fun frame(map: MapView, points: List<CellPoint>, zoom: Double?) {
 /**
  * One place, as the row wrote it.
  *
- * The name, the notes, and then every factual field the row carries with what
- * vouches for it beside it. That last part is the whole point of the card: the
- * reference app fills this space with ratings and photos, and that enrichment is
- * what makes an invented place look real.
+ * The name, the notes, and then every factual field the row carries, each with
+ * whatever vouches for it beside it. That last part is the whole point of the
+ * card: the reference app fills this space with ratings and photos, and that
+ * enrichment is what makes an invented place look real.
  */
 @Composable
 private fun PlaceCard(
@@ -199,10 +199,23 @@ private fun PlaceCard(
 ) {
     Card(modifier = Modifier.padding(end = 12.dp).width(CARD_WIDTH)) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = textOf(row.fields["name"]),
-                style = MaterialTheme.typography.titleSmall,
-            )
+            // Every field the card draws asks [markFor] what vouches for it,
+            // and the answer decides whether a mark is drawn: a factual field
+            // is covered by the row's blanket source, and anything else only by
+            // a claim the row made about that field itself. A `notes` the agent
+            // said it reasoned is such a claim, and it is worth nothing unless
+            // it is on screen beside the sentence it qualifies.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = textOf(row.fields["name"]),
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Vouching(markFor(CellKind.Map, "name", row), openExternal)
+            }
             val notes = textOf(row.fields["notes"])
             if (notes.isNotBlank()) {
                 Text(
@@ -210,6 +223,7 @@ private fun PlaceCard(
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Vouching(markFor(CellKind.Map, "notes", row), openExternal)
             }
             SCHEMAS.getValue(CellKind.Map).factual.forEach { field ->
                 val value = row.fields[field] ?: return@forEach
