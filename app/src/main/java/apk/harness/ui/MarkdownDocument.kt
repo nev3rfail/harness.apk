@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import apk.harness.cells.promoteCells
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownTypography
 
@@ -25,7 +26,7 @@ import com.mikepenz.markdown.m3.markdownTypography
  */
 @Composable
 fun MarkdownDocument(content: String, modifier: Modifier = Modifier) {
-    val blocks = remember(content) { markdownBlocks(content) }
+    val blocks = remember(content) { promoteCells(markdownBlocks(content)).blocks }
     val typography = markdownTypography(
         h1 = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
         h2 = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
@@ -48,6 +49,7 @@ fun MarkdownDocument(content: String, modifier: Modifier = Modifier) {
                 )
                 is MarkdownBlock.Table -> Table(block)
                 is MarkdownBlock.Code -> CodeFence(block.language, block.text)
+                is MarkdownBlock.Widget -> Unit // task 6 draws this
             }
         }
     }

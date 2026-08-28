@@ -1,5 +1,7 @@
 package apk.harness.ui
 
+import apk.harness.cells.Cell
+
 /**
  * Splits markdown into the parts a renderer handles and the parts it does not.
  *
@@ -28,6 +30,13 @@ sealed interface MarkdownBlock {
      * fence chose it -- so nothing downstream may fail on one it does not know.
      */
     data class Code(val language: String?, val text: String) : MarkdownBlock
+
+    /**
+     * A fenced block whose label named a cell kind and whose body parsed and
+     * checked. The fence's own text is gone: what remains is the cell, and the
+     * renderer for its kind draws it.
+     */
+    data class Widget(val cell: Cell) : MarkdownBlock
 }
 
 /**

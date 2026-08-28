@@ -1,5 +1,6 @@
 package apk.harness.ui
 
+import apk.harness.cells.CELL_LABELS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -140,7 +141,7 @@ class CodeHighlightTest {
     fun `every cell label is coloured as the format its body is written in`() {
         // A cell that fails to check degrades to a code block, and the only thing
         // that makes that block readable is the TOML grammar behind its label.
-        val uncoloured = setOf("harness-map", "harness-table").filter { grammarFor(it) == null }
+        val uncoloured = CELL_LABELS.filter { grammarFor(it) == null }
 
         assertEquals(emptyList<String>(), uncoloured)
     }
