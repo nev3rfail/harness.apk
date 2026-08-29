@@ -327,6 +327,77 @@ class ChatTreeTest {
         assertEquals("${USER_HOME}omething", foldHome("${USER_HOME}omething", HOMES))
     }
 
+    @Test
+    fun `the model's own title names a chat nobody else named`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"ai-title","aiTitle":"Audit and package the repository"}""",
+        )
+
+        val chat = readTranscript(file).chat
+        assertEquals("Audit and package the repository", chat.title)
+        assertEquals("Audit and package the repository", chat.label)
+    }
+
+    @Test
+    fun `a custom title outranks the model's own`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"ai-title","aiTitle":"what the model called it"}""",
+            """{"type":"custom-title","customTitle":"what a person called it"}""",
+        )
+
+        assertEquals("what a person called it", readTranscript(file).chat.title)
+    }
+
+    @Test
+    fun `an agent name outranks the model's own title`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"ai-title","aiTitle":"what the model called it"}""",
+            """{"type":"agent-name","agentName":"zspike"}""",
+        )
+
+        assertEquals("zspike", readTranscript(file).chat.title)
+    }
+
+    @Test
+    fun `the last of several model titles wins`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"ai-title","aiTitle":"an early guess"}""",
+            """{"type":"ai-title","aiTitle":"the settled one"}""",
+        )
+
+        assertEquals("the settled one", readTranscript(file).chat.title)
+    }
+
+    @Test
+    fun `the model's own title outranks the last prompt`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"last-prompt","lastPrompt":"ship the file tree root"}""",
+            """{"type":"ai-title","aiTitle":"The drawers"}""",
+        )
+
+        val chat = readTranscript(file).chat
+        assertEquals("The drawers", chat.title)
+        assertEquals("The drawers", chat.label)
+        assertEquals("ship the file tree root", chat.lastPrompt)
+    }
+
+    @Test
+    fun `a chat with no title of any kind is still labelled by its prompt`() {
+        val file = transcript(
+            "p", "s",
+            """{"type":"last-prompt","lastPrompt":"run the suite"}""",
+        )
+
+        val chat = readTranscript(file).chat
+        assertNull(chat.title)
+        assertEquals("run the suite", chat.label)
+    }
+
     private companion object {
         const val USER_HOME = "/data/user/0/dev.harness/files"
         const val DATA_HOME = "/data/data/dev.harness/files"

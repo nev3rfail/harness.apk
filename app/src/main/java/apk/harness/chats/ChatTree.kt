@@ -174,6 +174,7 @@ fun readTranscript(file: File): Transcript {
     val sessionId = file.name.removeSuffix(SUFFIX)
     var title: String? = null
     var agentName: String? = null
+    var aiTitle: String? = null
     var lastPrompt: String? = null
     var firstPrompt: String? = null
     var cwd: String? = null
@@ -187,6 +188,10 @@ fun readTranscript(file: File): Transcript {
         when (record.optString("type")) {
             "custom-title" -> record.text("customTitle")?.let { title = it }
             "agent-name" -> record.text("agentName")?.let { agentName = it }
+            // The name the model publishes for its own conversation. It is
+            // rewritten on most turns and is small, so the window holds one
+            // whenever the transcript carries any, and the last is the current.
+            "ai-title" -> record.text("aiTitle")?.let { aiTitle = it }
             "last-prompt" -> record.text("lastPrompt")?.let { lastPrompt = clean(it) }
             // A turn dispatched to a subagent is the parent's work rather than a
             // conversation of its own, so it never supplies a label.
@@ -200,7 +205,7 @@ fun readTranscript(file: File): Transcript {
     return Transcript(
         chat = Chat(
             sessionId = sessionId,
-            title = title ?: agentName,
+            title = title ?: agentName ?: aiTitle,
             lastPrompt = lastPrompt ?: firstPrompt,
             modified = file.lastModified(),
             transcript = file,
