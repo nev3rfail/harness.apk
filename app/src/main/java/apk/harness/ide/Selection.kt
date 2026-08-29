@@ -1,5 +1,6 @@
 package apk.harness.ide
 
+import apk.harness.ui.Item
 import apk.harness.ui.Spanned
 import org.json.JSONObject
 
@@ -16,7 +17,8 @@ data class Selection(val path: String, val first: Int, val last: Int)
  * A thing in a document a person can point at.
  *
  * [block] is its index in the document's blocks and [line] is a line inside a
- * fence, or null for the block taken whole. Two units are the same unit when
+ * block that answers per line -- a fence's body line, or a list item's own first
+ * line -- or null for the block taken whole. Two units are the same unit when
  * both agree, which is what makes tapping the selected one clear it.
  */
 data class Unit(val block: Int, val line: Int?, val lines: IntRange)
@@ -35,6 +37,15 @@ fun fenceUnit(index: Int, fence: Spanned, bodyLine: Int): Unit {
     val line = fence.lines.first + 1 + bodyLine
     return Unit(index, bodyLine, line..line)
 }
+
+/**
+ * The unit for one item of a list, and everything nested under it.
+ *
+ * The item's own first line names it, so two touches anywhere on one item give
+ * the same unit. Its lines are the subtree's, so a selection made from it takes
+ * everything under it.
+ */
+fun itemUnit(index: Int, item: Item): Unit = Unit(index, item.lines.first, item.lines)
 
 /** The lines from an anchor to a target, whichever way round they are. */
 fun spanOf(anchor: Unit, target: Unit): IntRange =

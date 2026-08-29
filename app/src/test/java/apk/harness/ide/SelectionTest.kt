@@ -1,5 +1,6 @@
 package apk.harness.ide
 
+import apk.harness.ui.Item
 import apk.harness.ui.MarkdownBlock
 import apk.harness.ui.Spanned
 import apk.harness.ui.markdownBlocks
@@ -185,5 +186,61 @@ class SelectionTest {
     fun `a selection reaching into a fence from above draws its first lines`() {
         val fence = Spanned(MarkdownBlock.Code("kotlin", "a\nb\nc"), 10..14)
         assertEquals(0..1, bodyLinesOf(fence, 4..12))
+    }
+
+    @Test
+    fun `the same item twice is the same unit`() {
+        val item = Item(4..6, emptyList())
+        // Two touches on one item give one Unit, which is what makes a tap on
+        // what is already selected drop it.
+        assertEquals(itemUnit(2, item), itemUnit(2, item))
+    }
+
+    @Test
+    fun `an item's unit spans its subtree`() {
+        val parent = Item(4..6, listOf(Item(5..5, emptyList()), Item(6..6, emptyList())))
+        assertEquals(4..6, itemUnit(2, parent).lines)
+    }
+
+    @Test
+    fun `a long press on an item takes it and everything under it`() {
+        val parent = Item(4..6, listOf(Item(5..5, emptyList())))
+        val next = pointAt("/doc.md", null, null, itemUnit(2, parent), anchoring = true)
+        assertEquals(Selection("/doc.md", 4, 6), next)
+    }
+
+    @Test
+    fun `a span from a paragraph to an item covers both`() {
+        val paragraph = unitOf(0, Spanned(MarkdownBlock.Prose("a"), 0..1))
+        val item = itemUnit(1, Item(4..6, emptyList()))
+        assertEquals(0..6, spanOf(paragraph, item))
+    }
+
+    @Test
+    fun `a span from an item to a paragraph covers both, the same way round`() {
+        val item = itemUnit(1, Item(4..6, emptyList()))
+        val paragraph = unitOf(3, Spanned(MarkdownBlock.Prose("b"), 9..10))
+        assertEquals(4..10, spanOf(item, paragraph))
+    }
+
+    @Test
+    fun `a span from an item in one list to an item in another covers both`() {
+        val first = itemUnit(1, Item(4..5, emptyList()))
+        val second = itemUnit(5, Item(20..22, emptyList()))
+        assertEquals(4..22, spanOf(first, second))
+    }
+
+    @Test
+    fun `a tap on a child of a selected parent drops the selection`() {
+        val child = itemUnit(2, Item(5..5, emptyList()))
+        val held = Selection("/doc.md", 4, 6)
+        // The child lands inside the selection, so the tap drops it rather than
+        // narrowing to the child. Taking the child is a long press.
+        assertNull(pointAt("/doc.md", null, held, child, anchoring = false))
+    }
+
+    @Test
+    fun `two items of one list are different units`() {
+        assert(itemUnit(2, Item(4..4, emptyList())) != itemUnit(2, Item(5..5, emptyList())))
     }
 }
