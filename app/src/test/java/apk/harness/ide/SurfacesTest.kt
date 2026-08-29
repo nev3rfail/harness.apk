@@ -365,6 +365,146 @@ class SurfacesTest {
         assertEquals(setOf(3L), surfaces.parked.value.keys)
     }
 
+    @Test
+    fun `closing marks the entry and takes the document off screen`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+
+        surfaces.close(3L)
+
+        assertNull(surfaces.visible.value)
+        assertEquals(true, surfaces.parked.value[3L]?.closing)
+        assertEquals("/a/c.kt", surfaces.parked.value[3L]?.document?.path)
+    }
+
+    @Test
+    fun `closing drops the selection from the screen and keeps it in the entry`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+
+        surfaces.close(3L)
+
+        // The app no longer believes the selection, so nothing on screen claims
+        // one. The entry keeps it, because a pull up brings it back.
+        assertNull(surfaces.selection.value)
+        assertEquals(Selection("/a/c.kt", 4, 7), surfaces.parked.value[3L]?.selection)
+    }
+
+    @Test
+    fun `restoring a closing entry brings the document and its selection back`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        surfaces.close(3L)
+
+        surfaces.restore(3L)
+
+        assertEquals(file(), surfaces.visible.value)
+        assertEquals(Selection("/a/c.kt", 4, 7), surfaces.selection.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `a pull down on a parked band marks it closing where it stands`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        surfaces.park()
+
+        surfaces.close(3L)
+
+        assertEquals(true, surfaces.parked.value[3L]?.closing)
+        assertEquals(Selection("/a/c.kt", 4, 7), surfaces.parked.value[3L]?.selection)
+    }
+
+    @Test
+    fun `a new surface for that chat drops a closing entry`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.close(3L)
+
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0), owner = 3L)
+
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `switching the chat on screen drops every closing entry`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.close(3L)
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0), owner = 4L)
+        surfaces.close(4L)
+
+        surfaces.switchTo(5L)
+
+        // An undo is for the thing just done, and the operator has gone to look
+        // at something else.
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `switching leaves a parked entry that is not closing`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.park()
+
+        surfaces.switchTo(5L)
+
+        assertEquals(false, surfaces.parked.value[3L]?.closing)
+    }
+
+    @Test
+    fun `a diff cannot be closed this way`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = diff()
+        surfaces.show(pending, owner = 3L)
+
+        surfaces.close(3L)
+
+        assertEquals(pending, surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+        assertFalse(pending.decision.isCompleted)
+    }
+
+    @Test
+    fun `a handoff cannot be closed this way`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = handoff()
+        surfaces.show(pending, owner = 3L)
+
+        surfaces.close(3L)
+
+        assertEquals(pending, surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+        assertFalse(pending.decision.isCompleted)
+    }
+
+    @Test
+    fun `a document no chat owns is not closed this way`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file())
+
+        surfaces.close(NO_CHAT)
+
+        // There is no band for a chat that does not exist, so an entry marked
+        // closing there could never be undone or seen.
+        assertEquals(file(), surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `closing another chat's document leaves the screen alone`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+
+        surfaces.close(4L)
+
+        assertEquals(file(), surfaces.visible.value)
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
     private companion object {
         /** Long enough for a coroutine on another thread to reach its wait. */
         const val SETTLE = 100L

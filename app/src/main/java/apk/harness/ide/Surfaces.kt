@@ -83,10 +83,19 @@ class Surfaces {
     /**
      * A document a chat has put away, and the selection held in it.
      *
+     * [closing] says the document was closed rather than minimised, and the
+     * entry is kept only so a pull up can undo it. One map rather than a second
+     * beside it, because the band is drawn from the entry for the chat on screen
+     * and the two states are drawn on the same pixels by the same composable.
+     *
      * The scroll offset is not here: nothing outside the composition reads it,
      * and the composition that draws the band outlives every dialog it opens.
      */
-    data class Parked(val document: Surface.Document, val selection: Selection?)
+    data class Parked(
+        val document: Surface.Document,
+        val selection: Selection?,
+        val closing: Boolean = false,
+    )
 
     private val _visible = MutableStateFlow<Surface?>(null)
     val visible: StateFlow<Surface?> = _visible.asStateFlow()
@@ -206,6 +215,32 @@ class Surfaces {
     }
 
     /**
+     * Closes [key]'s document, keeping it briefly so a pull up can undo it.
+     *
+     * The document goes into [parked] marked closing, with the selection it
+     * held, so an unclose brings both back. What is on screen goes with it; a
+     * document already behind a band is marked where it stands, which is what a
+     * pull down on that band does.
+     *
+     * Anything that is not a document stays: a diff and a handoff are questions
+     * an agent is blocked on, and hiding one behind a band would strand them. A
+     * document no chat owns stays too, because no band is drawn for [NO_CHAT]
+     * and an entry there could neither be seen nor undone.
+     */
+    fun close(key: Long) {
+        if (key == NO_CHAT) return
+        val shown = (_visible.value as? Surface.Document)?.takeIf { _owner.value == key }
+        val put = _parked.value[key]
+        val entry = when {
+            shown != null -> Parked(shown, _selection.value, closing = true)
+            put != null -> put.copy(closing = true)
+            else -> return
+        }
+        _parked.value = _parked.value + (key to entry)
+        if (shown != null) clearScreen()
+    }
+
+    /**
      * Drops [key]'s parked document, and the selection held in it.
      *
      * The one way a parked document leaves without coming back. A chat that has
@@ -228,8 +263,12 @@ class Surfaces {
      * conversation it has nothing to do with is the thing this prevents.
      * Nothing is restored in its place -- [key]'s band is drawn from [parked]
      * and the operator pulls it up.
+     *
+     * Every closing entry goes, whosever it is. An undo is for the thing just
+     * done, and the operator has gone to look at something else.
      */
     fun switchTo(key: Long) {
+        _parked.value = _parked.value.filterValues { !it.closing }
         // Already the arriving chat's own document, which happens when a
         // background chat showed it. It stays on screen.
         if (_owner.value == key) return

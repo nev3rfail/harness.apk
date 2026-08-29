@@ -356,10 +356,6 @@ private fun HarnessScreen(
                 selection = selection,
                 parked = parked[tab.key],
             )
-            // Gone from both is a document the app has discarded, which is the
-            // panel closing. The path stays, because the last document opened is
-            // still the document at hand, and the selection goes.
-                ?: told[tab.key]?.let { Report(it.path, null, null) }
             if (report == null) return@forEach
             // A chat arriving on screen is told its own state again: it is the
             // one party that has just changed what it is looking at.
@@ -466,8 +462,19 @@ private fun HarnessScreen(
         surface?.let { shown ->
             // Which document's scroll offset this panel reads and writes.
             val place = documentOwner to (shown as? Surface.Document)?.path.orEmpty()
+            // Closing a document keeps it for a few seconds behind a band, so a
+            // wrong tap can be undone. Anything else is discarded outright:
+            // there is nothing to come back to and a question left waiting is
+            // answered by going away.
+            val leave = {
+                if (shown is Surface.Document && documentOwner != NO_CHAT) {
+                    surfaces.close(documentOwner)
+                } else {
+                    surfaces.dismiss()
+                }
+            }
             Dialog(
-                onDismissRequest = surfaces::dismiss,
+                onDismissRequest = leave,
                 properties = DialogProperties(usePlatformDefaultWidth = false),
             ) {
                 SurfacePanel(
@@ -476,7 +483,7 @@ private fun HarnessScreen(
                     // A handoff answers with a boolean rather than a
                     // DiffDecision, because the fire either happens or does not.
                     onAnswer = { asked, allowed -> surfaces.answer(asked, allowed) },
-                    onDismiss = surfaces::dismiss,
+                    onDismiss = leave,
                     // Offered only for a document a chat owns: parking is
                     // coming back to it later, and the band that comes back
                     // from is drawn per chat.

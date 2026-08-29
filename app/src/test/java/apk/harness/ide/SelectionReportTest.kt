@@ -167,6 +167,34 @@ class SelectionReportTest {
         assertEquals(Report("/doc.md", 4..4, "second para"), report)
     }
 
+    @Test
+    fun `a closing entry reports the path with no selection`() {
+        val closing = Surfaces.Parked(DOCUMENT, Selection("/doc.md", 2, 2), closing = true)
+        // The same thing a cleared selection reports, and for the same reason:
+        // the app has dropped the range and a block still naming it would be a
+        // claim it no longer believes.
+        assertEquals(
+            Report("/doc.md", null, null),
+            reportFor(CHAT, null, NO_CHAT, null, closing),
+        )
+    }
+
+    @Test
+    fun `an unclose reports the range again`() {
+        val held = Selection("/doc.md", 2, 2)
+        assertEquals(
+            Report("/doc.md", 2..2, "first para"),
+            reportFor(CHAT, DOCUMENT, CHAT, held, null),
+        )
+    }
+
+    @Test
+    fun `a closing entry that is gone reports nothing`() {
+        // The window ran out and the entry went, so there is nothing left to
+        // say. The retraction went out once, at the close.
+        assertNull(reportFor(CHAT, null, NO_CHAT, null, null))
+    }
+
     private companion object {
         const val CHAT = 7L
 

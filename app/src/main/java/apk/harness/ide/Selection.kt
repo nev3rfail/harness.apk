@@ -147,6 +147,9 @@ data class Report(val path: String, val lines: IntRange?, val text: String?)
  * [key], or when it is the entry [key] has parked. Both answer the same thing,
  * which is what leaves minimising and restoring silent.
  *
+ * A closing entry is the exception: the document is closed and the app has
+ * dropped the range, so it reports the path alone until the entry itself goes.
+ *
  * A document nobody owns reaches no chat: no chat holds [NO_CHAT], so a surface
  * the app put up itself is announced to nobody.
  *
@@ -166,7 +169,9 @@ fun reportFor(
     val shown = (visible as? Surface.Document)?.takeIf { owner == key }
     if (shown != null) return reportOf(shown, selection)
     val put = parked ?: return null
-    return reportOf(put.document, put.selection)
+    // A closing entry reports the path with no selection -- the same thing a
+    // cleared selection reports, and for the same reason.
+    return reportOf(put.document, if (put.closing) null else put.selection)
 }
 
 /** [document]'s path, with [selection]'s lines and their text when it has both. */
