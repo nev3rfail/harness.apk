@@ -7,6 +7,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -486,21 +487,45 @@ private fun HarnessScreen(
         surface?.let { shown ->
             // Which document's scroll offset this panel reads and writes.
             val place = documentOwner to (shown as? Surface.Document)?.path.orEmpty()
+            val document = shown as? Surface.Document
             // Closing a document keeps it for a few seconds behind a band, so a
             // wrong tap can be undone. Anything else is discarded outright:
             // there is nothing to come back to and a question left waiting is
             // answered by going away.
             val leave = {
-                if (shown is Surface.Document && documentOwner != NO_CHAT) {
-                    surfaces.close(documentOwner)
-                } else {
-                    surfaces.dismiss()
-                }
+                if (document != null && documentOwner != NO_CHAT) surfaces.close(documentOwner)
+                else surfaces.dismiss()
             }
             Dialog(
                 onDismissRequest = leave,
-                properties = DialogProperties(usePlatformDefaultWidth = false),
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    // A document takes back for itself: back is a put it away,
+                    // not a throw it away, and the dialog's own handling cannot
+                    // tell one from the other -- an outside tap reaches the same
+                    // callback, and the two have to do different things.
+                    //
+                    // An outside tap on a document does nothing at all. The
+                    // panel fills the screen, so outside is a sliver at its
+                    // edge, and a stray touch there dropping a held selection is
+                    // the worst trade in the panel.
+                    //
+                    // A diff and a handoff keep both. Each is a question an
+                    // agent is blocked on, and going away is itself the safe
+                    // answer.
+                    dismissOnBackPress = document == null,
+                    dismissOnClickOutside = document == null,
+                ),
             ) {
+                if (document != null) {
+                    // A document a chat owns parks, which is what the chevron in
+                    // the header does. One nobody owns has nowhere to park -- the
+                    // band is drawn from the entry for the chat on screen -- so
+                    // back does what the header does for it instead, and closes.
+                    BackHandler {
+                        if (documentOwner == NO_CHAT) surfaces.dismiss() else surfaces.park()
+                    }
+                }
                 SurfacePanel(
                     surface = shown,
                     onDecide = { diff, decision -> surfaces.decide(diff, decision) },
