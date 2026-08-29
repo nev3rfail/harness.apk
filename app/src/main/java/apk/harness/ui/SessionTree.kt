@@ -304,22 +304,52 @@ private fun ChatEntry(
         // lines up a step to the right of the project holding it.
         Spacer(modifier = Modifier.width(IconSlot + IconGap))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = chat.label,
-                fontFamily = FontFamily.Monospace,
-                fontSize = RowFontSize,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = if (enabled) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = DateUtils.getRelativeTimeSpanString(chat.modified).toString(),
-                fontFamily = FontFamily.Monospace,
-                fontSize = NoteFontSize,
-                maxLines = 1,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // The arrangement a project row uses for `current`: the name is the
+            // only weighted child, so it shrinks to leave the age room and takes
+            // no more than it needs when the name is short. A long name
+            // ellipsises and the age stays whole.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = chat.label,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = RowFontSize,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(modifier = Modifier.width(IconGap))
+                // Abbreviated, because an unweighted child measures at its
+                // intrinsic width and the name takes what is left: `3 hr. ago`
+                // leaves a row's worth of name where `3 hours ago` does not.
+                Text(
+                    text = DateUtils.getRelativeTimeSpanString(
+                        chat.modified,
+                        System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS,
+                        DateUtils.FORMAT_ABBREV_RELATIVE,
+                    ).toString(),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = NoteFontSize,
+                    maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // A row is one line or two and its height follows its content. The
+            // shell measures at `IntrinsicSize.Min`, so the trailing control
+            // fills whichever height the text settled and the dot stays centred
+            // against it.
+            chat.lastLine?.let { line ->
+                Text(
+                    text = line,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = NoteFontSize,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         // The marker comes from the roster and from nothing else: a chat the
         // roster does not name has no agent behind it and takes no marker. The
