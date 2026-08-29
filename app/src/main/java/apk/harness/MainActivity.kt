@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,6 +68,7 @@ import apk.harness.ui.SessionTree
 import apk.harness.ui.SideDrawer
 import apk.harness.ui.SurfacePanel
 import apk.harness.ui.TerminalPane
+import apk.harness.ui.UndoWindowMillis
 import apk.harness.ui.documentFor
 import com.ghostty.android.renderer.GhosttyGLSurfaceView
 import java.io.File
@@ -335,6 +337,17 @@ private fun HarnessScreen(
     // one. Switching parks it for its own chat, which draws that chat's band.
     LaunchedEffect(activeKey) { surfaces.switchTo(activeKey) }
 
+    // The undo window. It runs where the band is drawn, in a composition that
+    // outlives every dialog it opens, and it is keyed on the entry, so a second
+    // close starts a second window. A chat switch takes the entry away and ends
+    // it, which is why Surfaces needs no scope of its own for this.
+    val closing = parked[activeKey]?.takeIf { it.closing }
+    LaunchedEffect(activeKey, closing) {
+        if (closing == null) return@LaunchedEffect
+        delay(UndoWindowMillis)
+        surfaces.forget(activeKey)
+    }
+
     // What each chat's agent was last told. The notification mirrors the state,
     // so what decides whether one goes out is whether it would say something
     // other than what that chat already has.
@@ -433,9 +446,20 @@ private fun HarnessScreen(
                 parked[activeKey]?.let { put ->
                     DrawerEdgeStrip(
                         side = DrawerSide.Bottom,
+                        // A tap answers the same way a pull up does on both
+                        // faces: a parked band restores, a closing band uncloses.
                         onOpen = { surfaces.restore(activeKey) },
                         modifier = Modifier.align(Alignment.BottomCenter),
                         label = bandLabel(put),
+                        fill = if (put.closing) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.primary,
+                        // One lambda that reads the face, rather than one lambda
+                        // per face: a gesture modifier keyed on what it is
+                        // attached to keeps the block it was given first.
+                        onClose = {
+                            if (parked[activeKey]?.closing == true) surfaces.forget(activeKey)
+                            else surfaces.close(activeKey)
+                        },
                     )
                 }
             }
@@ -732,9 +756,13 @@ private fun announce(tabs: AgentTabs, owner: Long, report: Report): Boolean {
  * reason: the band and the wire have to agree, so the document's own offset is
  * applied here too. A document that only describes a file holds no line of it
  * and shows its name alone.
+ *
+ * A closing band names what the gesture does instead. The document is closed and
+ * the range has been retracted, so there is nothing to read back.
  */
 private fun bandLabel(put: Surfaces.Parked): String {
     val name = put.document.path.substringAfterLast('/')
+    if (put.closing) return "Pull up to unclose  $name"
     val selection = put.selection ?: return name
     val label = selection.label(put.document.lineOffset) ?: return name
     return "$name  " + label

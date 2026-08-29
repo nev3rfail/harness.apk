@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,12 @@ private val PullThreshold = 20.dp
 // band carries a filename and is the only thing that says a document is parked
 // rather than gone. Tunable.
 private val BandHeight = 34.dp
+
+// How long a closed document is kept behind a closing band, so a pull up can
+// undo it. Long enough to notice the wrong band and reach for it, short enough
+// that the band is not still there when the operator looks up from the
+// terminal. Tunable.
+internal const val UndoWindowMillis = 5_000L
 
 // The chevron drawn at the band's start. Sized rather than stretched: the band
 // has room for a vector at its own proportions. Tunable.
@@ -96,6 +103,11 @@ private const val ChevronHeightFraction = 0.125f
  * open a drawer nobody asked for; the band is the full width, 34dp tall, and
  * carries a filename, so it reads as a button and a tap on it that did nothing
  * would land in the terminal underneath.
+ *
+ * [fill] is what the band is painted in, so one band can say two states in the
+ * same shape and the same place. [onClose] is the pull the other way, which only
+ * the bottom band has: a side strip has one direction that means anything, and a
+ * drag the other way is the panel it opens being pushed back.
  */
 @Composable
 fun DrawerEdgeStrip(
@@ -104,6 +116,8 @@ fun DrawerEdgeStrip(
     modifier: Modifier = Modifier,
     /** What the band names, drawn only on the bottom. A side strip carries no text. */
     label: String? = null,
+    fill: Color = MaterialTheme.colorScheme.primary,
+    onClose: (() -> Unit)? = null,
 ) {
     val view = LocalView.current
     val threshold = with(LocalDensity.current) { PullThreshold.toPx() }
@@ -114,6 +128,23 @@ fun DrawerEdgeStrip(
     // one it may take back out of the view's list.
     val registered = remember { mutableStateOf<Rect?>(null) }
     val band = side == DrawerSide.Bottom
+
+    // The band leaves the composition when the document it names is gone, and
+    // the view outlives it. The rectangle it registered goes with it: one left
+    // behind is a strip of the screen the system's gestures never reach again,
+    // and each appearance would add another.
+    DisposableEffect(view) {
+        onDispose {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val mine = registered.value
+                if (mine != null) {
+                    view.systemGestureExclusionRects =
+                        view.systemGestureExclusionRects.filterNot { it == mine }
+                    registered.value = null
+                }
+            }
+        }
+    }
 
     Box(
         modifier = modifier
@@ -168,33 +199,39 @@ fun DrawerEdgeStrip(
                 state = rememberDraggableState { delta -> travel.floatValue += delta },
                 onDragStarted = { travel.floatValue = 0f },
                 onDragStopped = {
+                    val travelled = travel.floatValue
+                    travel.floatValue = 0f
                     // Inward is away from the edge the panel comes in from:
                     // negative on the right, positive on the left, and negative
-                    // again at the bottom, where inward is up.
-                    val pulled = when (side) {
-                        DrawerSide.Right, DrawerSide.Bottom -> travel.floatValue <= -threshold
-                        DrawerSide.Left -> travel.floatValue >= threshold
+                    // again at the bottom, where inward is up. The band decides
+                    // on both signs; a side strip on one.
+                    when (side) {
+                        DrawerSide.Left -> if (travelled >= threshold) onOpen()
+                        DrawerSide.Right -> if (travelled <= -threshold) onOpen()
+                        DrawerSide.Bottom -> when {
+                            travelled <= -threshold -> onOpen()
+                            travelled >= threshold -> onClose?.invoke()
+                        }
                     }
-                    if (pulled) onOpen()
-                    travel.floatValue = 0f
                 },
             ),
         contentAlignment =
             if (side == DrawerSide.Right) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        if (band) Band(label) else Handle(side)
+        if (band) Band(label, fill) else Handle(side)
     }
 }
 
 /**
- * The band's face: a chevron pointing the way it is pulled, and the document it
- * brings back.
+ * The band's face: a chevron pointing the way it is pulled, and what it says
+ * about the document behind it.
  *
  * Filled across its whole width rather than behind a handle, because the label
- * has to be readable over whatever the terminal draws underneath it.
+ * has to be readable over whatever the terminal draws underneath it. [fill] is
+ * the caller's, so the same shape in the same place says two states apart.
  */
 @Composable
-private fun Band(label: String?) {
+private fun Band(label: String?, fill: Color) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -209,7 +246,7 @@ private fun Band(label: String?) {
                     bottomEnd = 0.dp,
                 )
             )
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = HandleAlpha))
+            .background(fill.copy(alpha = HandleAlpha))
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
