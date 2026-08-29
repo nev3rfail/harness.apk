@@ -21,10 +21,17 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Harness">
+        <!-- One instance, whatever raises it. Without this the activity is
+             `standard`, and a second one runs onCreate again: a second Tools, a
+             second PanelServer binding a second socket, and a second set of
+             terminals over the ones already running. On the activity rather than
+             on one intent's flags, because every way into this app wants the same
+             protection and the ongoing service notification is one of them. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Harness"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

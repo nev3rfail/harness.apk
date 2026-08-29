@@ -2,6 +2,7 @@ package apk.harness
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
@@ -103,6 +104,11 @@ class MainActivity : ComponentActivity() {
 
         // Started before anything else it protects.
         AgentService.start(this)
+        // Nothing standing in the shade outlives the process that raised it.
+        // Every agent is a child of this app, so an ask whose agent has gone
+        // points at a conversation that is not there, and building the tabs is
+        // already the event that replaces every one of them.
+        AgentService.clearAsks(this)
 
         val home = filesDir
 
@@ -234,6 +240,23 @@ class MainActivity : ComponentActivity() {
         showing()?.onResumeView()
     }
 
+    /**
+     * A tap on a notification, arriving at the instance already running.
+     *
+     * The extra is a session id rather than a tab key: keys are counted from one
+     * per process and mean nothing across a restart, and a conversation can be
+     * moved to a different tab while that tab keeps its key. A session no tab
+     * holds is left alone -- the agent that asked was a child process of this app
+     * and died with it, so there is no conversation to come back to, and opening
+     * its transcript would start a fresh agent, which the drawer already offers
+     * deliberately.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(AgentService.EXTRA_SESSION)?.let { tabs?.show(it) }
+    }
+
     /** The one terminal on screen, or null before there is one. */
     private fun showing(): GhosttyGLSurfaceView? =
         views.values.firstOrNull { it.visibility == View.VISIBLE }
@@ -242,6 +265,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         tabs?.stopAll()
         panels.stop()
+        AgentService.clearAsks(this)
         AgentService.stop(this)
     }
 
@@ -370,7 +394,12 @@ private fun HarnessScreen(
 
     // The document on screen belongs to a chat, so it cannot stay over another
     // one. Switching parks it for its own chat, which draws that chat's band.
-    LaunchedEffect(activeKey) { surfaces.switchTo(activeKey) }
+    // Arriving at a chat also answers its ask, however the operator got here: a
+    // person reading the conversation is the whole of what the ask wanted.
+    LaunchedEffect(activeKey) {
+        surfaces.switchTo(activeKey)
+        AgentService.clearAsk(context, activeKey)
+    }
 
     // The undo window. It runs where the band is drawn, in a composition that
     // outlives every dialog it opens, and it is keyed on the entry, so a second

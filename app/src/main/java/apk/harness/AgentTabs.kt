@@ -88,6 +88,20 @@ class AgentTabs(
         _tabs.value.firstOrNull { it.sessionId == sessionId }
 
     /**
+     * Puts the tab holding [sessionId] on screen, and says whether one does.
+     *
+     * A switch and not a start: every tab stays composed while it is hidden, so
+     * the agent behind this one has been running all along. Everything downstream
+     * follows `activeKey` -- the visible terminal, the parked document band, and
+     * the surface the panel draws.
+     */
+    fun show(sessionId: String): Boolean {
+        val tab = tabFor(sessionId) ?: return false
+        _activeKey.value = tab.key
+        return true
+    }
+
+    /**
      * The tab the app opens for itself, in the agent's home.
      *
      * The conversation is resolved before the agent starts: the backend names
