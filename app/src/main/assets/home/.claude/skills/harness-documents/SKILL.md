@@ -39,7 +39,8 @@ Three sentences, in this order. Not a compressed version of the document -- a
 different thing from it:
 
 1. **the verdict** -- the answer itself, not the argument that reached it;
-2. **the path**;
+2. **the path** -- pasted, never retyped; a path with one character wrong is a
+   dead line on a phone;
 3. **the contradiction** -- which fields you reasoned rather than read, named;
    what you left out; what to check before acting on it; or that there is none.
 
@@ -134,19 +135,25 @@ a version, a CVE, a cost, a date, a status, a person's role -- carries a mark by
 name, under the same URL rule. This is where a wrong row does the most damage: a
 table of remediation advice gets acted on, a viewpoint only gets walked to.
 
-Material *on* this device is the exception, and it settles which sentence wins: a
-`path:line` column is the record, rows carry no `source`, and the paragraph
-before the cell says the column is the provenance. A path in `source` draws a
-tappable mark that hands a bare path to Android and opens nothing.
+Material *on* this device is the exception, and the exception is one column
+wide. The column holding `path:line` is its own provenance, so nothing in
+`source` names it and the paragraph before the cell says so -- a path in `source`
+draws a tappable mark that hands a bare path to Android and opens nothing. Every
+other column is untouched by that: a rank, an estimate, a verdict, a version,
+anything you concluded from what you read, each carrying its own mark by name. A
+cell whose rows carry no `source` at all is a cell claiming the whole table came
+off the disk.
 
 Three or four columns is what a phone holds, and `notes` -- when a caveat forces
 it into a table -- goes last and stays to a sentence, with the long version on
 the card.
 
 A document can be mostly judgement and still be honest: asked what is worth going
-to, the answer has no record anywhere. Mark it `reasoned`, say so once in the
-prose before the cell, and do not pad it with sourced trivia to make the marks
-look better.
+to, or which of these to fix first, the answer has no record anywhere. Mark those
+columns `reasoned` **in the rows**. Saying *read the ranking as reasoned* in the
+prose is worth writing and does not stand in for the mark, because the table
+draws the mark and carries the prose nowhere. Do not pad the row with sourced
+trivia to make the marks look better.
 
 ## Marks in a cell
 
@@ -200,3 +207,4 @@ or more is a document.
 | a `from` table whose `columns` omit `notes` | the doorway, the closure, the contradiction: on the card, not in the table |
 | a house-number pin with no page naming the venue | an invented name over a real coordinate, citing a record that names nothing |
 | `reasoned` on a fact that has a record | a guess written while holding the answer -- see `sourcing-claims` |
+| a local-material cell with no `source` on any row | the rank, the estimate and the verdict all read as things the disk said |

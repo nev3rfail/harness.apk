@@ -43,6 +43,14 @@ from two coordinates you read this turn is neither recall nor a record: the
 inputs are cited and the arithmetic is yours. Mark it `reasoned` and name the
 derivation, so the operator can see it is a calculation rather than a guess.
 
+**An experiment you ran is a record; what it implies is not.** They are two
+claims and the second is `reasoned`. Measured here: `grep --version` under the
+preload answers *GNU grep 3.12, exit 0*, which is read and true -- and *the grep
+bug is fixed* is a conclusion from it, and the wrong one, because `grep` is a
+shell function wrapping `ugrep` and every call still fails. Cite the command,
+mark the conclusion, and before either, check that what you ran is what the claim
+is about.
+
 **A mark covers the value's whole extent.** If half came from the page and half
 from you, the half from you is a separate claim with nowhere to mark it, so it
 comes out. `Mo-Su 13:00-23:00` under the venue's page is honest; the same string
@@ -249,8 +257,9 @@ afterwards, so the review happens here:
   identically on the page;
 - then name the `reasoned` values in the terminal's third sentence -- the
   contradiction sentence `harness-documents` requires; where there is no
-  document, say it in the terminal all the same. If that list is empty, you
-  opened a page for every value or you skipped this review.
+  document, say it in the terminal all the same, and there it is a clause, not a
+  paragraph: the operator asked a question, not for the working. If that list is
+  empty, you opened a page for every value or you skipped this review.
 
 A row naming a bar that does not exist, at a real neighbour's coordinate, citing
 that neighbour's real node, passes every automatic check there is. This review is
