@@ -102,9 +102,14 @@ not the street.
    and is rarely walled. Open it before citing it: an OSM `website` tag can have
    gone stale into somebody else's parked blog.
 3. **`curl -sL` where `WebFetch` failed for any reason.** Refusal is only one of
-   them: a broken TLS chain reads as a dead site and often answers fine over
-   plain `http`, and a host that does not answer at all is not the same as one
-   that turned you away. They are not the same client, and
+   them, and the failures do not look different from each other: a certificate
+   `curl` rejects exits 60 and reports `000`, exactly like a host that is not
+   there. Measured here, plain `http` is not the way round it -- both test hosts
+   answer 301 straight back to the `https` that failed. Exit 60 usually means
+   your client rather than the page, an incomplete chain a browser repairs by
+   fetching the missing intermediate being the common case, which makes it a
+   rung 4 job and not a dead site. A host that does not answer at all is not the
+   same as one that turned you away. They are not the same client, and
    redirects matter -- a site answering 301 with no body has not refused you. **Do
    not spoof a user-agent:** measured here, Michelin returns 600 KB to plain
    `curl` and *zero bytes* to the same request wearing `-A 'Mozilla/5.0'`. A fake
