@@ -38,6 +38,11 @@ looked empty. That value comes out.
 price exists somewhere; writing `reasoned` over it is guessing while holding the
 answer.
 
+**A value you worked out is `reasoned`, and say what from.** A distance computed
+from two coordinates you read this turn is neither recall nor a record: the
+inputs are cited and the arithmetic is yours. Mark it `reasoned` and name the
+derivation, so the operator can see it is a calculation rather than a guess.
+
 **A mark covers the value's whole extent.** If half came from the page and half
 from you, the half from you is a separate claim with nowhere to mark it, so it
 comes out. `Mo-Su 13:00-23:00` under the venue's page is honest; the same string
@@ -88,7 +93,10 @@ not the street.
 2. **The `website` tag, first-party.** A venue's own page beats any aggregator
    and is rarely walled. Open it before citing it: an OSM `website` tag can have
    gone stale into somebody else's parked blog.
-3. **`curl -sL` where `WebFetch` was refused.** They are not the same client, and
+3. **`curl -sL` where `WebFetch` failed for any reason.** Refusal is only one of
+   them: a broken TLS chain reads as a dead site and often answers fine over
+   plain `http`, and a host that does not answer at all is not the same as one
+   that turned you away. They are not the same client, and
    redirects matter -- a site answering 301 with no body has not refused you. **Do
    not spoof a user-agent:** measured here, Michelin returns 600 KB to plain
    `curl` and *zero bytes* to the same request wearing `-A 'Mozilla/5.0'`. A fake
@@ -160,7 +168,7 @@ geo() {
   code=${body##*$'\n'}; json=${body%$'\n'*}
   case "$code" in
     200) [ -n "$json" ] || { echo "NO REPLY -- retry once"; return; } ;;
-    000) echo "NO REPLY (000) -- curl never sent it; check the query before the network"; return ;;
+    000) echo "NO REPLY (000) -- a malformed query, a dead host, or the network, in that order"; return ;;
     4*)  echo "BAD REQUEST ($code) -- fix the query; retrying will not help"; return ;;
     *)   echo "THROTTLED ($code) -- retry, one at a time"; return ;;
   esac

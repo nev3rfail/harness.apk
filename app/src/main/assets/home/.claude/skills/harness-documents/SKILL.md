@@ -129,12 +129,24 @@ which opens nothing. So a document about code or about this repository carries
 `source` can honestly hold. Verify those citations yourself before you finish --
 the checker never opens a file, and a line number that drifted reads exactly like
 one that did not. The checker asks for no `source`
-here; ask for it yourself. Every column asserting something about the world
-outside this conversation -- a version, a CVE, a cost, a date, a status, a
-person's role -- carries a mark by name, on the same values, under the same URL
-rule. This is where a wrong row does the most damage: a table of remediation
-advice gets acted on, a viewpoint only gets walked to. Three or four columns is
-what a phone holds.
+here; ask for it yourself. Every column asserting something beyond this device --
+a version, a CVE, a cost, a date, a status, a person's role -- carries a mark by
+name, under the same URL rule. This is where a wrong row does the most damage: a
+table of remediation advice gets acted on, a viewpoint only gets walked to.
+
+Material *on* this device is the exception, and it settles which sentence wins: a
+`path:line` column is the record, rows carry no `source`, and the paragraph
+before the cell says the column is the provenance. A path in `source` draws a
+tappable mark that hands a bare path to Android and opens nothing.
+
+Three or four columns is what a phone holds, and `notes` -- when a caveat forces
+it into a table -- goes last and stays to a sentence, with the long version on
+the card.
+
+A document can be mostly judgement and still be honest: asked what is worth going
+to, the answer has no record anywhere. Mark it `reasoned`, say so once in the
+prose before the cell, and do not pad it with sourced trivia to make the marks
+look better.
 
 ## Marks in a cell
 
