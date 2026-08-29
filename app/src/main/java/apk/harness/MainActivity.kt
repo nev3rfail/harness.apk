@@ -159,7 +159,6 @@ class MainActivity : ComponentActivity() {
                     HarnessScreen(
                         tabs = holder,
                         surfaces = surfaces,
-                        root = home,
                         agentHome = home,
                         // Zero at this boundary means "unasked": the renderer leaves the
                         // terminal library its own default rather than disabling history.
@@ -287,7 +286,6 @@ class MainActivity : ComponentActivity() {
 private fun HarnessScreen(
     tabs: AgentTabs,
     surfaces: Surfaces,
-    root: File,
     agentHome: File,
     scrollbackBytes: Long,
     onViewCreated: (Long, GhosttyGLSurfaceView) -> Unit,
@@ -510,7 +508,12 @@ private fun HarnessScreen(
         if (filesOpen) {
             SideDrawer(side = DrawerSide.Right, onClosed = { filesOpen = false }) { close ->
                 FileTree(
-                    root = root,
+                    // The tree follows the chat on screen: the active tab's
+                    // working directory is the directory the conversation is
+                    // filed under. With no active tab there is no working
+                    // directory to follow, which is the state at boot before the
+                    // first tab is made.
+                    root = active?.directory ?: agentHome,
                     expanded = expandedFiles,
                     onToggle = { file ->
                         expandedFiles =
