@@ -31,9 +31,12 @@ class SessionRowsTest {
      */
     private fun chatId(id: String) = "c:" + File("/transcripts/$id.jsonl").path
 
+    /** [n] chat names, so a project past the cap fits in one expression. */
+    private fun names(n: Int) = Array(n) { "chat-%02d".format(it) }
+
     @Test
     fun `a collapsed project is one row with no children`() {
-        val rows = sessionRows(listOf(project("/one", "a", "b")), emptySet())
+        val rows = sessionRows(listOf(project("/one", "a", "b")), emptySet(), emptySet())
 
         assertEquals(1, rows.size)
         val row = rows[0] as SessionRow.ProjectRow
@@ -46,7 +49,7 @@ class SessionRowsTest {
 
     @Test
     fun `an expanded project carries its chats`() {
-        val rows = sessionRows(listOf(project("/one", "a", "b", "c")), setOf("/one"))
+        val rows = sessionRows(listOf(project("/one", "a", "b", "c")), setOf("/one"), emptySet())
 
         assertEquals(4, rows.size)
         assertEquals(
@@ -73,6 +76,7 @@ class SessionRowsTest {
         val rows = sessionRows(
             listOf(project("/one", "a"), project("/two", "b")),
             setOf("/one", "/two"),
+            emptySet(),
         )
 
         assertEquals(listOf("p:/one", chatId("a"), "p:/two", chatId("b")), rows.map { it.id })
@@ -87,6 +91,7 @@ class SessionRowsTest {
         val rows = sessionRows(
             listOf(project("/one", "a"), project("/two", "b")),
             setOf("/one"),
+            emptySet(),
         )
 
         assertEquals(listOf("p:/one", chatId("a"), "p:/two"), rows.map { it.id })
@@ -96,7 +101,7 @@ class SessionRowsTest {
 
     @Test
     fun `an expanded project with no chats has no children`() {
-        val rows = sessionRows(listOf(project("/empty")), setOf("/empty"))
+        val rows = sessionRows(listOf(project("/empty")), setOf("/empty"), emptySet())
 
         assertEquals(1, rows.size)
         assertFalse(rows[0].hasChildren)
@@ -104,6 +109,96 @@ class SessionRowsTest {
 
     @Test
     fun `no projects yield no rows`() {
-        assertTrue(sessionRows(emptyList(), setOf("/one")).isEmpty())
+        assertTrue(sessionRows(emptyList(), setOf("/one"), emptySet()).isEmpty())
+    }
+
+    @Test
+    fun `an open project past the cap shows six chats and a row for the rest`() {
+        val rows = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), emptySet())
+
+        assertEquals(8, rows.size)
+        val chats = rows.drop(1).dropLast(1).map { it as SessionRow.ChatRow }
+        assertEquals(
+            listOf("chat-00", "chat-01", "chat-02", "chat-03", "chat-04", "chat-05"),
+            chats.map { it.chat.sessionId },
+        )
+
+        val more = rows.last() as SessionRow.MoreRow
+        assertEquals(4, more.hidden)
+        assertEquals(1, more.depth)
+        assertEquals(listOf(false), more.ancestorsContinue)
+        assertFalse(more.hasChildren)
+    }
+
+    @Test
+    fun `the last chat drawn is not the last sibling, and the reveal row is`() {
+        val rows = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), emptySet())
+
+        val sixth = rows[6] as SessionRow.ChatRow
+        assertEquals("chat-05", sixth.chat.sessionId)
+        // The guide carries on past it to reach the row that closes the
+        // project's column.
+        assertFalse(sixth.isLastSibling)
+        assertTrue(rows.last().isLastSibling)
+    }
+
+    @Test
+    fun `a project of exactly six has nothing behind it`() {
+        val rows = sessionRows(listOf(project("/one", *names(6))), setOf("/one"), emptySet())
+
+        assertEquals(7, rows.size)
+        assertTrue(rows.none { it is SessionRow.MoreRow })
+        assertTrue(rows.last().isLastSibling)
+    }
+
+    @Test
+    fun `a revealed project draws every chat and no reveal row`() {
+        val rows = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), setOf("/one"))
+
+        assertEquals(11, rows.size)
+        assertTrue(rows.none { it is SessionRow.MoreRow })
+        assertEquals("chat-09", (rows.last() as SessionRow.ChatRow).chat.sessionId)
+        assertTrue(rows.last().isLastSibling)
+    }
+
+    @Test
+    fun `a revealed project that is collapsed draws nothing`() {
+        val rows = sessionRows(listOf(project("/one", *names(10))), emptySet(), setOf("/one"))
+
+        assertEquals(1, rows.size)
+        assertFalse(rows[0].hasChildren)
+    }
+
+    @Test
+    fun `an open project has children whether or not it is capped`() {
+        val capped = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), emptySet())
+        val opened = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), setOf("/one"))
+        val small = sessionRows(listOf(project("/one", *names(3))), setOf("/one"), emptySet())
+
+        assertTrue(capped[0].hasChildren)
+        assertTrue(opened[0].hasChildren)
+        assertTrue(small[0].hasChildren)
+    }
+
+    @Test
+    fun `the reveal row's key is its own`() {
+        val rows = sessionRows(listOf(project("/one", *names(10))), setOf("/one"), emptySet())
+
+        assertEquals("m:/one", rows.last().id)
+        // The list is keyed by id, so a reveal row cannot collide with a chat's.
+        assertEquals(rows.size, rows.mapTo(mutableSetOf()) { it.id }.size)
+    }
+
+    @Test
+    fun `a reveal row continues its ancestor while a project follows`() {
+        val rows = sessionRows(
+            listOf(project("/one", *names(10)), project("/two", "b")),
+            setOf("/one"),
+            emptySet(),
+        )
+
+        val more = rows[7] as SessionRow.MoreRow
+        assertEquals("m:/one", more.id)
+        assertEquals(listOf(true), more.ancestorsContinue)
     }
 }

@@ -58,6 +58,9 @@ import apk.harness.chats.foldHome
  *
  * [homes] is every spelling of the agent's home, so a project row can fold it
  * away and keep the segment that says which project it is.
+ *
+ * [revealed] is the projects listing every chat they hold. A project outside it
+ * lists six and a row that reveals the rest, which [onReveal] adds it to.
  */
 @Composable
 fun SessionTree(
@@ -68,14 +71,18 @@ fun SessionTree(
     openTabs: Set<String>,
     canClose: Boolean,
     expanded: Set<String>,
+    revealed: Set<String>,
     onToggle: (String) -> Unit,
+    onReveal: (String) -> Unit,
     onOpenChat: (Project, Chat) -> Unit,
     onContinueHere: (Project, Chat) -> Unit,
     onCloseChat: (Chat) -> Unit,
     onNewChat: (Project) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val rows = remember(projects, expanded) { sessionRows(projects, expanded) }
+    val rows = remember(projects, expanded, revealed) {
+        sessionRows(projects, expanded, revealed)
+    }
 
     MaterialSurface(
         modifier = Modifier.fillMaxSize(),
@@ -111,6 +118,11 @@ fun SessionTree(
                             onClick = { onOpenChat(row.project, row.chat) },
                             onContinue = { onContinueHere(row.project, row.chat) },
                             onClose = { onCloseChat(row.chat) },
+                        )
+
+                        is SessionRow.MoreRow -> MoreEntry(
+                            row = row,
+                            onClick = { onReveal(row.project.path) },
                         )
                     }
                 }
@@ -387,6 +399,61 @@ private fun ChatEntry(
             // the same edge whether it carries a control or not.
             else -> Spacer(modifier = Modifier.width(TouchTarget))
         }
+    }
+}
+
+/**
+ * The row that draws the rest of a project's chats.
+ *
+ * A row of the tree rather than a control beside it: it draws no icon, takes the
+ * elbow that runs out to the text, and reserves the same trailing slots a chat
+ * does, so its text starts and the row ends where every chat's does. The whole
+ * width is the tap, as a project row's whole width is its toggle.
+ *
+ * Nothing here puts it back. Revealing lasts as long as the project stays open,
+ * and collapsing the project is how it is put back.
+ */
+@Composable
+private fun MoreEntry(row: SessionRow.MoreRow, onClick: () -> Unit) {
+    val guide = MaterialTheme.colorScheme.outline.copy(alpha = GuideAlpha)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clickable(onClick = onClick)
+            .treeGuides(
+                depth = row.depth,
+                ancestorsContinue = row.ancestorsContinue,
+                isLastSibling = row.isLastSibling,
+                hasChildren = row.hasChildren,
+                colour = guide,
+                // The row draws no icon, so the elbow carries on to the text.
+                elbow = ElbowToText,
+            )
+            .padding(
+                start = guideIndent(row.depth),
+                end = 4.dp,
+                top = RowPadding,
+                bottom = RowPadding,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(modifier = Modifier.width(IconSlot + IconGap))
+        Text(
+            text = "${row.hidden} more",
+            modifier = Modifier.weight(1f),
+            fontFamily = FontFamily.Monospace,
+            fontSize = RowFontSize,
+            maxLines = 1,
+            // Tapping it does something, which is what separates it from the
+            // rows around it that only say something.
+            color = MaterialTheme.colorScheme.primary,
+        )
+        // The marker's slot and the control's, kept empty, so the row ends at
+        // the edge every chat row ends at.
+        Spacer(modifier = Modifier.width(DotSize))
+        Spacer(modifier = Modifier.width(TouchTarget))
     }
 }
 

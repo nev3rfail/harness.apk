@@ -378,6 +378,12 @@ private fun HarnessScreen(
     var chatsOpen by remember { mutableStateOf(false) }
     var expandedFiles by remember { mutableStateOf(emptySet<String>()) }
     var expandedProjects by remember { mutableStateOf(emptySet<String>()) }
+    // Beside expansion rather than inside the tree: the drawer's composition is
+    // disposed when the drawer closes, and revealing lasts as long as expansion
+    // does, which is longer. Two sets rather than one carrying encoded entries,
+    // because `path in expandedProjects` is asked in three places and an encoded
+    // member would make every one of them wrong.
+    var revealedProjects by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -603,11 +609,20 @@ private fun HarnessScreen(
                     // The last tab does not close, so no row offers to.
                     canClose = open.size > 1,
                     expanded = expandedProjects,
+                    revealed = revealedProjects,
                     onToggle = { path ->
-                        expandedProjects =
-                            if (path in expandedProjects) expandedProjects - path
-                            else expandedProjects + path
+                        if (path in expandedProjects) {
+                            expandedProjects = expandedProjects - path
+                            // Collapsing is how a reveal is put back, so a
+                            // project reopened comes back capped -- including
+                            // one the effect above force-opens, which only ever
+                            // adds to what is expanded.
+                            revealedProjects = revealedProjects - path
+                        } else {
+                            expandedProjects = expandedProjects + path
+                        }
                     },
+                    onReveal = { path -> revealedProjects = revealedProjects + path },
                     // Opening a tab binds a socket, seeds a trust answer and
                     // may stage the agent's home, none of which belongs on the
                     // thread the tap arrived on.
