@@ -165,8 +165,7 @@ class Surfaces {
      */
     fun dismiss() {
         val previous = _visible.value
-        _visible.value = null
-        _selection.value = null
+        clearScreen()
         abandon(previous)
     }
 
@@ -186,8 +185,7 @@ class Surfaces {
         val document = _visible.value as? Surface.Document ?: return
         if (_owner.value == NO_CHAT) return
         _parked.value = _parked.value + (_owner.value to Parked(document, _selection.value))
-        _visible.value = null
-        _selection.value = null
+        clearScreen()
     }
 
     /**
@@ -205,6 +203,17 @@ class Surfaces {
         _owner.value = key
         _visible.value = put.document
         _selection.value = put.selection
+    }
+
+    /**
+     * Drops [key]'s parked document, and the selection held in it.
+     *
+     * The one way a parked document leaves without coming back. A chat that has
+     * gone takes its entry with it for the same reason: a document parked
+     * against a key nothing can reach is a document nothing can close.
+     */
+    fun forget(key: Long) {
+        _parked.value = _parked.value - key
     }
 
     /** Sets or clears the selection in the document on screen. */
@@ -239,7 +248,7 @@ class Surfaces {
 
     fun decide(diff: Surface.Diff, decision: DiffDecision) {
         diff.decision.complete(decision)
-        if (_visible.value === diff) _visible.value = null
+        if (_visible.value === diff) clearScreen()
     }
 
     /**
@@ -251,7 +260,19 @@ class Surfaces {
      */
     fun answer(handoff: Surface.Handoff, allowed: Boolean) {
         handoff.decision.complete(allowed)
-        if (_visible.value === handoff) _visible.value = null
+        if (_visible.value === handoff) clearScreen()
+    }
+
+    /**
+     * Empties the screen.
+     *
+     * A selection exists only while the document holding it is visible, so the
+     * two are cleared together everywhere rather than the rule being restated
+     * at each place that clears one of them.
+     */
+    private fun clearScreen() {
+        _visible.value = null
+        _selection.value = null
     }
 
     /**

@@ -211,6 +211,7 @@ class MainActivity : ComponentActivity() {
         },
         panelConfigFor = { key -> panels.configFor(key) },
         releasePanelConfig = { key -> panels.discard(key) },
+        forgetParked = { key -> surfaces.forget(key) },
     ).also {
         tabs = it
         it.openDefault()
@@ -348,27 +349,25 @@ private fun HarnessScreen(
         // about it. A chat is the unit here, so NO_CHAT is left out by having no
         // tab of its own -- a surface the app put up itself has no agent to tell.
         open.forEach { tab ->
-            // On screen if what is showing is this chat's, behind its band
-            // otherwise. Parking moves a document without changing it, so both
-            // places answer the same question and a parked document still
-            // reports as open -- which is the whole of why minimising and
-            // restoring say nothing.
-            val shown = (surface as? Surface.Document)?.takeIf { documentOwner == tab.key }
-            val put = parked[tab.key]
             val report = reportFor(
-                document = shown ?: put?.document,
-                selection = if (shown != null) selection else put?.selection,
+                key = tab.key,
+                visible = surface,
+                owner = documentOwner,
+                selection = selection,
+                parked = parked[tab.key],
             )
-                // Gone from both is a document the app has discarded, which is
-                // the panel closing. The path stays, because the last document
-                // opened is still the document at hand, and the selection goes.
+            // Gone from both is a document the app has discarded, which is the
+            // panel closing. The path stays, because the last document opened is
+            // still the document at hand, and the selection goes.
                 ?: told[tab.key]?.let { Report(it.path, null, null) }
             if (report == null) return@forEach
             // A chat arriving on screen is told its own state again: it is the
             // one party that has just changed what it is looking at.
             if (report == told[tab.key] && !(switched && tab.key == activeKey)) return@forEach
-            told[tab.key] = report
-            announce(tabs, tab.key, report)
+            // Recorded only once it has gone out. A report kept as told and then
+            // dropped is never retried, because the guard above suppresses the
+            // next identical one.
+            if (announce(tabs, tab.key, report)) told[tab.key] = report
         }
     }
 
@@ -698,7 +697,8 @@ private fun HarnessScreen(
 }
 
 /**
- * Tells one chat's agent what the app believes about its document.
+ * Tells one chat's agent what the app believes about its document, and answers
+ * whether the report reached it.
  *
  * Every notification goes to exactly one agent: the operator is talking to the
  * terminal they can see, and one document announced to four agents is three
@@ -708,11 +708,11 @@ private fun HarnessScreen(
  * The lines travel as they are held, zero-based and inclusive, because that is
  * what the notification speaks.
  */
-private fun announce(tabs: AgentTabs, owner: Long, report: Report) {
-    val ide = tabs.tabs.value.firstOrNull { it.key == owner }?.ide ?: return
+private fun announce(tabs: AgentTabs, owner: Long, report: Report): Boolean {
+    val ide = tabs.tabs.value.firstOrNull { it.key == owner }?.ide ?: return false
     val lines = report.lines
     val text = report.text
-    if (lines == null || text == null) ide.reportSelection(report.path)
+    return if (lines == null || text == null) ide.reportSelection(report.path)
     else ide.reportSelection(report.path, lines.first, lines.last, text)
 }
 

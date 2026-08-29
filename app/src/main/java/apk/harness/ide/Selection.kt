@@ -139,21 +139,16 @@ fun bodyLinesOf(fence: Spanned, lines: IntRange): IntRange? {
 data class Report(val path: String, val lines: IntRange?, val text: String?)
 
 /**
- * What the agent owning [document] is told about it, or null when there is
- * nothing to tell.
+ * What [key]'s agent should be told, given the whole of what the app believes,
+ * or null when there is nothing to tell.
  *
  * The notification mirrors the state, so this is a function of the state and
- * nothing else: a document with no selection is its path, a selection is its
- * path with its lines and their text, and no document is nothing at all. The
- * text is sliced here rather than held with the selection, so it cannot drift
- * from the lines it claims to be.
+ * nothing else. A document is [key]'s when it is on screen and [owner] is
+ * [key], or when it is the entry [key] has parked. Both answer the same thing,
+ * which is what leaves minimising and restoring silent.
  *
- * Whether the document is on screen or behind a band is not asked, which is what
- * leaves minimising and restoring silent: neither changes what the app believes
- * about the document, so neither changes what this answers.
- *
- * [selection] is the one held in [document]. Nothing holds a selection into a
- * document that is not on screen, so the two agree by construction.
+ * A document nobody owns reaches no chat: no chat holds [NO_CHAT], so a surface
+ * the app put up itself is announced to nobody.
  *
  * The lines reported are the file's, shifted by the document's own offset, while
  * the text is sliced at the document's lines -- that is where the text is, and
@@ -161,8 +156,21 @@ data class Report(val path: String, val lines: IntRange?, val text: String?)
  * no offset holds no line of the file, so a selection in one reports the path
  * alone: the same thing it reports with nothing selected.
  */
-fun reportFor(document: Surface.Document?, selection: Selection?): Report? {
-    if (document == null) return null
+fun reportFor(
+    key: Long,
+    visible: Surface?,
+    owner: Long,
+    selection: Selection?,
+    parked: Surfaces.Parked?,
+): Report? {
+    val shown = (visible as? Surface.Document)?.takeIf { owner == key }
+    if (shown != null) return reportOf(shown, selection)
+    val put = parked ?: return null
+    return reportOf(put.document, put.selection)
+}
+
+/** [document]'s path, with [selection]'s lines and their text when it has both. */
+private fun reportOf(document: Surface.Document, selection: Selection?): Report {
     val offset = document.lineOffset
     if (selection == null || offset == null) return Report(document.path, null, null)
     val lines = selection.first..selection.last

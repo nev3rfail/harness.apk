@@ -309,6 +309,62 @@ class SurfacesTest {
         assertEquals(NO_CHAT, surfaces.owner.value)
     }
 
+    @Test
+    fun `deciding a diff leaves no selection behind`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        val pending = diff()
+        // The invariant is held where the screen is cleared rather than
+        // re-derived per call site: a selection exists only while a document is
+        // visible.
+        surfaces.show(pending, owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+
+        surfaces.decide(pending, DiffDecision.Accepted)
+
+        assertNull(surfaces.visible.value)
+        assertNull(surfaces.selection.value)
+    }
+
+    @Test
+    fun `answering a handoff leaves no selection behind`() = runBlocking {
+        val surfaces = Surfaces()
+        val pending = handoff()
+        surfaces.show(pending, owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+
+        surfaces.answer(pending, true)
+
+        assertNull(surfaces.visible.value)
+        assertNull(surfaces.selection.value)
+    }
+
+    @Test
+    fun `forgetting a chat drops its parked document`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.select(Selection("/a/c.kt", 4, 7))
+        surfaces.park()
+
+        surfaces.forget(3L)
+
+        assertTrue(surfaces.parked.value.isEmpty())
+    }
+
+    @Test
+    fun `forgetting one chat leaves another chat's parked document alone`() = runBlocking {
+        val surfaces = Surfaces()
+        surfaces.show(file(), owner = 3L)
+        surfaces.park()
+        surfaces.show(Surface.Document("/a/d.md", "hello", 0), owner = 4L)
+        surfaces.park()
+
+        surfaces.forget(4L)
+
+        assertEquals(setOf(3L), surfaces.parked.value.keys)
+    }
+
     private companion object {
         /** Long enough for a coroutine on another thread to reach its wait. */
         const val SETTLE = 100L

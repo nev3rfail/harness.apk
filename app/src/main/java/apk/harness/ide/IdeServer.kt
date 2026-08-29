@@ -133,9 +133,8 @@ class IdeServer(
      * and an `ide_selection` still naming a range would be a claim it no longer
      * believes.
      */
-    fun reportSelection(path: String) {
+    fun reportSelection(path: String): Boolean =
         notify("selection_changed", selectionParams(path))
-    }
 
     /**
      * Tells the agent what the user has highlighted.
@@ -145,9 +144,8 @@ class IdeServer(
      * [selectionParams]' job, which is also where it can be tested: this class
      * speaks to `android.util.Log` and cannot be run off a device.
      */
-    fun reportSelection(path: String, startLine: Int, endLine: Int, text: String) {
+    fun reportSelection(path: String, startLine: Int, endLine: Int, text: String): Boolean =
         notify("selection_changed", selectionParams(path, startLine, endLine, text))
-    }
 
     /** Points the agent at a file, the way an editor's "add to chat" does. */
     fun mention(path: String, startLine: Int? = null, endLine: Int? = null) {
@@ -158,13 +156,26 @@ class IdeServer(
         notify("at_mentioned", params)
     }
 
-    private fun notify(method: String, params: JSONObject) {
+    /**
+     * Sends a notification, and answers whether a connection took it.
+     *
+     * A server nobody has dialled yet has nowhere to put the message. The caller
+     * keeps a ledger of what each agent has been told, and an entry recorded for
+     * a message that went nowhere is a report that is never sent again, because
+     * the next identical one is suppressed as already said.
+     */
+    private fun notify(method: String, params: JSONObject): Boolean {
         val message = JSONObject()
             .put("jsonrpc", "2.0")
             .put("method", method)
             .put("params", params)
             .toString()
-        server?.connections?.forEach { runCatching { it.send(message) } }
+        val open = server?.connections ?: return false
+        var reached = false
+        open.forEach { connection ->
+            if (runCatching { connection.send(message) }.isSuccess) reached = true
+        }
+        return reached
     }
 
     private inner class Server : WebSocketServer(

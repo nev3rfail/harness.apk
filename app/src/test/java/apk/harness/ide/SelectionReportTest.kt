@@ -49,30 +49,30 @@ class SelectionReportTest {
 
     @Test
     fun `an open document with no selection reports its path alone`() {
-        assertEquals(Report("/doc.md", null, null), reportFor(DOCUMENT, null))
+        assertEquals(Report("/doc.md", null, null), reportFor(CHAT, DOCUMENT, CHAT, null, null))
     }
 
     @Test
     fun `a selection reports its range and the text on those lines`() {
-        val report = reportFor(DOCUMENT, Selection("/doc.md", 2, 4))
+        val report = reportFor(CHAT, DOCUMENT, CHAT, Selection("/doc.md", 2, 4), null)
         assertEquals(Report("/doc.md", 2..4, "first para\n\nsecond para"), report)
     }
 
     @Test
     fun `a cleared selection reports the path alone`() {
-        assertEquals(Report("/doc.md", null, null), reportFor(DOCUMENT, null))
+        assertEquals(Report("/doc.md", null, null), reportFor(CHAT, DOCUMENT, CHAT, null, null))
     }
 
     @Test
     fun `no document reports nothing`() {
-        assertNull(reportFor(null, null))
-        assertNull(reportFor(null, Selection("/doc.md", 2, 4)))
+        assertNull(reportFor(CHAT, null, CHAT, null, null))
+        assertNull(reportFor(CHAT, null, CHAT, Selection("/doc.md", 2, 4), null))
     }
 
     @Test
     fun `the reported text is sliced from the document at send time`() {
         val rewritten = DOCUMENT.copy(markdown = "# Title\n\nrewritten\n\nsecond para\n")
-        assertEquals("rewritten", reportFor(rewritten, Selection("/doc.md", 2, 2))?.text)
+        assertEquals("rewritten", reportFor(CHAT, rewritten, CHAT, Selection("/doc.md", 2, 2), null)?.text)
     }
 
     @Test
@@ -81,7 +81,7 @@ class SelectionReportTest {
         // the same arithmetic a tap goes through.
         val document = Surface.Document("/top.md", "top line\n\nand more\n", 0)
         val unit = unitOf(0, markdownBlocks(document.markdown).first())
-        val report = reportFor(document, Selection(document.path, unit.lines.first, unit.lines.last))
+        val report = reportFor(CHAT, document, CHAT, Selection(document.path, unit.lines.first, unit.lines.last), null)
         assertEquals(0..0, report?.lines)
         assertEquals("top line", report?.text)
     }
@@ -92,7 +92,7 @@ class SelectionReportTest {
         // filePath, and the CLI reads that file, so the number beside the text
         // has to be the file's.
         val document = Surface.Document("/w/Foo.kt", "```kotlin\nval a = 1\nval b = 2\n```\n", -1)
-        val report = reportFor(document, Selection("/w/Foo.kt", 1, 2))!!
+        val report = reportFor(CHAT, document, CHAT, Selection("/w/Foo.kt", 1, 2), null)!!
         assertEquals(0..1, report.lines)
         assertEquals("val a = 1\nval b = 2", report.text)
     }
@@ -100,12 +100,76 @@ class SelectionReportTest {
     @Test
     fun `a described file reports its path and no range`() {
         val document = Surface.Document("/w/blob.bin", "**Binary file**\n", null)
-        val report = reportFor(document, Selection("/w/blob.bin", 0, 0))!!
+        val report = reportFor(CHAT, document, CHAT, Selection("/w/blob.bin", 0, 0), null)!!
         assertEquals(null, report.lines)
         assertEquals(null, report.text)
     }
 
+    @Test
+    fun `a document on screen is reported to the chat that owns it`() {
+        assertEquals(
+            Report("/doc.md", null, null),
+            reportFor(CHAT, DOCUMENT, CHAT, null, null),
+        )
+    }
+
+    @Test
+    fun `a document on screen is not reported to any other chat`() {
+        assertNull(reportFor(9L, DOCUMENT, CHAT, null, null))
+    }
+
+    @Test
+    fun `a document no chat owns is reported to nobody`() {
+        // A session started outside the app reaches the tools through the
+        // app-wide token, which names no chat, and no chat holds NO_CHAT.
+        assertNull(reportFor(CHAT, DOCUMENT, NO_CHAT, null, null))
+    }
+
+    @Test
+    fun `an extended selection reports the wider range`() {
+        assertEquals(
+            Report("/doc.md", 0..4, "# Title\n\nfirst para\n\nsecond para"),
+            reportFor(CHAT, DOCUMENT, CHAT, Selection("/doc.md", 0, 4), null),
+        )
+    }
+
+    @Test
+    fun `a parked document reports exactly what it reported on screen`() {
+        val held = Selection("/doc.md", 2, 2)
+        val onScreen = reportFor(CHAT, DOCUMENT, CHAT, held, null)
+        val put = Surfaces.Parked(DOCUMENT, held)
+
+        // Parking changes nothing the agent needs to know, which is the whole
+        // of why minimising says nothing.
+        assertEquals(onScreen, reportFor(CHAT, null, NO_CHAT, null, put))
+    }
+
+    @Test
+    fun `two chats with documents parked at the same time each report their own`() {
+        val mine = Surfaces.Parked(DOCUMENT, Selection("/doc.md", 2, 2))
+        val theirs = Surfaces.Parked(Surface.Document("/other.md", "one\ntwo\n", 0), null)
+
+        assertEquals("/doc.md", reportFor(CHAT, null, NO_CHAT, null, mine)?.path)
+        assertEquals("/other.md", reportFor(8L, null, NO_CHAT, null, theirs)?.path)
+    }
+
+    @Test
+    fun `a chat with nothing on screen and nothing parked is told nothing`() {
+        assertNull(reportFor(CHAT, null, NO_CHAT, null, null))
+    }
+
+    @Test
+    fun `a chat looking at another chat's document is told about its own parked one`() {
+        // The chat on screen changed, so what CHAT owns is behind a band while
+        // another chat's document is showing. CHAT is still told about its own.
+        val mine = Surfaces.Parked(DOCUMENT, Selection("/doc.md", 4, 4))
+        val report = reportFor(CHAT, Surface.Document("/other.md", "x\n", 0), 8L, null, mine)
+        assertEquals(Report("/doc.md", 4..4, "second para"), report)
+    }
+
     private companion object {
+        const val CHAT = 7L
+
         val DOCUMENT = Surface.Document("/doc.md", "# Title\n\nfirst para\n\nsecond para\n", 0)
     }
 }

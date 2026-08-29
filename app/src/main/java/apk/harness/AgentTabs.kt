@@ -63,6 +63,15 @@ class AgentTabs(
     private val panelConfigFor: (Long) -> File?,
     /** Drops a chat's panel config when the chat goes. */
     private val releasePanelConfig: (Long) -> Unit,
+    /**
+     * Drops a chat's parked document when the chat goes.
+     *
+     * A tab's editor is stopped when the tab goes and the screen's own state is
+     * left alone, so without this a document stays parked against a key nothing
+     * can reach: no band is drawn for a chat that is not there, and no gesture
+     * can close it.
+     */
+    private val forgetParked: (Long) -> Unit,
 ) {
     private var nextKey = 1L
 
@@ -275,6 +284,7 @@ class AgentTabs(
         // from this chat, and a token outliving its chat is a credential nobody
         // owns.
         runCatching { releasePanelConfig(tab.key) }
+        runCatching { forgetParked(tab.key) }
     }
 
     private companion object {
