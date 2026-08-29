@@ -104,6 +104,23 @@ repack() {
     [ -f "$d/DEBIAN/$s" ] && chmod 755 "$d/DEBIAN/$s"
   done
 
+  # A package may declare a conffile it does not ship -- cups 2.4.19 names
+  # var/service/cupsd/log/down and carries no such file. `dpkg-deb -R` accepts
+  # that and `dpkg-deb -b` refuses it, so such a package can be unpacked and
+  # never rebuilt, which is the one thing this script has to do to every
+  # archive. The entry is dropped rather than the file invented: a conffile
+  # protects a file from being overwritten on upgrade, and there is no file.
+  # A dangling symlink is shipped, so -L keeps what -e alone would drop.
+  if [ -f "$d/DEBIAN/conffiles" ]; then
+    while IFS= read -r conffile; do
+      [ -n "$conffile" ] || continue
+      if [ -e "$d$conffile" ] || [ -L "$d$conffile" ]; then
+        printf '%s\n' "$conffile"
+      fi
+    done < "$d/DEBIAN/conffiles" > "$d/DEBIAN/conffiles.kept"
+    mv "$d/DEBIAN/conffiles.kept" "$d/DEBIAN/conffiles"
+  fi
+
   # The payload changed, so the recorded checksums have to change with it or
   # `dpkg --verify` reports every file as corrupt.
   if [ -f "$d/DEBIAN/md5sums" ]; then
