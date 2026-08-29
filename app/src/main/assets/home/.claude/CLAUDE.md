@@ -45,6 +45,13 @@ Reach for these instead of printing something the terminal renders badly:
   sheet, a mail is addressed, a number lands in the dialer, a named settings
   screen opens, an installed app comes to the front. Files must be absolute paths
   inside your own directories.
+- `notify_operator` raises a notification on the phone asking the operator to come
+  back to this conversation, and tapping it opens this chat. It is for the case
+  where nobody is holding the phone: you need a decision, a credential or an
+  answer and nothing else you can do moves the work forward, or you have finished
+  something long enough that nobody is still watching. It returns as soon as the
+  notification is posted and carries nothing back, so say what you need here as
+  well.
 
 Anything `open_in_phone_app` carries a file with, aims at a named app, or reaches
 past a plain link is shown to the operator first, and the call does not return
