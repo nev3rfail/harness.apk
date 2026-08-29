@@ -398,6 +398,40 @@ class ChatTreeTest {
         assertEquals("run the suite", chat.label)
     }
 
+    /** A chat built directly, because [Chat.lastLine] is about its fields alone. */
+    private fun chat(title: String?, lastPrompt: String?) = Chat(
+        sessionId = "0123456789abcdef",
+        title = title,
+        lastPrompt = lastPrompt,
+        modified = 0L,
+        transcript = File("/transcripts/s.jsonl"),
+    )
+
+    @Test
+    fun `an unnamed chat has no second line, because its name is already that`() {
+        assertNull(chat(title = null, lastPrompt = "ship the file tree root").lastLine)
+    }
+
+    @Test
+    fun `a chat that has said nothing and been named nothing has no second line`() {
+        assertNull(chat(title = null, lastPrompt = null).lastLine)
+    }
+
+    @Test
+    fun `a named chat's second line is its last prompt`() {
+        assertEquals(
+            "ship the file tree root",
+            chat(title = "the drawers", lastPrompt = "ship the file tree root").lastLine,
+        )
+    }
+
+    @Test
+    fun `a named chat with no prompt has no second line`() {
+        // The shape a tab with no transcript arrives in: named after the tab,
+        // with no prompt behind it.
+        assertNull(chat(title = "harness", lastPrompt = null).lastLine)
+    }
+
     private companion object {
         const val USER_HOME = "/data/user/0/dev.harness/files"
         const val DATA_HOME = "/data/data/dev.harness/files"

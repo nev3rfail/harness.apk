@@ -48,6 +48,16 @@ data class Chat(
      * at least unique.
      */
     val label: String get() = title ?: lastPrompt ?: sessionId.take(ID_PREFIX)
+
+    /**
+     * The line under the name: what was last said here, or null for a chat whose
+     * name is already that.
+     *
+     * A row says one thing once. An unnamed chat is labelled by its last prompt,
+     * so it has nothing left to put underneath; a named chat with no prompt has
+     * nothing to put there either.
+     */
+    val lastLine: String? get() = if (title != null) lastPrompt else null
 }
 
 /** One project, and the chats filed under it. */
