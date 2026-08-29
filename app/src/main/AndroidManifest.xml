@@ -27,8 +27,21 @@
              terminals over the ones already running. On the activity rather than
              on one intent's flags, because every way into this app wants the same
              protection and the ongoing service notification is one of them. -->
+        <!-- Every flag the attribute defines. This activity's answer to every
+             configuration is the same one, reflow the layout and resize the
+             terminal to the new geometry, so there is no configuration it wants
+             the platform to recreate it for, and a recreation runs onDestroy,
+             which stops every agent the app is running.
+
+             screenSize is the flag the declaration turns on: an app targeting
+             API 13 or higher is recreated for it even when orientation is
+             handled, and every rotation changes it. mcc and mnc are here for
+             minSdk 24, which is below the level where the platform stopped
+             recreating for them. A device below the API level that introduced a
+             flag never sets that bit, so the extra bits are inert. -->
         <activity
             android:name=".MainActivity"
+            android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density|layoutDirection|colorMode|grammaticalGender|fontScale|fontWeightAdjustment"
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTop"

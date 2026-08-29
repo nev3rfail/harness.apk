@@ -37,8 +37,11 @@ data class AgentTab(
 /**
  * The agents the app is running, and which of them is on screen.
  *
- * Held by the Activity rather than by a composition, because an agent outlives
- * every recomposition and most configuration changes.
+ * Held by the composition, and aliased onto a field so the activity itself can
+ * reach it: onDestroy stops every tab, onNewIntent shows the one a notification
+ * names, and an ask resolves its chat through it. The activity declares every
+ * configuration change it handles, so nothing short of the process ending
+ * recreates that composition.
  *
  * Each tab gets its own [IdeServer] on its own port and is told which one it is,
  * so several editors under one agent home stay several answers to several
