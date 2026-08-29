@@ -127,6 +127,10 @@ class MainActivity : ComponentActivity() {
             // binary, oversized, or unreadable. What a tree row shows, and it
             // carries the offset between its lines and the file's.
             readDocument = { path -> documentFor(File(path)) },
+            // The one Android thing an ask needs: a chat resolved to a tab, a
+            // title cut to a line, and a post. What is worth asking, and whether
+            // to ask at all, is decided in `Tools`.
+            callOperator = ::askOperator,
         )
 
         // The panels the agent chooses for itself travel the other way in, as a
@@ -280,9 +284,39 @@ class MainActivity : ComponentActivity() {
         fire(this, Handoff(Action.View, uri = uri))
     }
 
+    /**
+     * Raises the ask for the chat [owner] and answers with the name it went out
+     * under.
+     *
+     * [NO_CHAT] is a session that found the app-wide config rather than a chat's
+     * own, so it is named for the app and its tap carries no conversation. A key
+     * with no tab is a chat that closed while its call was in flight, and gets no
+     * notification: the tap would land nowhere.
+     *
+     * Called on whichever thread the tool call arrived on. Reading a `StateFlow`
+     * and posting a notification are both safe off the main thread.
+     */
+    private fun askOperator(owner: Long, message: String): String? {
+        if (owner == NO_CHAT) {
+            AgentService.ask(this, owner, APP_NAME, message, null)
+            return APP_NAME
+        }
+        val tab = tabs?.tabs?.value?.firstOrNull { it.key == owner } ?: return null
+        // A chat nobody named is labelled with one of its own prompts, so the
+        // title is cut here rather than trusted to be short. It is the one thing
+        // that tells three of these apart, which is why the agent supplies no
+        // title of its own to compete with it.
+        val title = tab.label.lineSequence().first().take(TITLE_LIMIT)
+        AgentService.ask(this, owner, title, message, tab.sessionId)
+        return title
+    }
+
     private companion object {
         /** Where the agent keeps its projects, its lockfiles and its settings. */
         const val AGENT_CONFIG_DIRECTORY = ".claude"
+
+        /** What a notification draws on its first line. */
+        const val TITLE_LIMIT = 40
     }
 }
 

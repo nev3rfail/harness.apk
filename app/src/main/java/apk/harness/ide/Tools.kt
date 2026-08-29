@@ -43,6 +43,14 @@ class Tools(
     // it rendered, so the offset between the document's lines and the file's
     // comes back with it rather than being guessed here.
     private val readDocument: (String) -> Rendered,
+    /**
+     * Asks for the operator on behalf of the chat [owner], answering with the
+     * name the ask was raised under, or null when that chat has gone.
+     *
+     * A lambda for the reason the handoff pair are: this class takes no
+     * `Context`, so everything it decides is decided off the device.
+     */
+    private val callOperator: (Long, String) -> String?,
 ) {
 
     fun editorDefinitions(): JSONArray = JSONArray()
@@ -142,6 +150,20 @@ class Tools(
                             "refused.")),
             emptyList(),
         ))
+        .put(tool(
+            "notify_operator",
+            "Ask the operator to come back to this conversation. Raises a notification on the " +
+                "phone, and tapping it opens this chat. Use it when you need a decision, a " +
+                "credential or an answer and nothing else you can do moves the work forward, " +
+                "and when you have finished something long enough that nobody is still " +
+                "watching. It returns as soon as the notification is posted; nothing comes " +
+                "back through it, so say what you need in the chat as well.",
+            JSONObject().put("message", string(
+                "One line saying what you want the person for, read on a lock screen. Around " +
+                    "240 characters; longer is cut."
+            )),
+            listOf("message"),
+        ))
 
     /**
      * Runs the tool [name] names, for the chat that asked for it.
@@ -217,6 +239,8 @@ class Tools(
 
             "open_in_phone_app" -> openInPhoneApp(arguments, owner)
 
+            "notify_operator" -> notifyOperator(arguments, owner)
+
             // The agent tells the editor which permission mode it is in, so an
             // editor can say so on screen. Answered because it is part of the
             // surface; an error here is noise in the agent's log.
@@ -265,6 +289,27 @@ class Tools(
         }
     }
 
+    /**
+     * Raises a notification asking for the operator, and answers with the name it
+     * went out under.
+     *
+     * The name comes back from [callOperator] rather than being assumed, the way
+     * a handoff answers with the app that took it: an agent that knows which chat
+     * it just named can say so in the conversation.
+     *
+     * Over-long is cut rather than refused. A refusal costs a round trip to fix
+     * something the person cannot see the difference in, since the shade shows
+     * roughly one line either way. Blank is refused, because there is nothing to
+     * show and a wordless buzz teaches the operator to ignore the channel.
+     */
+    private fun notifyOperator(arguments: JSONObject, owner: Long): JSONObject {
+        val message = arguments.optString("message").trim().take(MESSAGE_LIMIT)
+        if (message.isEmpty()) return errorContent("notify_operator needs a message")
+        val name = callOperator(owner, message)
+            ?: return errorContent("this chat is no longer open")
+        return textContent("Asked the operator to come back to $name")
+    }
+
     private suspend fun openDiff(arguments: JSONObject, owner: Long): JSONObject {
         val path = arguments.optString("new_file_path")
             .ifEmpty { arguments.optString("old_file_path") }
@@ -310,6 +355,9 @@ class Tools(
 
     private companion object {
         const val DEFAULT_ZOOM = 14.0
+
+        /** What a notification draws before the shade cuts it off anyway. */
+        const val MESSAGE_LIMIT = 240
 
         /** The same sentence whether nothing resolved or nothing took it. */
         const val NOTHING_HANDLES_IT = "nothing on this device handles that"

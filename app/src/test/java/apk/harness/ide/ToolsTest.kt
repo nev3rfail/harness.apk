@@ -31,6 +31,12 @@ class ToolsTest {
     /** What the device would answer with; null is nothing installed that handles it. */
     private var receiver: String? = "Firefox"
 
+    /** Every ask that reached the lambda: the chat it named, and the text it carried. */
+    private val asks = mutableListOf<Pair<Long, String>>()
+
+    /** The name an ask would go out under; null is a chat that has gone. */
+    private var asked: String? = "the trip"
+
     private val tools = Tools(
         surfaces = surfaces,
         describeHandoff = { receiver },
@@ -42,6 +48,10 @@ class ToolsTest {
         readFile = { path -> documents[path] ?: error("no such file: $path") },
         readDocument = { path ->
             Rendered(documents[path] ?: error("no such file: $path"), 0)
+        },
+        callOperator = { owner, message ->
+            asks += owner to message
+            asked
         },
     )
 
@@ -192,6 +202,80 @@ class ToolsTest {
         assertNull(surfaces.visible.value)
         assertEquals("Firefox took it", result.text())
     }
+
+    @Test
+    fun `notify_operator takes a message and nothing else`() {
+        val definitions = tools.panelDefinitions()
+        val declared = (0 until definitions.length())
+            .map { definitions.getJSONObject(it) }
+            .first { it.getString("name") == "notify_operator" }
+        val schema = declared.getJSONObject("inputSchema")
+
+        assertEquals(
+            listOf("message"),
+            schema.getJSONObject("properties").keys().asSequence().toList(),
+        )
+        assertEquals(1, schema.getJSONArray("required").length())
+        assertEquals("message", schema.getJSONArray("required").getString(0))
+    }
+
+    @Test
+    fun `an ask names the chat that made it and carries the message as written`() {
+        val result = call("notify_operator", message("Which key for the staging deploy?"), owner = 4L)
+
+        assertEquals(listOf(4L to "Which key for the staging deploy?"), asks)
+        assertFalse(result.optBoolean("isError"))
+        assertEquals("Asked the operator to come back to the trip", result.text())
+    }
+
+    @Test
+    fun `a message that is absent, empty or only spaces is refused by name`() {
+        for (arguments in listOf(JSONObject(), message(""), message("  \n\t  "))) {
+            val result = call("notify_operator", arguments)
+
+            assertTrue(result.optBoolean("isError"))
+            assertEquals("notify_operator needs a message", result.text())
+        }
+        // A wordless buzz teaches the operator to ignore the channel, so nothing
+        // is posted for any of the three.
+        assertEquals(emptyList<Pair<Long, String>>(), asks)
+    }
+
+    @Test
+    fun `a message longer than a lock screen line is cut rather than refused`() {
+        val result = call("notify_operator", message("a".repeat(241)))
+
+        assertFalse(result.optBoolean("isError"))
+        assertEquals("a".repeat(240), asks.single().second)
+    }
+
+    @Test
+    fun `a message that just fits is untouched`() {
+        call("notify_operator", message("b".repeat(240)))
+
+        assertEquals("b".repeat(240), asks.single().second)
+    }
+
+    @Test
+    fun `a chat that has gone is told so rather than asked`() {
+        asked = null
+
+        val result = call("notify_operator", message("Ready when you are"), owner = 9L)
+
+        assertTrue(result.optBoolean("isError"))
+        assertEquals("this chat is no longer open", result.text())
+    }
+
+    @Test
+    fun `a call with no chat behind it is passed on like any other`() {
+        // Who has a chat is the activity's to decide -- it resolves NO_CHAT to
+        // the app's own name -- so the tool hands it on unexamined.
+        call("notify_operator", message("Ready when you are"))
+
+        assertEquals(listOf(NO_CHAT to "Ready when you are"), asks)
+    }
+
+    private fun message(text: String) = JSONObject().put("message", text)
 
     private fun launch() = JSONObject().put("action", "launch").put("package", PACKAGE)
 
