@@ -19,12 +19,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import apk.harness.cells.CardSpan
@@ -115,10 +119,17 @@ internal fun CellMapBody(
 @Composable
 private fun Pins(places: List<Pair<CellRow, CellPoint>>, selected: Int, zoom: Double?) {
     val tint = MaterialTheme.colorScheme.primary.toArgb()
+    // The size the cell was laid out at, read inside the update block so a
+    // resize runs it again. A frame is a region fitted to the view's own bounds,
+    // so the one a narrow window produced holds only at that width: turning the
+    // phone widens the cell and leaves the pins bunched, and turning it back
+    // narrows the cell and puts them outside it.
+    var bounds by remember { mutableStateOf(IntSize.Zero) }
     AndroidView(
         modifier = Modifier
             .fillMaxWidth()
             .height(MAP_HEIGHT)
+            .onSizeChanged { bounds = it }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures { change, _ -> change.consume() }
             },
@@ -157,13 +168,19 @@ private fun Pins(places: List<Pair<CellRow, CellPoint>>, selected: Int, zoom: Do
             }
             // The camera is measured against the view's own size, which is not
             // known until it has been laid out.
-            map.post { frame(map, places.map { it.second }, zoom) }
+            map.post { frame(map, places.map { it.second }, zoom, bounds) }
         },
     )
 }
 
-/** Puts every pin on screen, or centres the one there is. */
-private fun frame(map: MapView, points: List<CellPoint>, zoom: Double?) {
+/**
+ * Puts every pin on screen, or centres the one there is.
+ *
+ * [size] is the cell's laid-out size. A view with none has no region to fit a
+ * frame into, and the next size it is given brings the framing with it.
+ */
+private fun frame(map: MapView, points: List<CellPoint>, zoom: Double?, size: IntSize) {
+    if (size == IntSize.Zero) return
     val box = boundsOf(points)
     if (box != null) {
         map.zoomToBoundingBox(
