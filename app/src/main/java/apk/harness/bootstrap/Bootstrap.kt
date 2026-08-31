@@ -2,6 +2,8 @@ package apk.harness.bootstrap
 
 import android.content.Context
 import android.os.Build
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.CancellationException
@@ -156,8 +158,9 @@ class Bootstrap(private val context: Context) {
 
     /**
      * The parts apt needs that are not files in the archive: a cache directory
-     * outside the prefix under the name the tree was rewritten to expect, a home
-     * and a temporary directory, and the repack shim installed as apt's dpkg.
+     * outside the prefix under the name the tree was rewritten to expect, a
+     * temporary directory, a rootfs home pointing at the app's own, and the
+     * repack shim installed as apt's dpkg.
      *
      * Without the shim a Termux `.deb` unpacks into `/data/data/com.termux/...`
      * and fails on a permission error, because its payload is rooted at an
@@ -166,7 +169,7 @@ class Bootstrap(private val context: Context) {
     private fun configure() {
         File(data, "cach/apt/archives/partial").mkdirs()
         for (path in listOf("var/lib/apt/lists/partial", "tmp")) File(prefix, path).mkdirs()
-        File(rootfs, "home").mkdirs()
+        stageRootfsHome(File(rootfs, "home"), agent.home)
 
         // Under `libexec` because no package owns that directory, so an upgrade
         // of dpkg cannot overwrite the shim. The shim reads its own prefix from
@@ -184,6 +187,31 @@ class Bootstrap(private val context: Context) {
         File(confd, "99-repack").writeText("Dir::Bin::dpkg \"${shim.absolutePath}\";\n")
     }
 
+    /**
+     * Points [link] at [home], so that a dotfile in the app home is reachable by a
+     * binary that reads its own from the rootfs.
+     *
+     * `Os.symlink` because `java.io` cannot make a link. Whether one is already
+     * there is read with `lstat`, since `exists` follows a link and answers about
+     * its target -- which for a link made on an earlier run is the app home, and
+     * would report a directory rather than the link.
+     */
+    private fun stageRootfsHome(link: File, home: File) {
+        val mode = runCatching { Os.lstat(link.path).st_mode }.getOrNull()
+        val isLink = mode != null && OsConstants.S_ISLNK(mode)
+        val entries = if (mode != null && !isLink) link.list()?.size ?: 0 else 0
+        when (homeAction(exists = mode != null, isLink = isLink, entries = entries)) {
+            // Reported rather than emptied: whatever is in there was written by a
+            // binary reading the stamped-in path, and where it belongs is not a
+            // choice this can make silently.
+            HomeAction.KEEP, HomeAction.REPORT -> return
+            HomeAction.REPLACE -> link.delete()
+            HomeAction.LINK -> Unit
+        }
+        link.parentFile?.mkdirs()
+        Os.symlink(home.absolutePath, link.path)
+    }
+
     private companion object {
         const val BASH_PATH = "bin/bash"
         const val DPKG_INFO = "var/lib/dpkg/info"
@@ -197,4 +225,31 @@ class Bootstrap(private val context: Context) {
         // date makes a bar slightly wrong, not a tree.
         const val EXPECTED_ENTRIES = 3766
     }
+}
+
+/** What staging should do with the rootfs home it finds. */
+enum class HomeAction { LINK, REPLACE, KEEP, REPORT }
+
+/**
+ * What to do with a rootfs home in the state described.
+ *
+ * A relocated Termux binary reads dotfiles from the rootfs home rather than from
+ * `$HOME`: the prefix rewrite stamps the path into it, and there is no
+ * `/etc/passwd` in the rootfs to say otherwise -- `strings` on `usr/bin/bash`
+ * yields a literal `<data>/root/home`. So the path has to resolve to the app home,
+ * or a key in `$HOME/.ssh` is invisible to the binary that needs it, and the
+ * failure names the wrong cause: a key never offered reads as a key rejected.
+ *
+ * The archive carries no `home` entry, which is why this has to be made at all, so
+ * a first install answers [LINK]. [REPLACE] is for a repeat: `installUserland` runs
+ * again whenever the prefix has no executable `bash`, and an earlier build left a
+ * directory here. A directory holding anything answers [REPORT] instead -- its
+ * contents were written by a binary reading the stamped-in path, and where they
+ * belong is not a choice staging can make on its own.
+ */
+fun homeAction(exists: Boolean, isLink: Boolean, entries: Int): HomeAction = when {
+    !exists -> HomeAction.LINK
+    isLink -> HomeAction.KEEP
+    entries == 0 -> HomeAction.REPLACE
+    else -> HomeAction.REPORT
 }
