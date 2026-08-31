@@ -693,7 +693,7 @@ private fun HarnessScreen(
                 LaunchedEffect(listed, active?.sessionId) {
                     listed.firstOrNull { project ->
                         project.chats.any { it.sessionId == active?.sessionId }
-                    }?.let { expandedProjects = expandedProjects + it.path }
+                    }?.let { expandedProjects = expandedProjects + it.key }
                 }
 
                 // The replacement for this local lives in lifecycle-runtime-compose,
@@ -750,12 +750,15 @@ private fun HarnessScreen(
                     onReveal = { path -> revealedProjects = revealedProjects + path },
                     // Opening a tab binds a socket, seeds a trust answer and
                     // may stage the agent's home, none of which belongs on the
-                    // thread the tap arrived on.
+                    // thread the tap arrived on. A chat whose transcript names
+                    // no directory opens in the agent's home: resuming resolves
+                    // a conversation by its id wherever the transcript is
+                    // filed, and the home is a directory that exists.
                     onOpenChat = { project: Project, chat: Chat ->
                         close()
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                tabs.resume(chat, File(project.path))
+                                tabs.resume(chat, File(project.path ?: agentHome.path))
                             }
                         }
                     },
@@ -784,7 +787,10 @@ private fun HarnessScreen(
                                 close()
                                 scope.launch {
                                     withContext(Dispatchers.IO) {
-                                        tabs.continueHere(chat, File(project.path))
+                                        tabs.continueHere(
+                                            chat,
+                                            File(project.path ?: agentHome.path),
+                                        )
                                     }
                                 }
                             }
@@ -794,10 +800,14 @@ private fun HarnessScreen(
                     // a list, and the next row is usually the next tap.
                     onCloseChat = { chat: Chat -> tabs.closeSession(chat.sessionId) },
                     onNewChat = { project: Project ->
+                        // A project naming no directory draws no way to start a
+                        // conversation in it, so this is a guard rather than a
+                        // path anyone takes.
+                        val directory = project.path ?: return@SessionTree
                         close()
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                tabs.start(File(project.path), project.name)
+                                tabs.start(File(directory), project.name)
                             }
                         }
                     },

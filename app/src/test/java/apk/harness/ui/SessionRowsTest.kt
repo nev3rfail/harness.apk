@@ -18,10 +18,9 @@ class SessionRowsTest {
         transcript = File("/transcripts/$id.jsonl"),
     )
 
-    private fun project(path: String, vararg chats: String) = Project(
+    private fun project(path: String?, vararg chats: String) = Project(
         path = path,
         reachable = true,
-        guessed = false,
         chats = chats.map(::chat),
     )
 
@@ -105,6 +104,14 @@ class SessionRowsTest {
 
         assertEquals(1, rows.size)
         assertFalse(rows[0].hasChildren)
+    }
+
+    @Test
+    fun `the project naming no directory is keyed by the empty string`() {
+        val rows = sessionRows(listOf(project(null, "a")), setOf(""), emptySet())
+
+        assertEquals(listOf("p:", chatId("a")), rows.map { it.id })
+        assertTrue(rows[0].hasChildren)
     }
 
     @Test

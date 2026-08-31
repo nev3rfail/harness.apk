@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import apk.harness.agents.RunningSession
 import apk.harness.chats.Chat
 import apk.harness.chats.Project
+import apk.harness.chats.UNATTRIBUTED
 import apk.harness.chats.foldHome
 
 /**
@@ -103,9 +104,9 @@ fun SessionTree(
                         is SessionRow.ProjectRow -> ProjectEntry(
                             row = row,
                             homes = homes,
-                            isOpen = row.project.path in expanded,
+                            isOpen = row.project.key in expanded,
                             isCurrent = row.project.chats.any { it.sessionId == current },
-                            onClick = { onToggle(row.project.path) },
+                            onClick = { onToggle(row.project.key) },
                             onNew = { onNewChat(row.project) },
                         )
 
@@ -122,7 +123,7 @@ fun SessionTree(
 
                         is SessionRow.MoreRow -> MoreEntry(
                             row = row,
-                            onClick = { onReveal(row.project.path) },
+                            onClick = { onReveal(row.project.key) },
                         )
                     }
                 }
@@ -217,10 +218,9 @@ private fun ProjectEntry(
                     // from. The home is folded to `~` because it is the head of
                     // almost every path here, and the tail -- which is what an
                     // ellipsis eats -- is the part that names the project. A
-                    // guessed path is marked, because flattening a directory
-                    // name cannot be undone and the result is often wrong.
-                    text = foldHome(project.path, homes) +
-                        if (project.guessed) "  (guessed)" else "",
+                    // project naming no directory draws the word instead of a
+                    // path, there being no directory to draw.
+                    text = project.path?.let { foldHome(it, homes) } ?: UNATTRIBUTED,
                     fontFamily = FontFamily.Monospace,
                     fontSize = RowFontSize,
                     maxLines = 1,

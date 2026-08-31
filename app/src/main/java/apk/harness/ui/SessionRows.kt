@@ -27,7 +27,7 @@ sealed interface SessionRow {
         override val isLastSibling: Boolean,
         override val hasChildren: Boolean,
     ) : SessionRow {
-        override val id: String get() = "p:" + project.path
+        override val id: String get() = "p:" + project.key
         override val depth: Int get() = 0
         override val ancestorsContinue: List<Boolean> get() = emptyList()
     }
@@ -58,7 +58,7 @@ sealed interface SessionRow {
         val hidden: Int,
         override val ancestorsContinue: List<Boolean>,
     ) : SessionRow {
-        override val id: String get() = "m:" + project.path
+        override val id: String get() = "m:" + project.key
         override val depth: Int get() = 1
         override val isLastSibling: Boolean get() = true
         override val hasChildren: Boolean get() = false
@@ -92,7 +92,7 @@ fun sessionRows(
     buildList {
         projects.forEachIndexed { index, project ->
             val isLast = index == projects.lastIndex
-            val open = project.path in expanded
+            val open = project.key in expanded
             add(
                 SessionRow.ProjectRow(
                     project = project,
@@ -102,7 +102,7 @@ fun sessionRows(
                 ),
             )
             if (!open) return@forEachIndexed
-            val whole = project.path in revealed || project.chats.size <= VISIBLE_CHATS
+            val whole = project.key in revealed || project.chats.size <= VISIBLE_CHATS
             val drawn = if (whole) project.chats else project.chats.take(VISIBLE_CHATS)
             drawn.forEachIndexed { chatIndex, chat ->
                 add(

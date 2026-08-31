@@ -27,6 +27,16 @@ class ChatTreeTest {
 
     private fun quote(value: String) = "\"" + value.replace("\\", "\\\\") + "\""
 
+    /**
+     * A record that makes a transcript a conversation and carries nothing else.
+     * A transcript holding no turn of conversation is not a chat, so a test
+     * about a field some other record holds says a turn was taken.
+     */
+    private val said = """{"type":"assistant"}"""
+
+    /** What a transcript holding a conversation says about itself. */
+    private fun read(file: File) = readTranscript(file)!!
+
     @Test
     fun `a custom title names the chat`() {
         val file = transcript(
@@ -35,7 +45,7 @@ class ChatTreeTest {
             """{"type":"custom-title","customTitle":"the drawer"}""",
         )
 
-        val read = readTranscript(file)
+        val read = read(file)
 
         assertEquals("the drawer", read.chat.title)
         assertEquals("the drawer", read.chat.label)
@@ -48,16 +58,21 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"custom-title","customTitle":"first"}""",
             """{"type":"custom-title","customTitle":"second"}""",
+            said,
         )
 
-        assertEquals("second", readTranscript(file).chat.title)
+        assertEquals("second", read(file).chat.title)
     }
 
     @Test
     fun `an agent name serves when nobody set a title`() {
-        val file = transcript("p", "s", """{"type":"agent-name","agentName":"zspike"}""")
+        val file = transcript(
+            "p", "s",
+            """{"type":"agent-name","agentName":"zspike"}""",
+            said,
+        )
 
-        assertEquals("zspike", readTranscript(file).chat.title)
+        assertEquals("zspike", read(file).chat.title)
     }
 
     @Test
@@ -66,9 +81,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"agent-name","agentName":"zspike"}""",
             """{"type":"custom-title","customTitle":"named"}""",
+            said,
         )
 
-        assertEquals("named", readTranscript(file).chat.title)
+        assertEquals("named", read(file).chat.title)
     }
 
     @Test
@@ -76,9 +92,10 @@ class ChatTreeTest {
         val file = transcript(
             "p", "s",
             """{"type":"last-prompt","lastPrompt":"ship the drawer"}""",
+            said,
         )
 
-        val chat = readTranscript(file).chat
+        val chat = read(file).chat
         assertNull(chat.title)
         assertEquals("ship the drawer", chat.lastPrompt)
         assertEquals("ship the drawer", chat.label)
@@ -89,16 +106,17 @@ class ChatTreeTest {
         val file = transcript(
             "p", "s",
             """{"type":"last-prompt","lastPrompt":"<system-reminder>x</system-reminder>\nreal one"}""",
+            said,
         )
 
-        assertEquals("real one", readTranscript(file).chat.lastPrompt)
+        assertEquals("real one", read(file).chat.lastPrompt)
     }
 
     @Test
     fun `a chat with no prompt record falls back to what was typed`() {
         val file = transcript("p", "s", user("/work"))
 
-        assertEquals("hi", readTranscript(file).chat.lastPrompt)
+        assertEquals("hi", read(file).chat.lastPrompt)
     }
 
     @Test
@@ -110,7 +128,7 @@ class ChatTreeTest {
                 """{"type":"text","text":"typed this"}]}}""",
         )
 
-        assertEquals("typed this", readTranscript(file).chat.lastPrompt)
+        assertEquals("typed this", read(file).chat.lastPrompt)
     }
 
     @Test
@@ -120,7 +138,7 @@ class ChatTreeTest {
             """{"type":"user","message":{"content":[{"type":"tool_result","content":"x"}]}}""",
         )
 
-        assertNull(readTranscript(file).chat.lastPrompt)
+        assertNull(read(file).chat.lastPrompt)
     }
 
     @Test
@@ -131,7 +149,7 @@ class ChatTreeTest {
             """{"type":"user","message":{"content":"what a person typed"}}""",
         )
 
-        assertEquals("what a person typed", readTranscript(file).chat.lastPrompt)
+        assertEquals("what a person typed", read(file).chat.lastPrompt)
     }
 
     @Test
@@ -142,14 +160,14 @@ class ChatTreeTest {
             """{"type":"last-prompt","lastPrompt":"the recent one"}""",
         )
 
-        assertEquals("the recent one", readTranscript(file).chat.lastPrompt)
+        assertEquals("the recent one", read(file).chat.lastPrompt)
     }
 
     @Test
     fun `a chat that says nothing is labelled by its id`() {
         val file = transcript("p", "0123456789abcdef", """{"type":"assistant"}""")
 
-        val chat = readTranscript(file).chat
+        val chat = read(file).chat
         assertNull(chat.title)
         assertNull(chat.lastPrompt)
         assertEquals("01234567", chat.label)
@@ -161,9 +179,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"custom-title","customTitle":"kept"}""",
             """{"type":"user","cwd":"/work",""",
+            said,
         )
 
-        assertEquals("kept", readTranscript(file).chat.title)
+        assertEquals("kept", read(file).chat.title)
     }
 
     @Test
@@ -177,7 +196,7 @@ class ChatTreeTest {
         val file = transcript("p", "s", *lines.toTypedArray())
 
         assertTrue(file.length() > WINDOW_BYTES)
-        assertEquals("still here", readTranscript(file).chat.title)
+        assertEquals("still here", read(file).chat.title)
     }
 
     @Test
@@ -188,10 +207,11 @@ class ChatTreeTest {
         val lines = buildList {
             repeat(WINDOW_BYTES / 4096 + 4) { add(filler) }
             add("""{"type":"custom-title","customTitle":"last"}""")
+            add(said)
         }
         val file = transcript("p", "s", *lines.toTypedArray())
 
-        assertEquals("last", readTranscript(file).chat.title)
+        assertEquals("last", read(file).chat.title)
     }
 
     @Test
@@ -202,17 +222,83 @@ class ChatTreeTest {
 
         assertEquals(1, projects.size)
         assertEquals("/real/path", projects[0].path)
-        assertFalse(projects[0].guessed)
     }
 
     @Test
-    fun `a project whose transcripts name nothing falls back to its directory`() {
-        transcript("-data-work", "s", """{"type":"assistant"}""")
+    fun `a transcript whose tail holds no working directory is read from its head`() {
+        val padding = "x".repeat(WINDOW_BYTES)
+        transcript(
+            "-anything",
+            "s",
+            user("/read/from/the/head"),
+            """{"type":"assistant","message":{"content":"$padding"}}""",
+        )
+
+        assertEquals("/read/from/the/head", projects(folder.root).single().path)
+    }
+
+    @Test
+    fun `a conversation naming no working directory is unattributed`() {
+        transcript("-data-work", "s", said)
 
         val projects = projects(folder.root)
 
-        assertEquals("/data/work", projects[0].path)
-        assertTrue(projects[0].guessed)
+        assertEquals(1, projects.size)
+        assertNull(projects[0].path)
+        assertFalse(projects[0].reachable)
+    }
+
+    @Test
+    fun `a project with no directory is named by the word its row draws`() {
+        transcript("-data-work", "s", said)
+
+        assertEquals(UNATTRIBUTED, projects(folder.root).single().name)
+    }
+
+    @Test
+    fun `a transcript with nothing said in it is not a chat`() {
+        transcript(
+            "-data-work",
+            "s",
+            """{"type":"mode","mode":"normal"}""",
+            """{"type":"permission-mode","permissionMode":"default"}""",
+            """{"type":"cost-state","totalCostUSD":0}""",
+        )
+
+        assertEquals(emptyList<Project>(), projects(folder.root))
+    }
+
+    @Test
+    fun `a subagent turn is something said`() {
+        transcript(
+            "-data-work",
+            "s",
+            """{"type":"user","isSidechain":true,"cwd":"/work","message":{"content":"go"}}""",
+        )
+
+        assertEquals("/work", projects(folder.root).single().path)
+    }
+
+    @Test
+    fun `every chat naming no directory lands in one group`() {
+        transcript("-one", "a", said)
+        transcript("-two", "b", said)
+
+        val projects = projects(folder.root)
+
+        assertEquals(1, projects.size)
+        assertNull(projects[0].path)
+        assertEquals(2, projects[0].chats.size)
+    }
+
+    @Test
+    fun `the group with no directory sorts behind a project with older chats`() {
+        transcript("-old", "a", user("/work"))
+        transcript("-none", "b", said)
+        File(folder.root, "projects/-old/a.jsonl").setLastModified(2_000L)
+        File(folder.root, "projects/-none/b.jsonl").setLastModified(1_000L)
+
+        assertEquals(listOf("/work", null), projects(folder.root).map { it.path })
     }
 
     @Test
@@ -332,9 +418,10 @@ class ChatTreeTest {
         val file = transcript(
             "p", "s",
             """{"type":"ai-title","aiTitle":"Audit and package the repository"}""",
+            said,
         )
 
-        val chat = readTranscript(file).chat
+        val chat = read(file).chat
         assertEquals("Audit and package the repository", chat.title)
         assertEquals("Audit and package the repository", chat.label)
     }
@@ -345,9 +432,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"ai-title","aiTitle":"what the model called it"}""",
             """{"type":"custom-title","customTitle":"what a person called it"}""",
+            said,
         )
 
-        assertEquals("what a person called it", readTranscript(file).chat.title)
+        assertEquals("what a person called it", read(file).chat.title)
     }
 
     @Test
@@ -356,9 +444,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"ai-title","aiTitle":"what the model called it"}""",
             """{"type":"agent-name","agentName":"zspike"}""",
+            said,
         )
 
-        assertEquals("zspike", readTranscript(file).chat.title)
+        assertEquals("zspike", read(file).chat.title)
     }
 
     @Test
@@ -367,9 +456,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"ai-title","aiTitle":"an early guess"}""",
             """{"type":"ai-title","aiTitle":"the settled one"}""",
+            said,
         )
 
-        assertEquals("the settled one", readTranscript(file).chat.title)
+        assertEquals("the settled one", read(file).chat.title)
     }
 
     @Test
@@ -378,9 +468,10 @@ class ChatTreeTest {
             "p", "s",
             """{"type":"last-prompt","lastPrompt":"ship the file tree root"}""",
             """{"type":"ai-title","aiTitle":"The drawers"}""",
+            said,
         )
 
-        val chat = readTranscript(file).chat
+        val chat = read(file).chat
         assertEquals("The drawers", chat.title)
         assertEquals("The drawers", chat.label)
         assertEquals("ship the file tree root", chat.lastPrompt)
@@ -391,9 +482,10 @@ class ChatTreeTest {
         val file = transcript(
             "p", "s",
             """{"type":"last-prompt","lastPrompt":"run the suite"}""",
+            said,
         )
 
-        val chat = readTranscript(file).chat
+        val chat = read(file).chat
         assertNull(chat.title)
         assertEquals("run the suite", chat.label)
     }

@@ -2,6 +2,7 @@ package apk.harness.agents
 
 import apk.harness.chats.Chat
 import apk.harness.chats.Project
+import apk.harness.chats.byRecency
 import java.io.File
 
 /**
@@ -104,9 +105,9 @@ data class OpenTab(
  * Every backend's history, merged by project path, most recently touched first.
  *
  * A directory two agents have both been run in is one project holding both sets
- * of chats rather than two rows naming the same place. A path is guessed only
- * when every backend that names it guessed it, and reachable when any of them
- * found it so.
+ * of chats rather than two rows naming the same place, and reachable when any of
+ * them found it so. Every backend's chats naming no directory fold into the one
+ * project that names none.
  */
 fun mergedProjects(backends: List<AgentBackend>, home: File): List<Project> =
     backends.flatMap { it.projects(home) }
@@ -115,11 +116,10 @@ fun mergedProjects(backends: List<AgentBackend>, home: File): List<Project> =
             Project(
                 path = path,
                 reachable = found.any { it.reachable },
-                guessed = found.all { it.guessed },
                 chats = found.flatMap { it.chats }.sortedByDescending { it.modified },
             )
         }
-        .sortedByDescending { it.modified }
+        .sortedWith(byRecency)
 
 /**
  * [projects] with a row for every tab that has no transcript to be read from.
@@ -127,7 +127,8 @@ fun mergedProjects(backends: List<AgentBackend>, home: File): List<Project> =
  * A tab opened on a conversation the app named has nothing on disk until the
  * first message is sent, and a row is the only way to reach a tab or close it.
  * Each such tab joins the project its working directory names, which is added
- * when the history holds none.
+ * when the history holds none. A tab has a working directory, so the project
+ * naming none is passed over rather than keyed.
  */
 fun withOpenTabs(projects: List<Project>, tabs: List<OpenTab>): List<Project> {
     val listed = projects.flatMapTo(HashSet()) { project -> project.chats.map { it.sessionId } }
@@ -135,17 +136,18 @@ fun withOpenTabs(projects: List<Project>, tabs: List<OpenTab>): List<Project> {
         .groupBy({ directoryKey(it.directory.path) }, ::placeholder)
     if (extra.isEmpty()) return projects
 
-    val known = projects.mapTo(HashSet()) { directoryKey(it.path) }
+    val known = projects.mapNotNullTo(HashSet()) { it.path?.let(::directoryKey) }
     val merged = projects.map { project ->
-        extra[directoryKey(project.path)]?.let { project.copy(chats = it + project.chats) }
+        project.path?.let { path -> extra[directoryKey(path)] }
+            ?.let { project.copy(chats = it + project.chats) }
             ?: project
     }
     val added = extra.filterKeys { it !in known }.map { (path, chats) ->
         // An agent is running in the directory, so it is one this process can
-        // enter, and the path came from the tab rather than from a folded name.
-        Project(path = path, reachable = true, guessed = false, chats = chats)
+        // enter, and the path came from the tab rather than from anything read.
+        Project(path = path, reachable = true, chats = chats)
     }
-    return (merged + added).sortedByDescending { it.modified }
+    return (merged + added).sortedWith(byRecency)
 }
 
 /**
@@ -166,9 +168,8 @@ private fun placeholder(tab: OpenTab) = Chat(
 /**
  * One spelling of a directory, so a tab and a project name it the same way.
  *
- * A project's path is the string a transcript or a folded directory name gave
- * it and a tab's comes from a [File], and the two disagree about a trailing
- * separator. Both sides of the lookup pass through here, so one directory is
- * one row however it was spelled.
+ * A project's path is the string a transcript gave it and a tab's comes from a
+ * [File], and the two disagree about a trailing separator. Both sides of the
+ * lookup pass through here, so one directory is one row however it was spelled.
  */
 private fun directoryKey(path: String) = File(path).path

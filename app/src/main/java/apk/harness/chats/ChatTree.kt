@@ -20,6 +20,25 @@ import org.json.JSONObject
 /** How much of a transcript's end is read. */
 const val WINDOW_BYTES: Int = 256 * 1024
 
+/**
+ * How much of a transcript's start is read.
+ *
+ * A working directory rides on every conversational record, so a transcript that
+ * ends in one enormous record can end without naming one. It cannot begin
+ * without one: the first conversational record is at the front of the file, and
+ * the field sits near the front of that record -- across transcripts from
+ * hundreds of bytes to tens of megabytes, within the first five kilobytes.
+ */
+const val HEAD_BYTES: Int = 64 * 1024
+
+/**
+ * What a project with no directory is called, on its row and in [Project.name].
+ *
+ * A transcript that names no working directory belongs to no place anyone can
+ * name, and the chats of every such transcript are listed under this one word.
+ */
+const val UNATTRIBUTED = "unattributed"
+
 /** One conversation. */
 data class Chat(
     val sessionId: String,
@@ -62,19 +81,26 @@ data class Chat(
 
 /** One project, and the chats filed under it. */
 data class Project(
-    /** The working directory these chats were held in. */
-    val path: String,
     /**
-     * False when [path] does not name a directory this process can enter. Such a
-     * project is history: its chats can be listed and not resumed.
+     * The working directory these chats were held in, or null for chats whose
+     * transcripts name none. There is one project with no path, holding all of
+     * them: the directories are exactly what cannot be named, so dividing by
+     * them divides by nothing anyone can read.
+     */
+    val path: String?,
+    /**
+     * False when [path] does not name a directory this process can enter, and
+     * for the project with no path. Such a project is history: its chats can be
+     * listed and not started in.
      */
     val reachable: Boolean,
-    /** True when [path] was guessed from the directory name rather than read. */
-    val guessed: Boolean,
     /** Most recently touched first. */
     val chats: List<Chat>,
 ) {
     val modified: Long get() = chats.maxOfOrNull { it.modified } ?: 0L
+
+    /** The identity a row and the set of open projects use. No path answers to `""`. */
+    val key: String get() = path ?: ""
 
     /**
      * A short name for the project, for a tab with no room for a path.
@@ -83,13 +109,19 @@ data class Project(
      * device is a `files` directory under an application id, so one segment
      * names them all the same thing. A drawer row draws the path instead --
      * there is room for it there, and a folded name beside the thing it was
-     * folded from says one thing twice.
+     * folded from says one thing twice. A project with no path answers with
+     * [UNATTRIBUTED], the word its row draws.
      */
     val name: String
-        get() = path.split('/').filter { it.isNotEmpty() }
-            .takeLast(NAME_SEGMENTS)
-            .joinToString("/")
-            .ifEmpty { path }
+        get() {
+            // A local, so the fallback is reached without a null check on every
+            // step of the chain.
+            val path = path ?: return UNATTRIBUTED
+            return path.split('/').filter { it.isNotEmpty() }
+                .takeLast(NAME_SEGMENTS)
+                .joinToString("/")
+                .ifEmpty { path }
+        }
 }
 
 /**
@@ -127,27 +159,27 @@ fun foldHome(path: String, homes: List<String>): String {
  *
  * Two directories can flatten to the same real path, so projects are keyed by
  * the path rather than by the directory, and chats from both arrive in one list.
+ *
+ * A directory whose transcripts name no working directory contributes to the one
+ * project with no path, and a transcript that is not a chat contributes nothing.
  */
 fun projects(agentHome: File): List<Project> {
     val root = File(agentHome, "projects")
     val directories = root.listFiles()?.filter { it.isDirectory } ?: return emptyList()
 
-    val byPath = LinkedHashMap<String, MutableList<Chat>>()
-    val guessedPaths = HashSet<String>()
+    val byPath = LinkedHashMap<String?, MutableList<Chat>>()
 
     for (directory in directories) {
         val transcripts = directory.listFiles { file -> file.name.endsWith(SUFFIX) }
             ?.filter { it.isFile }
             .orEmpty()
-        if (transcripts.isEmpty()) continue
-
-        val summaries = transcripts.map(::readTranscript)
+        val summaries = transcripts.mapNotNull(::readTranscript)
+        if (summaries.isEmpty()) continue
 
         // Every turn in a transcript shares one working directory, so any of
-        // them names the project. Flattening is lossy, so the directory name
-        // answers only when no transcript does.
-        val read = summaries.firstNotNullOfOrNull { it.cwd }
-        val path = oneSpelling(read ?: unflatten(directory.name).also { guessedPaths += it })
+        // them names the project. A directory whose transcripts name none is
+        // not named by its own flattened name, which cannot be undone.
+        val path = summaries.firstNotNullOfOrNull { it.cwd }?.let(::oneSpelling)
 
         byPath.getOrPut(path) { mutableListOf() } += summaries.map { it.chat }
     }
@@ -155,18 +187,25 @@ fun projects(agentHome: File): List<Project> {
     return byPath.map { (path, chats) ->
         Project(
             path = path,
-            reachable = File(path).isDirectory,
-            guessed = path in guessedPaths,
+            reachable = path != null && File(path).isDirectory,
             chats = chats.sortedByDescending { it.modified },
         )
-    }.sortedByDescending { it.modified }
+    }.sortedWith(byRecency)
 }
+
+/**
+ * Most recently touched first, with the project naming no directory last
+ * whatever its chats say: it is a remainder rather than a place.
+ */
+val byRecency: Comparator<Project> =
+    compareBy<Project> { it.path == null }.thenByDescending { it.modified }
 
 /** A transcript's chat, and the working directory it names. */
 class Transcript(val chat: Chat, val cwd: String?)
 
 /**
- * What one transcript says about itself, read from its last [WINDOW_BYTES].
+ * What one transcript says about itself, read from its last [WINDOW_BYTES]
+ * and, where those leave a question open, its first [HEAD_BYTES].
  *
  * A transcript is appended to for as long as the conversation lasts and has no
  * bound; the largest in this project's own history is twenty-five megabytes, and
@@ -177,10 +216,16 @@ class Transcript(val chat: Chat, val cwd: String?)
  * `last-prompt` -- and because every conversational record carries the working
  * directory. What the window cannot hold is a chat whose last quarter-megabyte
  * is one enormous record, which arrives with no name and is listed by its id.
+ * Such a window can also hold no working directory and no turn of conversation,
+ * and both are questions the first [HEAD_BYTES] answer.
+ *
+ * Null for a transcript whose two windows hold no conversational record: the CLI
+ * writes bookkeeping of its own at startup and at exit, and a file holding
+ * nothing else names no conversation anyone had.
  *
  * The time is the file's own, which costs a `stat` rather than a parse.
  */
-fun readTranscript(file: File): Transcript {
+fun readTranscript(file: File): Transcript? {
     val sessionId = file.name.removeSuffix(SUFFIX)
     var title: String? = null
     var agentName: String? = null
@@ -188,6 +233,7 @@ fun readTranscript(file: File): Transcript {
     var lastPrompt: String? = null
     var firstPrompt: String? = null
     var cwd: String? = null
+    var spoke = false
 
     for (line in tail(file)) {
         // Cheap enough to skip a parse on: most of a transcript's bytes are
@@ -195,7 +241,8 @@ fun readTranscript(file: File): Transcript {
         if (!line.startsWith("{")) continue
         val record = runCatching { JSONObject(line) }.getOrNull() ?: continue
 
-        when (record.optString("type")) {
+        val type = record.optString("type")
+        when (type) {
             "custom-title" -> record.text("customTitle")?.let { title = it }
             "agent-name" -> record.text("agentName")?.let { agentName = it }
             // The name the model publishes for its own conversation. It is
@@ -209,8 +256,25 @@ fun readTranscript(file: File): Transcript {
                 firstPrompt = prompt(record.optJSONObject("message"))
             }
         }
+        if (type in CONVERSATIONAL) spoke = true
         record.text("cwd")?.let { cwd = it }
     }
+
+    // The head answers what the tail left open, and nothing else: every other
+    // field is a name or a prompt, for which the end of the transcript is the
+    // authority. A file no larger than the tail window was read whole, so a
+    // second read would answer with what the first already did.
+    if ((cwd == null || !spoke) && file.length() > WINDOW_BYTES) {
+        for (line in head(file)) {
+            if (!line.startsWith("{")) continue
+            val record = runCatching { JSONObject(line) }.getOrNull() ?: continue
+            if (record.optString("type") in CONVERSATIONAL) spoke = true
+            if (cwd == null) record.text("cwd")?.let { cwd = it }
+            if (spoke && cwd != null) break
+        }
+    }
+
+    if (!spoke) return null
 
     return Transcript(
         chat = Chat(
@@ -245,14 +309,20 @@ private fun tail(file: File): List<String> = runCatching {
 }.getOrDefault(emptyList())
 
 /**
- * A guess at the path a directory name was flattened from.
+ * The lines of the start of a file.
  *
- * Flattening maps a separator and a literal dash to the same character, so it
- * cannot be undone. What comes back is right for a plain POSIX path and wrong
- * for one holding a dash, which is why a path recovered this way is marked as a
- * guess rather than shown as fact.
+ * The last line is dropped whenever the window is not the whole file, because a
+ * window ending in the middle of the file ends in the middle of a record.
  */
-fun unflatten(name: String): String = name.replace('-', '/')
+private fun head(file: File): List<String> = runCatching {
+    RandomAccessFile(file, "r").use { handle ->
+        val length = handle.length()
+        val bytes = ByteArray(minOf(length, HEAD_BYTES.toLong()).toInt())
+        handle.readFully(bytes)
+        val lines = String(bytes, Charsets.UTF_8).split('\n')
+        if (length <= HEAD_BYTES) lines else lines.dropLast(1)
+    }
+}.getOrDefault(emptyList())
 
 /**
  * One spelling for a directory the system offers under two names.
@@ -304,6 +374,9 @@ private fun JSONObject.text(key: String): String? =
 private fun clean(text: String): String? = text.lineSequence()
     .map { it.trim() }
     .firstOrNull { it.isNotEmpty() && !it.startsWith("<") && !it.startsWith("Caveat:") }
+
+/** The record types that carry a turn of conversation. */
+private val CONVERSATIONAL = setOf("user", "assistant")
 
 private const val HOME_MARK = "~"
 private const val SUFFIX = ".jsonl"

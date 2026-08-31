@@ -51,11 +51,10 @@ class AgentBackendTest {
     )
 
     private fun project(
-        path: String,
+        path: String?,
         chats: List<Chat>,
         reachable: Boolean = true,
-        guessed: Boolean = false,
-    ) = Project(path = path, reachable = reachable, guessed = guessed, chats = chats)
+    ) = Project(path = path, reachable = reachable, chats = chats)
 
     @Test
     fun `one directory with two histories is one project holding both`() {
@@ -72,29 +71,17 @@ class AgentBackendTest {
     }
 
     @Test
-    fun `a merged project is guessed only when every backend guessed it`() {
+    fun `every backend's chats naming no directory land in one group`() {
         val merged = mergedProjects(
             listOf(
-                Fake("claude", listOf(project("/work", listOf(chat("a", 1)), guessed = true))),
-                Fake("other", listOf(project("/work", listOf(chat("b", 2)), guessed = false))),
+                Fake("claude", listOf(project(null, listOf(chat("a", 1))))),
+                Fake("other", listOf(project(null, listOf(chat("b", 2))))),
             ),
             home,
         )
 
-        assertFalse(merged.single().guessed)
-    }
-
-    @Test
-    fun `a merged project both backends guessed stays a guess`() {
-        val merged = mergedProjects(
-            listOf(
-                Fake("claude", listOf(project("/work", listOf(chat("a", 1)), guessed = true))),
-                Fake("other", listOf(project("/work", listOf(chat("b", 2)), guessed = true))),
-            ),
-            home,
-        )
-
-        assertTrue(merged.single().guessed)
+        assertEquals(1, merged.size)
+        assertEquals(2, merged.single().chats.size)
     }
 
     @Test
@@ -165,8 +152,8 @@ class AgentBackendTest {
 
     @Test
     fun `a path that ends in a separator is the directory a tab names`() {
-        // A guessed path comes back from unflatten with the trailing separator
-        // the folded name ended in, and a tab's directory carries none.
+        // A path a transcript names may end in a separator, and a tab's
+        // directory carries none.
         val projects = listOf(project("/home/nev/", listOf(chat("a", 1000))))
         val tabs = listOf(OpenTab("fresh", File("/home/nev"), "a new chat", "claude"))
 
@@ -188,7 +175,18 @@ class AgentBackendTest {
         val added = listed.first()
         assertEquals(listOf("fresh"), added.chats.map { it.sessionId })
         assertTrue(added.reachable)
-        assertFalse(added.guessed)
+    }
+
+    @Test
+    fun `a tab never joins the project naming no directory`() {
+        val projects = listOf(project(null, listOf(chat("a", 1000))))
+        val tabs = listOf(OpenTab("fresh", work, "a new chat", "claude"))
+
+        val listed = withOpenTabs(projects, tabs)
+
+        assertEquals(listOf(work.path, null), listed.map { it.path })
+        assertEquals(listOf("fresh"), listed.first().chats.map { it.sessionId })
+        assertEquals(listOf("a"), listed.last().chats.map { it.sessionId })
     }
 
     @Test
