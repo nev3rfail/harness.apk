@@ -74,11 +74,15 @@ jobs:
           # so loosening the pattern cannot silently turn a component octal.
           echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
+      # No Gradle cache. A ref may restore the default branch's caches, so a
+      # dependency jar or a cached task output planted by any master-push run
+      # would be consumed by the build whose product gets signed, and the
+      # signature says who signed an APK rather than what is in it. The jobs that
+      # produce nothing signed keep their cache; this one pays for a cold start.
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: 17
-          cache: gradle
 
       # build-android-nonix.sh belongs to the ghostty-android repository, which
       # carries it without an exec bit, and this job runs it as a program.
