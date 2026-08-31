@@ -62,6 +62,9 @@ import apk.harness.chats.foldHome
  *
  * [revealed] is the projects listing every chat they hold. A project outside it
  * lists six and a row that reveals the rest, which [onReveal] adds it to.
+ *
+ * [onOpenFolder] reaches a directory the history does not name, which is every
+ * directory no agent has yet been run in.
  */
 @Composable
 fun SessionTree(
@@ -79,6 +82,7 @@ fun SessionTree(
     onContinueHere: (Project, Chat) -> Unit,
     onCloseChat: (Chat) -> Unit,
     onNewChat: (Project) -> Unit,
+    onOpenFolder: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val rows = remember(projects, expanded, revealed) {
@@ -95,6 +99,7 @@ fun SessionTree(
                 title = "Chats",
                 subtitle = summary(projects),
                 onDismiss = onDismiss,
+                onAdd = onOpenFolder,
             )
             HorizontalDivider()
 

@@ -3,6 +3,7 @@ package apk.harness
 import android.content.Context
 import android.util.Log
 import apk.harness.bootstrap.AgentStage
+import apk.harness.chats.oneSpelling
 import com.ghostty.android.terminal.TerminalSession
 import java.io.File
 
@@ -59,6 +60,14 @@ class Agent(private val context: Context) {
         // the agent is told rather than asking.
         trustProject(File(stage.home, CONFIG_NAME), directory.absolutePath)
 
+        // Shared storage synthesises ownership, and git refuses a repository it
+        // reads as someone else's. The agent's own home is a real filesystem
+        // that needs no exception, so only what lies outside it is named. The
+        // two are compared folded, the home being one directory under two names.
+        if (!folded(directory).startsWith(folded(stage.home))) {
+            markSafeDirectory(File(stage.home, GIT_CONFIG_NAME), directory.absolutePath)
+        }
+
         val environment = TerminalSession.defaultEnvironment(
             home = stage.home.absolutePath,
             tmp = stage.tmp.absolutePath,
@@ -89,11 +98,17 @@ class Agent(private val context: Context) {
         )
     }
 
+    /** One directory under one name, so a home reached by either is the home. */
+    private fun folded(directory: File) = File(oneSpelling(directory.absolutePath))
+
     private companion object {
         const val TAG = "Agent"
         const val ANDROID_SHELL = "/system/bin/sh"
 
         /** The agent's own config file, in its home. `AgentStage` seeds it. */
         const val CONFIG_NAME = ".claude.json"
+
+        /** Git's global config, which is the only place it reads exceptions from. */
+        const val GIT_CONFIG_NAME = ".gitconfig"
     }
 }

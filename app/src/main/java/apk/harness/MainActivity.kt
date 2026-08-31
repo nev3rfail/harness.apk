@@ -1,16 +1,27 @@
 package apk.harness
 
+import android.Manifest
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
+import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,8 +47,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.app.ActivityCompat
+import androidx.core.content.PermissionChecker
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.withStateAtLeast
 import apk.harness.agents.BACKENDS
 import apk.harness.agents.OpenTab
 import apk.harness.agents.RunningSession
@@ -455,6 +469,10 @@ private fun HarnessScreen(
     var filesOpen by remember { mutableStateOf(false) }
     var chatsOpen by remember { mutableStateOf(false) }
     var expandedFiles by remember { mutableStateOf(emptySet<String>()) }
+    // Bumped when a file is copied in. The tree reads its rows off the root and
+    // the open set, and a file arriving changes neither, so this is what makes a
+    // copy show up in a drawer that stays open.
+    var filesRevision by remember { mutableStateOf(0) }
     var expandedProjects by remember { mutableStateOf(emptySet<String>()) }
     // Beside expansion rather than inside the tree: the drawer's composition is
     // disposed when the drawer closes, and revealing lasts as long as expansion
@@ -463,6 +481,93 @@ private fun HarnessScreen(
     // member would make every one of them wrong.
     var revealedProjects by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
+
+    // Both pickers are the platform's, and both are remembered here rather than
+    // inside a drawer: a drawer's composition goes away while its picker is on
+    // screen, and a launcher that goes with it has nothing to deliver to.
+    //
+    // The contracts are remembered too. A launcher registers against the contract
+    // it is handed, so a fresh instance every recomposition is a fresh
+    // registration every recomposition, and this screen recomposes on a timer.
+    val treeContract = remember { ActivityResultContracts.OpenDocumentTree() }
+    val documentsContract = remember { ActivityResultContracts.OpenMultipleDocuments() }
+
+    // A folder becomes a project. The path is proved before a tab is made, and a
+    // refusal changes nothing that is running.
+    val folderPicker = rememberLauncherForActivityResult(treeContract) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            when (val picked = withContext(Dispatchers.IO) { pickedFolder(uri) }) {
+                is Picked.Refused ->
+                    Toast.makeText(context, picked.reason, Toast.LENGTH_LONG).show()
+
+                is Picked.Folder -> {
+                    val directory = File(picked.path)
+                    // Starting an agent binds a socket and may stage the agent's
+                    // home, neither of which belongs on the thread a result
+                    // arrives on.
+                    withContext(Dispatchers.IO) { tabs.start(directory, directory.name) }
+                }
+            }
+        }
+    }
+
+    // What a folder outside the app needs to be worth opening. Without it the app
+    // writes into shared storage and reads back only what it wrote, so a folder
+    // someone else filled reads as empty.
+    //
+    // Asked for on the way to the picker rather than at launch, most sessions
+    // never leaving the agent's own home. An agent forked before the grant keeps
+    // the view it was forked with, which costs nothing: what follows the grant is
+    // a new agent in a new tab.
+    val storagePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { _ ->
+        // The platform is asked again rather than the result being read. A
+        // request the operator never answered -- a back press, a system dialog
+        // taking the screen -- arrives as an empty answer, and an empty answer
+        // is one every permission in it passes.
+        when {
+            holdsStorage(context) ->
+                if (runCatching { folderPicker.launch(null) }.isFailure) {
+                    Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
+                }
+
+            // Refused twice is refused for good: the platform stops drawing the
+            // dialog, so a control that only asks again is one that does
+            // nothing. Its own settings screen is where the answer can still be
+            // changed.
+            !asksAgain(context) ->
+                if (runCatching { context.startActivity(appSettings(context)) }.isFailure) {
+                    Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
+                }
+
+            else -> Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Files are copied into the project the drawer is showing, and named in the
+    // prompt so that nobody has to type them.
+    val filePicker = rememberLauncherForActivityResult(documentsContract) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val destination = active?.directory ?: agentHome
+        val session = active?.session
+        scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                copyInto(context.contentResolver, uris, destination)
+            }
+            // Whatever landed, the tree is stale.
+            filesRevision++
+            if (copied.isEmpty()) {
+                Toast.makeText(context, NOTHING_COPIED, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            // Appended to whatever the prompt holds, with no carriage return.
+            // Nothing is sent and nothing is lost, which is why this asks the
+            // prompt no questions first.
+            session?.write(copied.joinToString(" ", postfix = " ") { "@" + it })
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // The terminal stays mounted underneath: a panel is a look at something,
@@ -641,6 +746,7 @@ private fun HarnessScreen(
                     // first tab is made.
                     root = active?.directory ?: agentHome,
                     expanded = expandedFiles,
+                    revision = filesRevision,
                     onToggle = { file ->
                         expandedFiles =
                             if (file.path in expandedFiles) expandedFiles - file.path
@@ -664,6 +770,17 @@ private fun HarnessScreen(
                                 ),
                                 activeKey,
                             )
+                        }
+                    },
+                    // The drawer stays open: the files land in the tree it is
+                    // showing, and watching them arrive is the confirmation.
+                    // Every kind, because what is worth having at hand is the
+                    // operator's judgement rather than a filter's.
+                    // A device with no picker is one this can only apologise
+                    // for, which is better than a header tap that ends the app.
+                    onAdd = {
+                        if (runCatching { filePicker.launch(arrayOf("*/*")) }.isFailure) {
+                            Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
                         }
                     },
                     onDismiss = close,
@@ -850,6 +967,17 @@ private fun HarnessScreen(
                             }
                         }
                     },
+                    // The drawer closes on the way out, as it does for every
+                    // other control that puts a conversation on the screen.
+                    onOpenFolder = {
+                        close()
+                        val launch =
+                            if (holdsStorage(context)) ({ folderPicker.launch(null) })
+                            else ({ storagePermission.launch(STORAGE) })
+                        if (runCatching { launch() }.isFailure) {
+                            Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
+                        }
+                    },
                     onDismiss = close,
                 )
             }
@@ -862,9 +990,20 @@ private fun HarnessScreen(
     // renders and is not composited, and this is the same call the app makes on
     // its way back from the background, which is what puts such a terminal on
     // the screen.
-    LaunchedEffect(view) {
-        view?.onResumeView()
-        view?.showKeyboard()
+    //
+    // The resume waits for the window, because a tab can be made while another
+    // activity is in front -- a picker is one -- and a terminal told to resume
+    // behind that activity is told while there is no surface to resume onto.
+    // Waiting means the call lands whichever order the two arrive in, and it is
+    // a wait rather than a repeat: the Activity resumes the terminal on screen
+    // itself, and a keyboard raised on every return from every other app is one
+    // nobody asked for.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(view, lifecycle) {
+        lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {
+            view?.onResumeView()
+            view?.showKeyboard()
+        }
     }
 }
 
@@ -911,3 +1050,146 @@ private fun bandLabel(put: Surfaces.Parked): String {
 
 /** How often the drawer rereads the roster while it is open. */
 private const val ROSTER_INTERVAL_MS = 2_000L
+
+/**
+ * The folder [uri] names, or a refusal saying why it names none.
+ *
+ * The picker answers with a document and the agent takes a working directory, so
+ * the id is read for a path and that path is proved. A refusal carries the step
+ * it failed at, because the operator picked something and is owed an account of
+ * what became of it.
+ *
+ * The proof is contained in the root the id named rather than in shared storage
+ * at large, so a folder reached through a link into another volume is refused
+ * along with one reached into somewhere that is not storage at all.
+ */
+private fun pickedFolder(uri: Uri): Picked {
+    val id = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+        ?: return Picked.Refused("That picker did not name a folder.")
+    val primary = Environment.getExternalStorageDirectory().path
+    val authority = uri.authority.orEmpty()
+
+    val root = documentRoot(authority, id, primary) ?: return Picked.Refused(
+        if (authority == EXTERNAL_STORAGE) "That picker named a folder this cannot read."
+        else "$authority holds no folder on this device.",
+    )
+    val path = documentPath(authority, id, primary)
+        ?: return Picked.Refused("That folder leads outside $root.")
+    return openFolder(path, root)
+}
+
+/**
+ * [uris] copied into [directory], answering the names they took there.
+ *
+ * Nothing is overwritten. A name is taken by creating the file rather than by
+ * asking whether it exists, so two copies running at once cannot both decide
+ * that one name is free -- the drawer stays open while a copy runs, and starting
+ * a second is a tap away.
+ *
+ * The bytes go to a name of this attempt's own and are moved onto the claimed
+ * one when they are all there, so a copy that stops partway leaves nothing for
+ * the agent to read as a file.
+ *
+ * A document that cannot be read is skipped rather than ending the rest. The
+ * answer names what arrived, which is what the operator is told about.
+ */
+private fun copyInto(
+    resolver: ContentResolver,
+    uris: List<Uri>,
+    directory: File,
+): List<String> {
+    val copied = mutableListOf<String>()
+    for (uri in uris) {
+        val name = freeName(documentName(resolver, uri)) {
+            !runCatching { File(directory, it).createNewFile() }.getOrDefault(false)
+        }
+        val partial = File(directory, "$name$PARTIAL-${System.nanoTime()}")
+        val written = runCatching {
+            resolver.openInputStream(uri)?.use { source ->
+                partial.outputStream().use(source::copyTo)
+                true
+            } ?: false
+        }.getOrDefault(false)
+
+        // Onto the claimed name, which is an empty file this made and holds.
+        if (written && partial.renameTo(File(directory, name))) copied += name
+        else runCatching { partial.delete(); File(directory, name).delete() }
+    }
+    return copied
+}
+
+/**
+ * What [uri] is called, as a name a directory can hold.
+ *
+ * A provider names its own documents, and one that names none leaves the last
+ * part of the URI, which is the only other thing that stands for the document.
+ * Either way it is another app's text, so it is made a plain name before it
+ * decides where any bytes land.
+ */
+private fun documentName(resolver: ContentResolver, uri: Uri): String {
+    val offered = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { row ->
+            if (row.moveToFirst()) row.getString(0) else null
+        }
+    }.getOrNull()
+
+    return plainName(offered ?: uri.lastPathSegment.orEmpty())
+}
+
+/** What a file being copied is called until all of it is there. */
+private const val PARTIAL = ".harness-part"
+
+/**
+ * True when the app may read and write shared storage as one filesystem.
+ *
+ * Both, because a project is read from and written to, and the platform hands
+ * out the two views separately.
+ *
+ * Asked through the checker rather than of the permission alone, because the two
+ * can disagree: an app operation turned off leaves the permission granted and
+ * every read empty, which is the state this control exists to keep out of.
+ */
+private fun holdsStorage(context: Context): Boolean = STORAGE.all {
+    PermissionChecker.checkSelfPermission(context, it) == PermissionChecker.PERMISSION_GRANTED
+}
+
+/**
+ * True when the platform will still draw a dialog for these.
+ *
+ * A permission refused twice is refused for good, and the request that follows
+ * returns without asking anyone. False says the operator has to be sent
+ * somewhere they can still answer.
+ */
+private fun asksAgain(context: Context): Boolean {
+    val activity = context as? Activity ?: return true
+    return STORAGE.any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
+}
+
+/** This app's own page in the platform's settings. */
+private fun appSettings(context: Context) = Intent(
+    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+    Uri.fromParts("package", context.packageName, null),
+).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+/** What a project outside the agent's own home needs to be a project. */
+private val STORAGE = arrayOf(
+    Manifest.permission.READ_EXTERNAL_STORAGE,
+    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+)
+
+/** What the operator is told when nothing chosen could be read. */
+private const val NOTHING_COPIED = "Nothing was copied."
+
+/** What the operator is told when the platform offers no picker to open. */
+private const val NO_PICKER = "This device has no file picker."
+
+/**
+ * What the operator is told when a folder is picked with nothing to read it.
+ *
+ * It names where the answer can be changed, because a permission refused twice
+ * is one the platform stops asking about, and the dialog not appearing is
+ * otherwise the whole of what the control does.
+ */
+private const val NO_STORAGE =
+    "Without access to storage a folder outside the app reads as empty. " +
+        "Android's settings for this app is where that is turned on."

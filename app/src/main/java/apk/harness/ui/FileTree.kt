@@ -65,13 +65,19 @@ fun symbolicLink(file: File): SymbolicLink? {
 fun FileTree(
     root: File,
     expanded: Set<String>,
+    revision: Int,
     onToggle: (File) -> Unit,
     onPick: (File) -> Unit,
+    onAdd: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Off the composition thread: a directory in the Gradle cache has thousands
     // of children, and this runs again on every change to the open set.
-    val rows by produceState(initialValue = emptyList<TreeRow>(), root, expanded) {
+    //
+    // [revision] is a key because a file arriving in a directory changes neither
+    // of the others, and a tree that does not read again is one a copy does not
+    // appear in.
+    val rows by produceState(initialValue = emptyList<TreeRow>(), root, expanded, revision) {
         value = withContext(Dispatchers.IO) { visibleRows(root, expanded, ::symbolicLink) }
     }
 
@@ -81,7 +87,12 @@ fun FileTree(
     ) {
         // The tree keeps its own first row clear of the status bar.
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-            Header(title = root.name, subtitle = root.path, onDismiss = onDismiss)
+            Header(
+                title = root.name,
+                subtitle = root.path,
+                onDismiss = onDismiss,
+                onAdd = onAdd,
+            )
             HorizontalDivider()
 
             LazyColumn(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {

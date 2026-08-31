@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -196,6 +197,11 @@ private fun apk.harness.intents.Handoff.said(): String = when (action) {
  * only place they can read back what the agent has been told, and [onClear] is
  * beside it because a selection with nowhere on screen to drop it is one the
  * operator has to guess their way out of.
+ *
+ * [onAdd] adds something to what the header names -- a project to the list of
+ * them, files to the directory. It is drawn at the head of the row, as far from
+ * Close as the row is wide, and defaults to absent so that a surface with
+ * nothing to add to draws the row without it.
  */
 @Composable
 internal fun Header(
@@ -205,11 +211,34 @@ internal fun Header(
     onPark: (() -> Unit)? = null,
     selected: String? = null,
     onClear: () -> Unit = {},
+    onAdd: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            // An icon button carries its own inset, so a header that draws one
+            // starts where a header that draws none has its text.
+            .padding(
+                start = if (onAdd == null) 16.dp else 4.dp,
+                end = 8.dp,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // At the head of the row, well clear of Close: the two do opposite
+        // things, and a thumb aimed at one of them should not be able to find
+        // the other.
+        if (onAdd != null) {
+            IconButton(onClick = onAdd) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    // The colour every other control that adds something takes.
+                    tint = MaterialTheme.colorScheme.primary,
+                    contentDescription = "Add",
+                )
+            }
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             if (subtitle != null) {

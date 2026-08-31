@@ -15,6 +15,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- A project on shared storage. Without these the app writes there and sees
+         only what it wrote itself, so a folder someone else filled reads as
+         empty; with them, targetSdk 28 gives the whole volume as one filesystem.
+         Asked for when a folder is picked, and never at launch. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
