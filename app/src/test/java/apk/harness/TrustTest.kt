@@ -63,25 +63,9 @@ class TrustTest {
     }
 
     @Test
-    fun `text that does not parse is replaced`() {
-        val updated = withTrustedProject("not json at all", "/work")
-
-        assertTrue(accepted(updated!!, "/work"))
-    }
-
-    @Test
     fun `the file is written and read back`() {
         val config = folder.newFile("claude.json")
         config.writeText("""{"hasCompletedOnboarding":true}""")
-
-        trustProject(config, "/work")
-
-        assertTrue(accepted(config.readText(), "/work"))
-    }
-
-    @Test
-    fun `a missing file is created`() {
-        val config = folder.root.resolve("absent.json")
 
         trustProject(config, "/work")
 
@@ -97,5 +81,25 @@ class TrustTest {
         trustProject(config, "/work")
 
         assertEquals(before, config.lastModified())
+    }
+
+    @Test
+    fun `text that does not parse is left alone`() {
+        assertNull(withTrustedProject("""{"hasCompletedOnboarding":tr""", "/work"))
+    }
+
+    @Test
+    fun `an empty config is not something to write over`() {
+        assertNull(withTrustedProject("", "/work"))
+    }
+
+    @Test
+    fun `a file this cannot read is not rewritten`() {
+        val config = folder.newFile("config.json")
+        config.writeText("""{"oauthAccount":{"emailAddress":"a@b.c"},"projec""")
+
+        trustProject(config, "/work")
+
+        assertEquals("""{"oauthAccount":{"emailAddress":"a@b.c"},"projec""", config.readText())
     }
 }

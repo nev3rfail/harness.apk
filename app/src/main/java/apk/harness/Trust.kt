@@ -23,12 +23,13 @@ private const val ACCEPTED = "hasTrustDialogAccepted"
  * as it runs, and every write from this side is a chance to lose whatever the
  * agent wrote in between.
  *
- * Text that does not parse is replaced rather than merged into. The file is
- * seeded by the app and owned by the agent; text that is neither is not
- * something to preserve half of.
+ * Text that does not parse is left alone. The file is the agent's, and the
+ * agent rewrites it by truncating and writing, so text that is not a document
+ * is a document caught halfway. Replacing it would cost the account the agent
+ * is signed in with; refusing costs the trust dialog being asked.
  */
 fun withTrustedProject(config: String, path: String): String? {
-    val root = runCatching { JSONObject(config) }.getOrDefault(JSONObject())
+    val root = runCatching { JSONObject(config) }.getOrNull() ?: return null
     val projects = root.optJSONObject(PROJECTS) ?: JSONObject()
     val project = projects.optJSONObject(path) ?: JSONObject()
 
@@ -47,6 +48,10 @@ fun withTrustedProject(config: String, path: String): String? {
  * while this runs is either the old one or the new one and never half of
  * either. A failure is swallowed: the cost is the dialog being asked, which is
  * a great deal less than the cost of a tab that does not open.
+ *
+ * A rename that fails is given up on rather than written in place: a write
+ * straight onto the live file is the halfway document the reader above refuses
+ * to act on, handed to the agent instead.
  */
 fun trustProject(config: File, path: String) {
     runCatching {
@@ -54,9 +59,6 @@ fun trustProject(config: File, path: String) {
         val updated = withTrustedProject(current, path) ?: return
         val temporary = File(config.parentFile, "${config.name}.trust")
         temporary.writeText(updated)
-        if (!temporary.renameTo(config)) {
-            config.writeText(updated)
-            temporary.delete()
-        }
+        if (!temporary.renameTo(config)) temporary.delete()
     }
 }
