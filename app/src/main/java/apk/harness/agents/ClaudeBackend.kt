@@ -1,6 +1,7 @@
 package apk.harness.agents
 
 import apk.harness.chats.Project
+import apk.harness.chats.flatten
 import java.io.File
 import org.json.JSONObject
 
@@ -77,17 +78,6 @@ object ClaudeBackend : AgentBackend {
 }
 
 /**
- * The name a project's directory takes under `projects/`.
- *
- * Every character that divides a path becomes a dash: the separator of either
- * host family, a drive's colon, and a dot. The app's own working directory
- * `/data/user/0/dev.harness/files` is filed as `-data-user-0-dev-harness-files`,
- * and a desktop's `D:\Users\nev3rfail` as `D--Users-nev3rfail`.
- */
-fun flatten(path: String): String =
-    path.map { if (it in SEPARATORS) '-' else it }.joinToString("")
-
-/**
  * One roster record, or null when it names no session or no process.
  *
  * The desktop CLI adds `messagingSocketPath` for its cross-session channel and
@@ -131,9 +121,6 @@ fun stillRunning(procDirectory: File, pid: Int, procStart: String?): Boolean {
  */
 private fun JSONObject.string(key: String): String? =
     (opt(key) as? String)?.takeIf { it.isNotEmpty() }
-
-/** What [flatten] folds into a dash. */
-private const val SEPARATORS = "/\\.:"
 
 /** Field 22 of `stat`, counted from the field after the `comm` field. */
 private const val START_TIME = 19

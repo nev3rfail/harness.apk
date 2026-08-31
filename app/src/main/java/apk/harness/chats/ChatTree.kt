@@ -39,6 +39,33 @@ const val HEAD_BYTES: Int = 64 * 1024
  */
 const val UNATTRIBUTED = "unattributed"
 
+/**
+ * The name a project's directory takes under `projects/`.
+ *
+ * Every character that divides a path becomes a dash: the separator of either
+ * host family, a drive's colon, and a dot. The app's own working directory
+ * `/data/user/0/dev.harness/files` is filed as `-data-user-0-dev-harness-files`,
+ * and a desktop's `D:\Users\nev3rfail` as `D--Users-nev3rfail`.
+ *
+ * The mapping loses which character a dash stood for, so it runs one way only.
+ * Run forwards against a path a transcript names, it says whether that path is
+ * the one the transcript is filed under, which is what [readTranscript] asks.
+ */
+fun flatten(path: String): String =
+    path.map { if (it in SEPARATORS) '-' else it }.joinToString("")
+
+/** What [flatten] folds into a dash. */
+private const val SEPARATORS = "/\\.:"
+
+/**
+ * True when [path] is the directory named [directory] is filed under.
+ *
+ * A trailing separator is dropped first: it names the same directory and
+ * flattens to a dash the directory's name does not carry.
+ */
+private fun names(path: String, directory: String?): Boolean =
+    directory != null && flatten(path.trimEnd('/', '\\')) == directory
+
 /** One conversation. */
 data class Chat(
     val sessionId: String,
@@ -233,7 +260,15 @@ fun readTranscript(file: File): Transcript? {
     var lastPrompt: String? = null
     var firstPrompt: String? = null
     var cwd: String? = null
+    var filed: String? = null
     var spoke = false
+
+    // The directory the transcript sits in, which is the one working directory
+    // it was filed under. A transcript can name several: a record carries the
+    // directory of the moment it was written, and an agent that walks into a
+    // subdirectory leaves records naming that. The name settles which of them
+    // is the project's.
+    val directory = file.parentFile?.name
 
     for (line in tail(file)) {
         // Cheap enough to skip a parse on: most of a transcript's bytes are
@@ -257,20 +292,26 @@ fun readTranscript(file: File): Transcript? {
             }
         }
         if (type in CONVERSATIONAL) spoke = true
-        record.text("cwd")?.let { cwd = it }
+        record.text("cwd")?.let {
+            cwd = it
+            if (names(it, directory)) filed = it
+        }
     }
 
     // The head answers what the tail left open, and nothing else: every other
     // field is a name or a prompt, for which the end of the transcript is the
     // authority. A file no larger than the tail window was read whole, so a
     // second read would answer with what the first already did.
-    if ((cwd == null || !spoke) && file.length() > WINDOW_BYTES) {
+    if ((filed == null || !spoke) && file.length() > WINDOW_BYTES) {
         for (line in head(file)) {
             if (!line.startsWith("{")) continue
             val record = runCatching { JSONObject(line) }.getOrNull() ?: continue
             if (record.optString("type") in CONVERSATIONAL) spoke = true
-            if (cwd == null) record.text("cwd")?.let { cwd = it }
-            if (spoke && cwd != null) break
+            record.text("cwd")?.let {
+                if (cwd == null) cwd = it
+                if (filed == null && names(it, directory)) filed = it
+            }
+            if (spoke && filed != null) break
         }
     }
 
@@ -284,7 +325,11 @@ fun readTranscript(file: File): Transcript? {
             modified = file.lastModified(),
             transcript = file,
         ),
-        cwd = cwd,
+        // The one that names this transcript's own directory, and otherwise the
+        // last recorded. A name that confirms nothing leaves the last, which is
+        // the only evidence there is; it cannot be checked, so it is not treated
+        // as though it had been.
+        cwd = filed ?: cwd,
     )
 }
 

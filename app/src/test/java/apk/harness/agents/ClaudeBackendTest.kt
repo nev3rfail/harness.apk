@@ -1,5 +1,6 @@
 package apk.harness.agents
 
+import apk.harness.chats.flatten
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

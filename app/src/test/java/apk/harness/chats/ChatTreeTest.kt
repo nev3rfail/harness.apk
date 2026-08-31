@@ -238,6 +238,56 @@ class ChatTreeTest {
     }
 
     @Test
+    fun `the directory a transcript is filed under settles which cwd is the project's`() {
+        val file = transcript(
+            "-work-thing", "s",
+            user("/work/thing"),
+            user("/work/thing/.claude/projects"),
+            user("/work/thing/sub"),
+        )
+
+        assertEquals("/work/thing", read(file).cwd)
+    }
+
+    @Test
+    fun `a cwd naming the directory counts wherever it is recorded`() {
+        val file = transcript(
+            "-work-thing", "s",
+            user("/work/thing/sub"),
+            user("/work/thing"),
+            user("/work/thing/other"),
+        )
+
+        assertEquals("/work/thing", read(file).cwd)
+    }
+
+    @Test
+    fun `a trailing separator still names the directory`() {
+        val file = transcript("-work-thing", "s", user("/work/thing/"))
+
+        assertEquals("/work/thing/", read(file).cwd)
+    }
+
+    @Test
+    fun `a name that confirms nothing leaves the last recorded cwd`() {
+        val file = transcript("p", "s", user("/one"), user("/two"))
+
+        assertEquals("/two", read(file).cwd)
+    }
+
+    @Test
+    fun `chats naming a subdirectory do not become a project of their own`() {
+        transcript("-work-thing", "a", user("/work/thing"), user("/work/thing/sub"))
+        transcript("-work-thing", "b", user("/work/thing/sub"), user("/work/thing"))
+
+        val projects = projects(folder.root)
+
+        assertEquals(1, projects.size)
+        assertEquals("/work/thing", projects[0].path)
+        assertEquals(2, projects[0].chats.size)
+    }
+
+    @Test
     fun `a conversation naming no working directory is unattributed`() {
         transcript("-data-work", "s", said)
 
