@@ -21,8 +21,10 @@ android {
         // directory, which is where the agent binary is staged. 28 is the last
         // level that allows it, and is where Termux sits for the same reason.
         targetSdk = 28
-        versionCode = 1
-        versionName = "0.1.0"
+        // A release's identity is its tag, passed in by the workflow that
+        // builds it. A build given neither property keeps these values.
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (findProperty("versionName") as String?) ?: "0.1.0"
 
         ndk {
             // An ABI with no renderer dies loading its native library, and the
@@ -32,22 +34,28 @@ android {
     }
 
     buildTypes {
+        // The channel that ships. It carries the plain application id, which is
+        // the one the loader's compiled-in paths are built against.
         release {
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
+            // Unminified until R8 has been taught about the reflection in
+            // `org.json`, osmdroid, ktoml, Java-WebSocket and Compose.
+            isMinifyEnabled = false
+            // `run-as` is the only route into app-private storage on an
+            // unrooted device, and a bootstrap that fails on a pristine install
+            // is invisible without it. Debuggability is not part of the update
+            // compatibility check, so turning it off is an ordinary in-place
+            // update that keeps the app's data.
+            isDebuggable = true
         }
         debug {
             isDebuggable = true
         }
         // The channel that keeps working while the other one is being broken.
-        // It carries the plain application id, because it is the one a userland
-        // has to fit under; the channel that iterates takes the other name.
+        // It is debuggable and carries the debug key, so its data directory can
+        // be reached with `run-as`.
         create("stable") {
             initWith(getByName("debug"))
-            versionNameSuffix = "-stable"
+            versionNameSuffix = "-stg"
             // The library module has no matching build type.
             matchingFallbacks += "debug"
         }
@@ -97,13 +105,20 @@ android {
     }
 }
 
-// A build type carries a suffix, not an application id of its own, and the
-// channel that iterates is not a suffix of the channel that has to keep
-// working. Left alone when an id is given on the command line, so a throwaway
-// build still gets the one it asked for.
+// A build type carries a suffix, not an application id of its own, and no
+// channel's id is a suffix of another's, so each one is named here instead.
+// `release` keeps the id from `defaultConfig`. Left alone when an id is given on
+// the command line, so a throwaway build still gets the one it asked for.
+//
+// Every id is eleven characters, which is what `retargetLoader` requires: the
+// loader's compiled-in paths are rewritten in place, so the name that replaces
+// one must be the same length.
 androidComponents {
-    onVariants(selector().withBuildType("debug")) { variant ->
-        if (findProperty("harnessAppId") == null) variant.applicationId.set("dev.harness")
+    val ids = mapOf("debug" to "dev.harness", "stable" to "stg.harness")
+    for ((buildType, id) in ids) {
+        onVariants(selector().withBuildType(buildType)) { variant ->
+            if (findProperty("harnessAppId") == null) variant.applicationId.set(id)
+        }
     }
 }
 
