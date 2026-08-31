@@ -70,7 +70,8 @@ jobs:
           }
           IFS=. read -r MAJ MIN PAT <<<"$V"
           echo "name=$V" >> "$GITHUB_OUTPUT"
-          # 10# so a zero-padded component is read as decimal, not octal.
+          # 10# keeps the arithmetic base-ten whatever the pattern above admits,
+          # so loosening the pattern cannot silently turn a component octal.
           echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
