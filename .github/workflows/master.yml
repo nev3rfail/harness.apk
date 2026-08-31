@@ -31,6 +31,16 @@ jobs:
       - name: Restore the exec bit
         run: chmod +x gradlew
 
+      # Both build files name an ndkVersion and a CMake revision, and AGP builds
+      # a CXX model for every project at configuration time whatever task was
+      # asked for, so the pair has to resolve even in a job that compiles no
+      # native code.
+      - name: Install the NDK and CMake
+        run: |
+          set -euo pipefail
+          echo y | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+              "ndk;29.0.14206865" "cmake;3.22.1"
+
       # Unit tests run on the JVM, so neither the renderer nor the loader is built.
       - name: Unit tests
         run: |

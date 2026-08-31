@@ -111,8 +111,12 @@ jobs:
         run: |
           set -euo pipefail
           V="${GITHUB_REF_NAME#v}"
-          printf '%s' "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
-            echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH" >&2
+          # The encoding gives minor and patch two digits each, so a wider
+          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
+          # Leading zeros are refused so a tag has one spelling.
+          printf '%s' "$V" \
+              | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
+            echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
             exit 1
           }
           IFS=. read -r MAJ MIN PAT <<<"$V"
@@ -161,7 +165,7 @@ jobs:
         run: printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/prod.p12"
 
       # The passwords are named to apksigner as environment variables, so they
-      # never appear in argv.
+      # never appear in argv. The alias does, being a name rather than a secret.
       - name: Align and sign
         env:
           KS_PASS: ${{ secrets.PROD_KEYSTORE_PASS }}
@@ -190,6 +194,11 @@ jobs:
             echo "signer certificate is '$GOT', not the prod certificate" >&2
             exit 1
           fi
+
+      # The key has done its work, and the release action runs after this.
+      - name: Discard the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/prod.p12"
 
       - name: The release notes are the tag's message
         run: |
