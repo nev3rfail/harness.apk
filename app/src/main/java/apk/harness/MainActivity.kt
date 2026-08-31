@@ -16,7 +16,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -65,6 +68,7 @@ import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.DrawerSide
 import apk.harness.ui.FileTree
 import apk.harness.ui.HarnessTheme
+import apk.harness.ui.Header
 import apk.harness.ui.InputToolbar
 import apk.harness.ui.SessionTree
 import apk.harness.ui.SideDrawer
@@ -672,18 +676,28 @@ private fun HarnessScreen(
                 // Read here rather than in the tree, so the tree draws what it
                 // is given and the backends stay out of it. Both reads are
                 // scoped to this branch: nothing is stat-ed behind a shut panel.
-                val projects by produceState(emptyList<Project>(), agentHome) {
+                //
+                // Null while the read is outstanding, which is a different thing
+                // from an empty list. An empty list is a home holding no
+                // history, and `withOpenTabs` turns one into a row for every
+                // open tab, so a list drawn before it is read names a project
+                // and a conversation out of nothing read.
+                val projects by produceState<List<Project>?>(null, agentHome) {
                     value = withContext(Dispatchers.IO) { mergedProjects(BACKENDS, agentHome) }
                 }
                 // Every tab is a row whether or not a transcript names it: a tab
                 // with no row is one nothing can reach, switch to or close.
+                // Null carries through: there is nothing to add a tab's row to
+                // until there is a list.
                 val listed = remember(projects, open) {
-                    withOpenTabs(
-                        projects,
-                        open.map {
-                            OpenTab(it.sessionId, it.directory, it.label, it.backend.id)
-                        },
-                    )
+                    projects?.let { read ->
+                        withOpenTabs(
+                            read,
+                            open.map {
+                                OpenTab(it.sessionId, it.directory, it.label, it.backend.id)
+                            },
+                        )
+                    }
                 }
 
                 // The conversation on screen is what the drawer is opened to
@@ -691,7 +705,7 @@ private fun HarnessScreen(
                 // drawer is. Added to what is expanded rather than replacing
                 // it: a project opened by hand stays open.
                 LaunchedEffect(listed, active?.sessionId) {
-                    listed.firstOrNull { project ->
+                    listed?.firstOrNull { project ->
                         project.chats.any { it.sessionId == active?.sessionId }
                     }?.let { expandedProjects = expandedProjects + it.key }
                 }
@@ -720,6 +734,31 @@ private fun HarnessScreen(
                             delay(ROSTER_INTERVAL_MS)
                         }
                     }
+                }
+
+                // An outstanding read is drawn as a wait rather than as a
+                // tree of nothing. The panel around it is the tree's own --
+                // its surface, its inset and its way out -- so the drawer is
+                // the same drawer before and after the list arrives. The
+                // header carries no subtitle: that line counts projects and
+                // chats, and there is nothing yet to count.
+                if (listed == null) {
+                    MaterialSurface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+                            Header(title = "Chats", subtitle = null, onDismiss = close)
+                            HorizontalDivider()
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
+                    return@SideDrawer
                 }
 
                 SessionTree(
