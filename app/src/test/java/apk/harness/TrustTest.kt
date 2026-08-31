@@ -1,5 +1,6 @@
 package apk.harness
 
+import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -81,6 +82,15 @@ class TrustTest {
         trustProject(config, "/work")
 
         assertEquals(before, config.lastModified())
+    }
+
+    @Test
+    fun `a home with no config gets one`() {
+        val config = File(folder.root, "absent.json")
+
+        trustProject(config, "/work")
+
+        assertTrue(accepted(config.readText(), "/work"))
     }
 
     @Test

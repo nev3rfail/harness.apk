@@ -55,7 +55,10 @@ fun withTrustedProject(config: String, path: String): String? {
  */
 fun trustProject(config: File, path: String) {
     runCatching {
-        val current = if (config.isFile) config.readText() else ""
+        // An absent file is a config with nothing in it, which is a document.
+        // Empty text is not, and reading it as one would make a home with no
+        // config indistinguishable from a config caught halfway through a write.
+        val current = if (config.isFile) config.readText() else "{}"
         val updated = withTrustedProject(current, path) ?: return
         val temporary = File(config.parentFile, "${config.name}.trust")
         temporary.writeText(updated)
