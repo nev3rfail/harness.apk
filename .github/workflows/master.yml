@@ -16,20 +16,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       # settings.gradle.kts places :terminal-library inside the ghostty submodule,
-      # so Gradle cannot configure without it.
+      # so Gradle cannot configure without it. One level is enough: the nested
+      # libghostty-vt is the renderer's source, and under -PskipNativeBuild the
+      # task that reads it is never realized.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          submodules: recursive
+          submodules: true
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
-
-      # The wrapper is checked in without an exec bit.
-      - name: Restore the exec bit
-        run: chmod +x gradlew
 
       # Both build files name an ndkVersion and a CMake revision, and AGP builds
       # a CXX model for every project at configuration time whatever task was

@@ -30,6 +30,21 @@ jobs:
             exit 1
           }
 
+      # The release body comes from the tag object's message. On a lightweight
+      # tag %(contents:...) resolves against the commit instead, which would
+      # silently publish the commit message, so the tag object is required here
+      # rather than discovered at release time.
+      - name: The tag is annotated
+        run: |
+          set -euo pipefail
+          # --force because checkout can leave a lightweight ref shadowing the
+          # annotated tag object.
+          git fetch --tags --force
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
+            echo "$GITHUB_REF_NAME is not an annotated tag" >&2
+            exit 1
+          fi
+
   build:
     needs: guard
     runs-on: ubuntu-24.04
@@ -38,34 +53,36 @@ jobs:
         with:
           submodules: recursive
 
+      # First, so a malformed tag fails before the toolchains and the two Zig
+      # cross-compiles.
+      - name: Derive the version from the tag
+        id: version
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          # The encoding gives minor and patch two digits each, so a wider
+          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
+          # Leading zeros are refused so a tag has one spelling.
+          printf '%s' "$V" \
+              | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
+            echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
+            exit 1
+          }
+          IFS=. read -r MAJ MIN PAT <<<"$V"
+          echo "name=$V" >> "$GITHUB_OUTPUT"
+          # 10# so a zero-padded component is read as decimal, not octal.
+          echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: 17
           cache: gradle
 
-      - name: Read the renderer's revision
-        id: renderer
-        run: |
-          set -euo pipefail
-          echo "sha=$(git -C vendor/ghostty-android rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      # The ghostty commit pins its own libghostty-vt submodule, so one revision
-      # identifies both halves of the renderer and a Kotlin-only tag pays for
-      # neither cross-compile.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        id: renderer-cache
-        with:
-          path: vendor/ghostty-android/android/terminal-library/src/main/jniLibs
-          key: renderer-ubuntu-24.04-${{ steps.renderer.outputs.sha }}
-
-      # The wrapper and the scripts are checked in without an exec bit, and
-      # build-loaders.sh runs stage-claude.sh as a program rather than through bash.
-      - name: Restore the exec bits
-        run: |
-          set -euo pipefail
-          chmod +x gradlew scripts/*.sh \
-              vendor/ghostty-android/scripts/build-android-nonix.sh
+      # build-android-nonix.sh belongs to the ghostty-android repository, which
+      # carries it without an exec bit, and this job runs it as a program.
+      - name: Restore the exec bit
+        run: chmod +x vendor/ghostty-android/scripts/build-android-nonix.sh
 
       # patchelf adds the renderer's DT_NEEDED entries; gcc-aarch64-linux-gnu is
       # the cross compiler musl's arm64 build asks for.
@@ -85,7 +102,6 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - name: Install zig
-        if: steps.renderer-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
@@ -95,34 +111,16 @@ jobs:
           tar -xf zig-x86_64-linux-0.16.0.tar.xz
           echo "ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.16.0/zig" >> "$GITHUB_ENV"
 
+      # Both jniLibs trees are git-ignored, so a fresh checkout carries neither
+      # the renderer nor the loader and nothing can be assembled until they exist.
       - name: Build the renderer
-        if: steps.renderer-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           vendor/ghostty-android/scripts/build-android-nonix.sh arm64-v8a
           vendor/ghostty-android/scripts/build-android-nonix.sh x86_64
 
-      # app/src/main/jniLibs is git-ignored, so the loaders are built every run.
       - name: Build the musl loaders
         run: scripts/build-loaders.sh
-
-      - name: Derive the version from the tag
-        id: version
-        run: |
-          set -euo pipefail
-          V="${GITHUB_REF_NAME#v}"
-          # The encoding gives minor and patch two digits each, so a wider
-          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
-          # Leading zeros are refused so a tag has one spelling.
-          printf '%s' "$V" \
-              | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
-            echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
-            exit 1
-          }
-          IFS=. read -r MAJ MIN PAT <<<"$V"
-          echo "name=$V" >> "$GITHUB_OUTPUT"
-          # 10# so a zero-padded component is read as decimal, not octal.
-          echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
       # This job runs the whole Gradle graph, two Zig cross-compiles and
       # build-loaders.sh, and holds no secret.
@@ -132,7 +130,7 @@ jobs:
           VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
           set -euo pipefail
-          ./gradlew :app:assembleRelease \
+          ./gradlew :app:assembleRelease :app:testDebugUnitTest \
               -PskipNativeBuild=true -PskipLoaderBuild=true \
               -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
 
@@ -153,9 +151,25 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      # apksigner is a Java program and raises its JDK floor between releases,
+      # so this job pins one too. No Gradle runs here, hence no cache.
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 17
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: app-release-unsigned
+
+      # zipalign and apksigner produce the artifact that ships, so the revision
+      # they come from is pinned rather than whatever the image happens to hold.
+      - name: Install the build tools
+        run: |
+          set -euo pipefail
+          printf 'y\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+              "build-tools;35.0.1"
+          echo "BT=$ANDROID_HOME/build-tools/35.0.1" >> "$GITHUB_ENV"
 
       # $RUNNER_TEMP rather than the workspace, because workspace files end up
       # in artifacts.
@@ -173,8 +187,6 @@ jobs:
           KEY_PASS: ${{ secrets.PROD_KEY_PASS }}
         run: |
           set -euo pipefail
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          echo "BT=$BT" >> "$GITHUB_ENV"
           "$BT/zipalign" -p -f 4 app-release-unsigned.apk harness.apk
           "$BT/apksigner" sign --ks "$RUNNER_TEMP/prod.p12" --ks-type PKCS12 \
               --ks-key-alias "$KEY_ALIAS" \
@@ -192,6 +204,14 @@ jobs:
           WANT=28f0e4f8272f2354a950c966d8d0a25517fa249ba1a7573f1892c19136825b54
           if [ "$GOT" != "$WANT" ]; then
             echo "signer certificate is '$GOT', not the prod certificate" >&2
+            exit 1
+          fi
+          # The fingerprint above is the first signer's, so the count is checked
+          # too: a second signer would otherwise ride along unnoticed.
+          SIGNERS=$("$BT/apksigner" verify --verbose harness.apk \
+              | sed -n 's/^Number of signers: //p' | sed -n 1p)
+          if [ "$SIGNERS" != 1 ]; then
+            echo "signed by $SIGNERS signers, expected exactly 1" >&2
             exit 1
           fi
 

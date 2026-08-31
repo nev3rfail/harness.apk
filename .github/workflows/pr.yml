@@ -23,13 +23,10 @@ jobs:
           java-version: 17
           cache: gradle
 
-      # The wrapper and the scripts are checked in without an exec bit, and
-      # build-loaders.sh runs stage-claude.sh as a program rather than through bash.
-      - name: Restore the exec bits
-        run: |
-          set -euo pipefail
-          chmod +x gradlew scripts/*.sh \
-              vendor/ghostty-android/scripts/build-android-nonix.sh
+      # build-android-nonix.sh belongs to the ghostty-android repository, which
+      # carries it without an exec bit, and this job runs it as a program.
+      - name: Restore the exec bit
+        run: chmod +x vendor/ghostty-android/scripts/build-android-nonix.sh
 
       # patchelf adds the renderer's DT_NEEDED entries; gcc-aarch64-linux-gnu is
       # the cross compiler musl's arm64 build asks for.
