@@ -21,6 +21,9 @@ class Agent(private val context: Context) {
     /** Where the agent's home is, which is where every project's history is filed. */
     val home: File get() = stage.home
 
+    /** Where the agent's scratch space is, which is also the app's cache. */
+    val tmp: File get() = stage.tmp
+
     /**
      * A session, in [directory], reached over [idePort].
      *

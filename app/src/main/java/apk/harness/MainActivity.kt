@@ -110,7 +110,12 @@ class MainActivity : ComponentActivity() {
         // already the event that replaces every one of them.
         AgentService.clearAsks(this)
 
-        val home = filesDir
+        // The stage's spellings rather than the platform's, so the paths the
+        // agent is told about and the paths the app compares against are one
+        // set. The tab holder builds an agent of its own; this one is here for
+        // the directories, which every agent of this app agrees on.
+        val agent = Agent(this)
+        val home = agent.home
 
         tools = Tools(
             surfaces = surfaces,
@@ -123,7 +128,7 @@ class MainActivity : ComponentActivity() {
             // directories the agent can write, each under both spellings, since
             // the agent has been taught one of them and Android reports the
             // other.
-            writable = bothSpellings(this, filesDir) + bothSpellings(this, cacheDir),
+            writable = bothSpellings(this, agent.home) + bothSpellings(this, agent.tmp),
             // Raw bytes for a diff to line up against the proposed text; a
             // missing or unreadable file throws, which is the "no before text"
             // case a diff needs to detect rather than mask with a placeholder.
@@ -360,9 +365,8 @@ private fun HarnessScreen(
     // kept, so a screen that goes wrong can be replayed.
     val context = androidx.compose.ui.platform.LocalContext.current
     val capture = remember {
-        val home = context.filesDir
-        if (File(home, "capture").exists()) {
-            java.io.FileOutputStream(File(home, "pty.log"), true).buffered()
+        if (File(agentHome, "capture").exists()) {
+            java.io.FileOutputStream(File(agentHome, "pty.log"), true).buffered()
         } else {
             null
         }

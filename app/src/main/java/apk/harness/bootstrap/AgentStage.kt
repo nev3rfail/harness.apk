@@ -29,8 +29,13 @@ class AgentStage(private val context: Context) {
     val rootfs: File = File(data, "root")
     val prefix: File = File(rootfs, "usr")
 
-    val home: File = context.filesDir
-    val tmp: File = context.cacheDir
+    // Spelled from `data` for the reason `data` is: two spellings of one
+    // directory is what the byte budget exists to avoid, and a transcript is
+    // filed under the spelling of the working directory the agent was given.
+    // `filesDir` and `cacheDir` are read for their other effect -- they create
+    // the directories they name -- and their spelling is not used.
+    val home: File = File(data, context.filesDir.name)
+    val tmp: File = File(data, context.cacheDir.name)
     val stage: File = File(home, STAGE_DIRECTORY)
     val binary: File = File(stage, BINARY_NAME)
     val etc: File = File(stage, "etc")
@@ -250,20 +255,39 @@ class AgentStage(private val context: Context) {
 }
 
 /**
- * [directory], one of the app's own, under both spellings of the data directory.
+ * [path], one of the app's own directories, under both spellings of the data
+ * directory.
  *
  * `/data/user/0/<package>` and `/data/data/<package>` are one directory reached
- * two ways. On this device the first is a bind mount of the second rather than a
- * symlink to it, so resolving a path hands back the spelling it arrived in and
- * nothing folds the two together. Android gives the app the `/data/user/0`
- * spelling; [AgentStage.data] pins the userland to `/data/data`, and that is the
- * spelling the agent's own environment document and the skills beside it are
- * written in. Anything comparing a path the agent supplied against the app's
- * directories therefore has to hold both, or it takes half of the agent's
- * vocabulary and refuses the other half.
+ * two ways: the first is a bind mount of the second rather than a symlink to it,
+ * so resolving a path hands back the spelling it arrived in and nothing folds
+ * the two together. [AgentStage.data] pins the userland to `/data/data`, and
+ * that is the spelling the agent's own environment document and the skills
+ * beside it are written in, while Android hands the app the other one. Anything
+ * comparing a path the agent supplied against the app's directories therefore
+ * has to hold both, or it takes half of the agent's vocabulary and refuses the
+ * other half.
+ *
+ * Both spellings whichever one arrives, so a caller may pass either. A
+ * directory under neither spelling is answered with itself alone.
  */
+fun bothSpellings(packageName: String, path: String): List<String> {
+    val data = "/data/data/$packageName"
+    val user = "$PRIMARY_USER/$packageName"
+    val other = when {
+        path.startsWith("$data/") || path == data -> user + path.removePrefix(data)
+        path.startsWith("$user/") || path == user -> data + path.removePrefix(user)
+        else -> return listOf(path)
+    }
+    return listOf(path, other)
+}
+
+/** [bothSpellings] for a caller holding a [Context] rather than a package name. */
 fun bothSpellings(context: Context, directory: File): List<String> =
-    listOf(directory.path, File(dataDirectory(context), directory.name).path)
+    bothSpellings(context.packageName, directory.path)
+
+/** The spelling of the data directory Android hands the app. */
+private const val PRIMARY_USER = "/data/user/0"
 
 /** The spelling of the app's data directory that fits the userland's byte budget. */
 private fun dataDirectory(context: Context): File = File("/data/data/${context.packageName}")
