@@ -279,7 +279,11 @@ private fun ChatEntry(
     onClose: () -> Unit,
 ) {
     val chat = row.chat
-    val enabled = row.project.reachable
+    // A chat opens in its project's directory, and one whose transcript names
+    // no directory opens in the agent's home. So the only chat that cannot be
+    // opened is one whose project names a directory that is gone -- a project
+    // naming none is not reachable and its chats still open.
+    val enabled = row.project.reachable || row.project.path == null
     val guide = MaterialTheme.colorScheme.outline.copy(alpha = GuideAlpha)
 
     Row(
