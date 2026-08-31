@@ -1,0 +1,39 @@
+name: master
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      # settings.gradle.kts places :terminal-library inside the ghostty submodule,
+      # so Gradle cannot configure without it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # The wrapper is checked in without an exec bit.
+      - name: Restore the exec bit
+        run: chmod +x gradlew
+
+      # Unit tests run on the JVM, so neither the renderer nor the loader is built.
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          ./gradlew :app:testDebugUnitTest \
+              -PskipNativeBuild=true -PskipLoaderBuild=true

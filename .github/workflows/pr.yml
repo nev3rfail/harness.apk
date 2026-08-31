@@ -1,0 +1,76 @@
+name: pr
+
+on: pull_request
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # The wrapper and the scripts are checked in without an exec bit, and
+      # build-loaders.sh runs stage-claude.sh as a program rather than through bash.
+      - name: Restore the exec bits
+        run: |
+          set -euo pipefail
+          chmod +x gradlew scripts/*.sh \
+              vendor/ghostty-android/scripts/build-android-nonix.sh
+
+      # patchelf adds the renderer's DT_NEEDED entries; gcc-aarch64-linux-gnu is
+      # the cross compiler musl's arm64 build asks for.
+      - name: Install the toolchains the scripts shell out to
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends patchelf gcc-aarch64-linux-gnu
+
+      # The NDK revision is app/build.gradle.kts's ndkVersion, and the CMake
+      # revision is the one both externalNativeBuild blocks name.
+      - name: Install the NDK and CMake
+        run: |
+          set -euo pipefail
+          printf 'y\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+              "ndk;29.0.14206865" "cmake;3.22.1"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Install zig
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLO https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  zig-x86_64-linux-0.16.0.tar.xz" \
+              | sha256sum -c -
+          tar -xf zig-x86_64-linux-0.16.0.tar.xz
+          echo "ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.16.0/zig" >> "$GITHUB_ENV"
+
+      # Both jniLibs trees are git-ignored, so a fresh checkout carries neither
+      # the renderer nor the loader and nothing can be assembled until they exist.
+      - name: Build the renderer
+        run: |
+          set -euo pipefail
+          vendor/ghostty-android/scripts/build-android-nonix.sh arm64-v8a
+          vendor/ghostty-android/scripts/build-android-nonix.sh x86_64
+
+      - name: Build the musl loaders
+        run: scripts/build-loaders.sh
+
+      - name: Assemble and test
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleRelease :app:testDebugUnitTest \
+              -PskipNativeBuild=true -PskipLoaderBuild=true
