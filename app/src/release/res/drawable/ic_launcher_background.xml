@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The background layer of the adaptive icon: black at the centre, out to the
+     blue the other channels carry flat.
+
+     The canvas is 108dp, so its corners sit sqrt(54^2 + 54^2) = 76.4dp from the
+     centre. A radius of 76dp completes the ramp there, leaving no flat band
+     wherever a launcher's mask cuts. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="radial"
+        android:centerX="0.5"
+        android:centerY="0.5"
+        android:gradientRadius="76dp"
+        android:startColor="#000000"
+        android:endColor="#0D47A1" />
+</shape>

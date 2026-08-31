@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Three channels install side by side, so each reads differently in the
+         launcher. This is the one carrying the plain application id. -->
+    <string name="app_name">Harness</string>
+</resources>
