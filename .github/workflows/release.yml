@@ -3,6 +3,12 @@ name: release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: annotated v* tag to release
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,65 +20,103 @@ defaults:
 jobs:
   guard:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      name: ${{ steps.tag.outputs.name }}
+      code: ${{ steps.tag.outputs.code }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
-      # A releasable tag names a commit in master's history. --is-ancestor is
-      # exact and counts equality as ancestry.
-      - name: The tagged commit is on master
+      # A dispatch is open to every account with write access, which is wider
+      # than the set that should reach the signing key, and no workflow setting
+      # narrows it. The role is read from the API rather than inferred from the
+      # event, and an unreadable role fails the job.
+      - name: The dispatcher may cut a release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.triggering_actor }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
-            echo "$GITHUB_SHA is not an ancestor of origin/master" >&2
+          ROLE=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq .role_name)
+          case "$ROLE" in
+            admin|maintain) ;;
+            *)
+              echo "$ACTOR holds '$ROLE', which does not cut releases" >&2
+              exit 1
+              ;;
+          esac
+
+      # One tag name for both events: a push names it in the ref, a dispatch in
+      # its input. Every later job reads it from here rather than from the ref,
+      # which for a dispatch is the branch the workflow was run from. First, so
+      # a malformed name fails before the toolchains and the two Zig
+      # cross-compiles.
+      - name: Read the tag and derive the version
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The encoding gives minor and patch two digits each, so a wider
+          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
+          # Leading zeros are refused so a tag has one spelling.
+          printf '%s' "$TAG" \
+              | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
+            echo "$TAG is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
             exit 1
           }
+          IFS=. read -r MAJ MIN PAT <<<"${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # 10# keeps the arithmetic base-ten whatever the pattern above admits,
+          # so loosening the pattern cannot silently turn a component octal.
+          echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
       # The release body comes from the tag object's message. On a lightweight
       # tag %(contents:...) resolves against the commit instead, which would
       # silently publish the commit message, so the tag object is required here
       # rather than discovered at release time.
       - name: The tag is annotated
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           # --force because checkout can leave a lightweight ref shadowing the
           # annotated tag object.
           git fetch --tags --force
-          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
-            echo "$GITHUB_REF_NAME is not an annotated tag" >&2
+          if [ "$(git cat-file -t "$TAG")" != tag ]; then
+            echo "$TAG is not an annotated tag" >&2
             exit 1
           fi
+
+      # A releasable tag names a commit in master's history. --is-ancestor is
+      # exact and counts equality as ancestry. The commit comes from the tag
+      # rather than from the run's ref, which a dispatch sets to a branch head.
+      - name: The tagged commit is on master
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          SHA=$(git rev-list -n1 "$TAG")
+          git merge-base --is-ancestor "$SHA" origin/master || {
+            echo "$SHA is not an ancestor of origin/master" >&2
+            exit 1
+          }
 
   build:
     needs: guard
     runs-on: ubuntu-24.04
     steps:
+      # The tag's commit rather than the run's ref: what gets built is the
+      # commit the tag names, and a dispatch runs from a branch head.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ needs.guard.outputs.tag }}
           submodules: recursive
-
-      # First, so a malformed tag fails before the toolchains and the two Zig
-      # cross-compiles.
-      - name: Derive the version from the tag
-        id: version
-        run: |
-          set -euo pipefail
-          V="${GITHUB_REF_NAME#v}"
-          # The encoding gives minor and patch two digits each, so a wider
-          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
-          # Leading zeros are refused so a tag has one spelling.
-          printf '%s' "$V" \
-              | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
-            echo "tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
-            exit 1
-          }
-          IFS=. read -r MAJ MIN PAT <<<"$V"
-          echo "name=$V" >> "$GITHUB_OUTPUT"
-          # 10# keeps the arithmetic base-ten whatever the pattern above admits,
-          # so loosening the pattern cannot silently turn a component octal.
-          echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
       # No Gradle cache. A ref may restore the default branch's caches, so a
       # dependency jar or a cached task output planted by any master-push run
@@ -131,8 +175,8 @@ jobs:
       # build-loaders.sh, and holds no secret.
       - name: Assemble the unsigned release
         env:
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ needs.guard.outputs.name }}
+          VERSION_CODE: ${{ needs.guard.outputs.code }}
         run: |
           set -euo pipefail
           ./gradlew :app:assembleRelease :app:testDebugUnitTest \
@@ -146,7 +190,7 @@ jobs:
           if-no-files-found: error
 
   sign:
-    needs: build
+    needs: [guard, build]
     runs-on: ubuntu-24.04
     # The signing secrets live here behind required reviewers, so a workflow
     # pushed on a branch cannot reach the key without a human approving the run.
@@ -226,6 +270,8 @@ jobs:
         run: rm -f "$RUNNER_TEMP/prod.p12"
 
       - name: The release notes are the tag's message
+        env:
+          TAG: ${{ needs.guard.outputs.tag }}
         run: |
           set -euo pipefail
           # --force because checkout can leave a lightweight ref shadowing the
@@ -233,10 +279,13 @@ jobs:
           # does not put a PGP block in the notes.
           git fetch --tags --force
           git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' \
-              "$GITHUB_REF_NAME" > "$RUNNER_TEMP/body.md"
+              "$TAG" > "$RUNNER_TEMP/body.md"
 
+      # The tag is named rather than taken from the ref, which a dispatch sets
+      # to the branch the workflow was run from.
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
+          tag_name: ${{ needs.guard.outputs.tag }}
           body_path: ${{ runner.temp }}/body.md
           files: harness.apk
           fail_on_unmatched_files: true
