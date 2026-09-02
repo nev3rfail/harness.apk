@@ -12,11 +12,11 @@
 ```mermaid
 %%{init: {'flowchart': {'wrappingWidth': 540}}}%%
 flowchart TB
-  l["launcher.sh<br/>assembles the platform; spells no absolute path"]
-  a["agent.sh<br/>names the command, its flags, and the Bun preload"]
+  l["launcher.sh<br/>assembles the platform; no abspath used here and below"]
+  a["agent.sh<br/>names the command, its flags; uses bun preload hack to get dns working"]
   s["syscall-shim<br/>unpacked into the native library directory"]
   ld["ld-musl-&lt;arch&gt;.so.1<br/>run as a program, not named as PT_INTERP"]
-  c["claude --ide<br/>stored exactly as it arrived"]
+  c["claude --ide<br/>launching a pristine claude binary from the upstream"]
 
   l --> a --> s --> ld --> c
 
@@ -34,9 +34,9 @@ flowchart TB
 
 ## Restrictions
 
-- It is modern android. We can't achieve true persistence so claude should be instructed to be careful with background jobs and heaby tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
+- It is modern android. We can't achieve true persistence so claude should be instructed to be careful with background jobs and heavy tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
 - targetSdk=28 and compileSdk=35
-- since there are no rich interactive widgets (yet), it is more like a proof of concept. But it works good enough to deliver *self updates* for this app
+- not enough interactive widgets (only map), so it is more like a proof of concept. But it works good enough to deliver *self updates* for this app. And it succesfully planned my upcoming vacation
 
 ## Shoulders of giants we're standing on
 
