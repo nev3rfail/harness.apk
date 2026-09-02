@@ -3,6 +3,7 @@ package apk.harness.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -23,7 +25,11 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import apk.harness.cells.promoteCells
 import apk.harness.cells.rowsById
 import apk.harness.cells.rowsFor
@@ -35,12 +41,14 @@ import apk.harness.ide.unitOf
 import com.mikepenz.markdown.compose.LocalBulletListHandler
 import com.mikepenz.markdown.compose.LocalMarkdownComponents
 import com.mikepenz.markdown.compose.LocalMarkdownPadding
+import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalOrderedListHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.MarkdownTypography
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.findChildOfType
@@ -98,6 +106,8 @@ fun MarkdownDocument(
     // arriving and going away.
     val holding by rememberUpdatedState(selected != null)
     val highlight = MaterialTheme.colorScheme.primary.copy(alpha = SELECTION_ALPHA)
+    // A newline inside a paragraph separates two words rather than two lines.
+    val lineBreaks = lineBreakAnnotator()
     // Where each item and each block was drawn. Plain maps rather than state:
     // only a touch reads them, and a bound that moved changes nothing that is
     // drawn until the next touch asks. The map instance outlives every
@@ -113,7 +123,8 @@ fun MarkdownDocument(
         h2 = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
         h3 = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
         text = MaterialTheme.typography.bodyMedium,
-        paragraph = MaterialTheme.typography.bodyMedium,
+        paragraph = MaterialTheme.typography.bodyMedium
+            .copy(textIndent = TextIndent(firstLine = PARAGRAPH_INDENT)),
         ordered = MaterialTheme.typography.bodyMedium,
         bullet = MaterialTheme.typography.bodyMedium,
         list = MaterialTheme.typography.bodyMedium,
@@ -121,7 +132,7 @@ fun MarkdownDocument(
         code = MaterialTheme.typography.bodySmall,
     )
 
-    Column(modifier = modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(BLOCK_GAP)) {
         blocks.forEachIndexed { index, spanned ->
             val unit = unitOf(index, spanned)
             val covered = spanned.lines.inside(selected)
@@ -149,6 +160,7 @@ fun MarkdownDocument(
                 is MarkdownBlock.Prose -> Markdown(
                     content = block.text,
                     typography = typography,
+                    annotator = lineBreaks,
                     // The components close over the selection, and the block is
                     // redrawn when the selection changes anyway, so they are
                     // built here rather than remembered against it.
@@ -302,7 +314,17 @@ private fun ColumnScope.ListItems(
                         // drawn by the renderer's own dispatch. A nested list
                         // reaches these components again, so it is drawn here
                         // and inside this item's box.
-                        MarkdownItemBody(child, components, model.content)
+                        //
+                        // What an item says is a paragraph like any other, and
+                        // the paragraph style sets its first line in. Here that
+                        // is the wrong first line: the item is already set in by
+                        // its marker, and setting it in again opens a gap
+                        // between the two.
+                        CompositionLocalProvider(
+                            LocalMarkdownTypography provides flush(model.typography),
+                        ) {
+                            MarkdownItemBody(child, components, model.content)
+                        }
                     }
                 }
             }
@@ -376,6 +398,39 @@ private fun Modifier.pointAhead(
         }
     }
 }
+
+/**
+ * [typography] with the paragraph style's first line drawn where the rest are.
+ *
+ * The one style that differs, the rest handed on as they are, so a style added
+ * to the renderer arrives here without this having to be told about it.
+ */
+private fun flush(typography: MarkdownTypography): MarkdownTypography =
+    Flush(typography, typography.paragraph.copy(textIndent = TextIndent.None))
+
+private class Flush(
+    typography: MarkdownTypography,
+    override val paragraph: TextStyle,
+) : MarkdownTypography by typography
+
+/**
+ * How far the first line of a paragraph is set in from the lines under it.
+ *
+ * The paragraph style alone, which is what a block of prose is drawn in. A
+ * quoted line is drawn in a style of its own, and an item's paragraph is drawn
+ * flush, so neither is set in away from the marker that opens it.
+ *
+ * Tunable.
+ */
+private val PARAGRAPH_INDENT = 8.sp
+
+/**
+ * The gap between one block and the next.
+ *
+ * Every block is drawn on its own, so this is the whole of what sets a paragraph
+ * apart from the one after it. Tunable.
+ */
+private val BLOCK_GAP = 8.dp
 
 /**
  * How much of the theme's primary a selected block is drawn in.
