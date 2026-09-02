@@ -161,6 +161,12 @@ data class Report(val path: String, val lines: IntRange?, val text: String?)
  * A closing entry is the exception: the document is closed and the app has
  * dropped the range, so it reports the path alone until the entry itself goes.
  *
+ * [told] is what that chat was last told, which is what makes a document that
+ * has gone answerable at all: there is no state left to describe it, and a chat
+ * holding a range the app no longer believes is holding it for good. So a chat
+ * with nothing on screen and nothing put away reports the path it was last told
+ * about, with nothing on it, and a chat already told that reports nothing.
+ *
  * A document nobody owns reaches no chat: no chat holds [NO_CHAT], so a surface
  * the app put up itself is announced to nobody.
  *
@@ -176,13 +182,20 @@ fun reportFor(
     owner: Long,
     selection: Selection?,
     parked: Surfaces.Parked?,
+    told: Report? = null,
 ): Report? {
     val shown = (visible as? Surface.Document)?.takeIf { owner == key }
     if (shown != null) return reportOf(shown, selection)
-    val put = parked ?: return null
     // A closing entry reports the path with no selection -- the same thing a
     // cleared selection reports, and for the same reason.
-    return reportOf(put.document, if (put.closing) null else put.selection)
+    val put = parked
+    if (put != null) return reportOf(put.document, if (put.closing) null else put.selection)
+    // Nothing on screen and nothing put away. The retraction a close sends is
+    // sent while there is still an entry to send it from, and a send that
+    // reached nobody is never retried, so the last range told is retracted here
+    // as well -- once, because what this answers is then what was told.
+    val range = told?.takeIf { it.lines != null } ?: return null
+    return Report(range.path, null, null)
 }
 
 /** [document]'s path, with [selection]'s lines and their text when it has both. */
@@ -198,18 +211,29 @@ private fun IntRange.shift(by: Int) = (first + by)..(last + by)
 /**
  * The `selection_changed` params for a document with nothing highlighted.
  *
- * `filePath` is the only field the notification requires, but `selection` is
- * sent as an explicit null rather than left out: an absent key and a null one
- * are different messages, and this one is a statement about the selection. The
- * app has discarded it, and an `ide_selection` block still naming a range would
- * be a claim the app no longer believes.
+ * An empty range rather than an absent or null one. The CLI keeps the last
+ * range it was given until it is given another, so a message carrying no range
+ * leaves the old one standing: the app has discarded the selection and the agent
+ * still holds it. What says the selection is gone is a range that is empty and
+ * says so, which is also what tells it apart from a claim about the file.
  *
- * An empty range at line 0 would say the same thing in a form the CLI could not
- * tell from a real selection, so it is not sent -- that would be a claim about
- * the file.
+ * The position is the start of the document. Nothing here has a cursor to name,
+ * and [EMPTY] is what makes the position moot.
  */
 fun selectionParams(path: String): JSONObject =
-    JSONObject().put("filePath", path).put("selection", JSONObject.NULL)
+    JSONObject()
+        .put(
+            "selection",
+            JSONObject()
+                .put("start", JSONObject().put("line", 0).put("character", 0))
+                .put("end", JSONObject().put("line", 0).put("character", 0))
+                .put(EMPTY, true),
+        )
+        .put("text", "")
+        .put("filePath", path)
+
+/** The flag that tells a range holding nothing from a range holding a line. */
+private const val EMPTY = "isEmpty"
 
 /**
  * The `selection_changed` params for the lines [first] through [last].
@@ -232,7 +256,8 @@ fun selectionParams(path: String, first: Int, last: Int, text: String): JSONObje
             "selection",
             JSONObject()
                 .put("start", JSONObject().put("line", first).put("character", 0))
-                .put("end", JSONObject().put("line", last + 1).put("character", 0)),
+                .put("end", JSONObject().put("line", last + 1).put("character", 0))
+                .put(EMPTY, false),
         )
         .put("text", text)
         .put("filePath", path)

@@ -3,6 +3,7 @@ package apk.harness.ide
 import apk.harness.ui.markdownBlocks
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,11 +11,26 @@ import org.junit.Test
 class SelectionReportTest {
 
     @Test
-    fun `nothing selected is sent as an explicit null, not an absent key`() {
+    fun `nothing selected is sent as a range that holds nothing`() {
+        // Not an absent key and not a null one: the CLI keeps the last range it
+        // was given, so a message carrying no range leaves the old one standing.
         val params = selectionParams("/doc.md")
+        val selection = params.getJSONObject("selection")
+
         assertEquals("/doc.md", params.getString("filePath"))
-        assertTrue(params.has("selection"))
-        assertTrue(params.isNull("selection"))
+        assertEquals("", params.getString("text"))
+        assertTrue(selection.getBoolean("isEmpty"))
+        assertEquals(
+            selection.getJSONObject("start").toString(),
+            selection.getJSONObject("end").toString(),
+        )
+    }
+
+    @Test
+    fun `a range holding a line says it is not empty`() {
+        val selection = selectionParams("/doc.md", 4, 7, "text").getJSONObject("selection")
+
+        assertFalse(selection.getBoolean("isEmpty"))
     }
 
     @Test
@@ -189,10 +205,62 @@ class SelectionReportTest {
     }
 
     @Test
-    fun `a closing entry that is gone reports nothing`() {
-        // The window ran out and the entry went, so there is nothing left to
-        // say. The retraction went out once, at the close.
+    fun `a closing entry that is gone retracts the range it was told`() {
+        // The window ran out and the entry went. Nothing is left to describe
+        // the document, and the chat is still holding a range, so the path is
+        // reported once more with nothing on it.
+        val told = Report("/doc.md", 2..4, "first para")
+
+        assertEquals(
+            Report("/doc.md", null, null),
+            reportFor(CHAT, null, NO_CHAT, null, null, told),
+        )
+    }
+
+    @Test
+    fun `a chat told the path alone is told nothing more`() {
+        val told = Report("/doc.md", null, null)
+
+        assertNull(reportFor(CHAT, null, NO_CHAT, null, null, told))
+    }
+
+    @Test
+    fun `a chat that was told nothing has nothing to hear`() {
         assertNull(reportFor(CHAT, null, NO_CHAT, null, null))
+    }
+
+    @Test
+    fun `the retraction names the document that went, not the one on screen`() {
+        // Another chat's document is on screen. This chat's went, and what it
+        // is told about is its own.
+        val told = Report("/mine.md", 1..1, "x")
+        val theirs = Surface.Document("/theirs.md", "x\n", 0)
+
+        assertEquals(
+            Report("/mine.md", null, null),
+            reportFor(CHAT, theirs, 8L, Selection("/theirs.md", 0, 0), null, told),
+        )
+    }
+
+    @Test
+    fun `a document still on screen is described by the state and not the ledger`() {
+        val told = Report("/gone.md", 3..3, "stale")
+
+        assertEquals(
+            Report("/doc.md", 2..2, "first para"),
+            reportFor(CHAT, DOCUMENT, CHAT, Selection("/doc.md", 2, 2), null, told),
+        )
+    }
+
+    @Test
+    fun `a document put away is described by the entry and not the ledger`() {
+        val told = Report("/gone.md", 3..3, "stale")
+        val put = Surfaces.Parked(DOCUMENT, Selection("/doc.md", 2, 2))
+
+        assertEquals(
+            Report("/doc.md", 2..2, "first para"),
+            reportFor(CHAT, null, NO_CHAT, null, put, told),
+        )
     }
 
     private companion object {

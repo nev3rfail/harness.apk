@@ -447,6 +447,10 @@ private fun HarnessScreen(
         // background agent showed belongs to that agent, and it is the one told
         // about it. A chat is the unit here, so NO_CHAT is left out by having no
         // tab of its own -- a surface the app put up itself has no agent to tell.
+        //
+        // A chat that has gone is told nothing, so what it was told is of no
+        // further use and holds the text of a document besides.
+        told.keys.retainAll(open.map { it.key }.toSet())
         open.forEach { tab ->
             val report = reportFor(
                 key = tab.key,
@@ -454,14 +458,20 @@ private fun HarnessScreen(
                 owner = documentOwner,
                 selection = selection,
                 parked = parked[tab.key],
+                told = told[tab.key],
             )
-            if (report == null) return@forEach
+            if (report == null) {
+                told -= tab.key
+                return@forEach
+            }
             // A chat arriving on screen is told its own state again: it is the
             // one party that has just changed what it is looking at.
             if (report == told[tab.key] && !(switched && tab.key == activeKey)) return@forEach
-            // Recorded only once it has gone out. A report kept as told and then
-            // dropped is never retried, because the guard above suppresses the
-            // next identical one.
+            // Recorded only once it has gone out, so a send that reached
+            // nobody is a send this tries again. What it is tried against is
+            // the ledger itself: a document that has gone leaves no state to
+            // describe it, and the range this chat holds is read back from
+            // here.
             if (announce(tabs, tab.key, report)) told[tab.key] = report
         }
     }
