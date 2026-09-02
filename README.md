@@ -35,7 +35,7 @@ flowchart TB
 ## Restrictions
 
 - It is modern android. We can't achieve true persistence so claude should be instructed to be careful with background jobs and heaby tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
-- targetSdk=28 and compileSdk=34
+- targetSdk=28 and compileSdk=35
 - since there are no rich interactive widgets (yet), it is more like a proof of concept. But it works good enough to deliver *self updates* for this app
 
 ## Shoulders of giants we're standing on
