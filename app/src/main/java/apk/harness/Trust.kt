@@ -44,23 +44,60 @@ fun withTrustedProject(config: String, path: String): String? {
 /**
  * Marks [path] trusted in the agent's config file.
  *
- * Written through a temporary file and a rename, so a config the agent reads
- * while this runs is either the old one or the new one and never half of
- * either. A failure is swallowed: the cost is the dialog being asked, which is
- * a great deal less than the cost of a tab that does not open.
- *
- * A rename that fails is given up on rather than written in place: a write
- * straight onto the live file is the halfway document the reader above refuses
- * to act on, handed to the agent instead.
+ * A failure is swallowed: the cost is the dialog being asked, which is a great
+ * deal less than the cost of a tab that does not open.
  */
 fun trustProject(config: File, path: String) {
+    rewrite(config, "trust") { withTrustedProject(it, path) }
+}
+
+/**
+ * Telling the agent that the account question is answered.
+ *
+ * The agent asks which account to sign in with on its first run, and on every
+ * run after it until it is told the question has been answered -- whatever
+ * credentials it already holds. A home that holds credentials has an account,
+ * so the answer is there to be recorded, and recording it is the difference
+ * between a session that opens on a prompt and one that opens on a question
+ * nobody can answer usefully from a phone.
+ */
+private const val ONBOARDED = "hasCompletedOnboarding"
+
+/** [config] with the account question marked answered, or null when it already is. */
+fun withOnboarded(config: String): String? {
+    val root = runCatching { JSONObject(config) }.getOrNull() ?: return null
+    if (root.optBoolean(ONBOARDED)) return null
+    root.put(ONBOARDED, true)
+    return root.toString()
+}
+
+/** Marks the account question answered in the agent's config file. */
+fun markOnboarded(config: File) {
+    rewrite(config, "account") { withOnboarded(it) }
+}
+
+/**
+ * Reads [config], applies [update], and puts the answer back.
+ *
+ * Written through a temporary file and a rename, so a config the agent reads
+ * while this runs is either the old one or the new one and never half of
+ * either. An update that answers null is a config that already says what it was
+ * going to be told, and nothing is written: the file belongs to the agent, which
+ * rewrites it as it runs, and every write from this side is a chance to lose
+ * whatever the agent wrote in between.
+ *
+ * A rename that fails is given up on rather than written in place: a write
+ * straight onto the live file is a document caught halfway, handed to the agent
+ * instead. [suffix] names the temporary so two updates cannot share one.
+ */
+private fun rewrite(config: File, suffix: String, update: (String) -> String?) {
     runCatching {
         // An absent file is a config with nothing in it, which is a document.
         // Empty text is not, and reading it as one would make a home with no
         // config indistinguishable from a config caught halfway through a write.
         val current = if (config.isFile) config.readText() else "{}"
-        val updated = withTrustedProject(current, path) ?: return
-        val temporary = File(config.parentFile, "${config.name}.trust")
+        val updated = update(current) ?: return
+        val temporary = File(config.parentFile, "${config.name}.$suffix")
         temporary.writeText(updated)
         if (!temporary.renameTo(config)) temporary.delete()
     }

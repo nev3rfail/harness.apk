@@ -60,6 +60,15 @@ class Agent(private val context: Context) {
         // the agent is told rather than asking.
         trustProject(File(stage.home, CONFIG_NAME), directory.absolutePath)
 
+        // A home that holds credentials has an account, which is what the
+        // account question asks for. The config is seeded with the answer when
+        // the home is built, and a home built before there was a config to seed
+        // -- or one whose config the agent wrote first -- reaches here without
+        // it and is asked on every run.
+        if (File(stage.home, CREDENTIALS_NAME).isFile) {
+            markOnboarded(File(stage.home, CONFIG_NAME))
+        }
+
         // Shared storage synthesises ownership, and git refuses a repository it
         // reads as someone else's. The agent's own home is a real filesystem
         // that needs no exception, so only what lies outside it is named. The
@@ -110,5 +119,8 @@ class Agent(private val context: Context) {
 
         /** Git's global config, which is the only place it reads exceptions from. */
         const val GIT_CONFIG_NAME = ".gitconfig"
+
+        /** Where the agent keeps the account it is signed in with. */
+        const val CREDENTIALS_NAME = ".claude/.credentials.json"
     }
 }

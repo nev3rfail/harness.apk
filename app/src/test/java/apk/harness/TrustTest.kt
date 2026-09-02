@@ -114,6 +114,63 @@ class TrustTest {
     }
 
     @Test
+    fun `a config that has not answered the account question is told the answer`() {
+        val updated = withOnboarded("""{"projects":{}}""")
+
+        assertTrue(JSONObject(updated!!).getBoolean("hasCompletedOnboarding"))
+    }
+
+    @Test
+    fun `a config that already answered it needs no write`() {
+        assertNull(withOnboarded("""{"hasCompletedOnboarding":true}"""))
+    }
+
+    @Test
+    fun `an answer of false is replaced`() {
+        val updated = withOnboarded("""{"hasCompletedOnboarding":false}""")
+
+        assertTrue(JSONObject(updated!!).getBoolean("hasCompletedOnboarding"))
+    }
+
+    @Test
+    fun `what the config already says is kept when the answer is added`() {
+        val updated = withOnboarded("""{"projects":{"/work":{"numStartups":7}}}""")
+
+        val root = JSONObject(updated!!)
+        assertTrue(root.getBoolean("hasCompletedOnboarding"))
+        assertEquals(
+            7,
+            root.getJSONObject("projects").getJSONObject("/work").getInt("numStartups"),
+        )
+    }
+
+    @Test
+    fun `text that does not parse is left alone by the account answer`() {
+        assertNull(withOnboarded("""{"hasCompletedOnboarding":tr"""))
+        assertNull(withOnboarded(""))
+    }
+
+    @Test
+    fun `a home with no config is told the answer too`() {
+        val config = File(folder.root, "account.json")
+
+        markOnboarded(config)
+
+        assertTrue(JSONObject(config.readText()).getBoolean("hasCompletedOnboarding"))
+    }
+
+    @Test
+    fun `a config that already answered it is not rewritten`() {
+        val config = folder.newFile("answered.json")
+        config.writeText("""{"hasCompletedOnboarding":true}""")
+        val before = config.lastModified()
+
+        markOnboarded(config)
+
+        assertEquals(before, config.lastModified())
+    }
+
+    @Test
     fun `a config holding nothing gains the section and the path`() {
         assertEquals(
             "[safe]\n\tdirectory = \"/storage/emulated/0/notes\"\n",
