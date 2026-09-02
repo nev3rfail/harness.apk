@@ -430,7 +430,7 @@ private val PARAGRAPH_INDENT = 8.sp
  * Every block is drawn on its own, so this is the whole of what sets a paragraph
  * apart from the one after it. Tunable.
  */
-private val BLOCK_GAP = 8.dp
+private val BLOCK_GAP = 4.dp
 
 /**
  * How much of the theme's primary a selected block is drawn in.
