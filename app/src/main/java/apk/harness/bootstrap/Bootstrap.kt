@@ -167,6 +167,9 @@ class Bootstrap(private val context: Context) {
      * absolute path rather than at the prefix.
      */
     private fun configure() {
+        // apt keeps its archives under a name the byte budget affords, pointed at
+        // the app cache so the system can reclaim the packages it downloaded.
+        stageAptCache(File(data, "cach"), agent.tmp)
         File(data, "cach/apt/archives/partial").mkdirs()
         for (path in listOf("var/lib/apt/lists/partial", "tmp")) File(prefix, path).mkdirs()
         stageRootfsHome(File(rootfs, "home"), agent.home)
@@ -210,6 +213,22 @@ class Bootstrap(private val context: Context) {
         }
         link.parentFile?.mkdirs()
         Os.symlink(home.absolutePath, link.path)
+    }
+
+    /**
+     * Points [link] at [cache], so that apt's archives land in the directory the
+     * system is free to empty.
+     *
+     * A directory found in the way is discarded rather than reported, which is
+     * where this parts from [stageRootfsHome]: what is in there is downloaded
+     * packages, and a download is what replacing them costs.
+     */
+    private fun stageAptCache(link: File, cache: File) {
+        val mode = runCatching { Os.lstat(link.path).st_mode }.getOrNull()
+        if (mode != null && OsConstants.S_ISLNK(mode)) return
+        if (mode != null) link.deleteRecursively()
+        cache.mkdirs()
+        Os.symlink(cache.absolutePath, link.path)
     }
 
     private companion object {
