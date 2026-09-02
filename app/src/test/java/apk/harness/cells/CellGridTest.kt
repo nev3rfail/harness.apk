@@ -130,6 +130,49 @@ class CellGridTest {
         assertEquals(Provenance.Reasoned, markFor(CellKind.Map, "notes", stated))
     }
 
+    @Test
+    fun `a card leaves a blanket source to its footer`() {
+        val row = CellRow(
+            fields = mapOf("at" to CellValue.Text("0, 0"), "price" to CellValue.Text("free")),
+            blanket = Provenance.Source("https://example.test"),
+        )
+
+        assertNull(cardMark(CellKind.Map, "at", row))
+        assertNull(cardMark(CellKind.Map, "price", row))
+    }
+
+    @Test
+    fun `a field the row vouched for itself keeps its own mark`() {
+        val row = CellRow(
+            fields = mapOf("at" to CellValue.Text("0, 0")),
+            provenance = mapOf("at" to Provenance.Source("https://field.test")),
+            blanket = Provenance.Source("https://blanket.test"),
+        )
+
+        assertEquals(Provenance.Source("https://field.test"), cardMark(CellKind.Map, "at", row))
+    }
+
+    @Test
+    fun `a per-field claim identical to the blanket is the blanket`() {
+        val row = CellRow(
+            fields = mapOf("at" to CellValue.Text("0, 0")),
+            provenance = mapOf("at" to Provenance.Source("https://example.test")),
+            blanket = Provenance.Source("https://example.test"),
+        )
+
+        assertNull(cardMark(CellKind.Map, "at", row))
+    }
+
+    @Test
+    fun `a field marked where the row carries no blanket keeps its mark`() {
+        val row = CellRow(
+            fields = mapOf("hours" to CellValue.Text("daily")),
+            provenance = mapOf("hours" to Provenance.Reasoned),
+        )
+
+        assertEquals(Provenance.Reasoned, cardMark(CellKind.Map, "hours", row))
+    }
+
     private fun table(columns: List<String>, sort: String? = null) = Cell(
         kind = CellKind.Table,
         attributes = buildMap {

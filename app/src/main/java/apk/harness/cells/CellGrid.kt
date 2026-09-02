@@ -78,3 +78,16 @@ fun tabSeparated(grid: CellGrid): String =
 fun markFor(kind: CellKind, field: String, row: CellRow): Provenance? =
     if (field in SCHEMAS.getValue(kind).factual) row.provenanceOf(field)
     else row.provenance[field]
+
+/**
+ * What a card draws beside one field, with the row's blanket left to its footer.
+ *
+ * A bare `source` covers every factual field the row does not name itself, so a
+ * card that draws it per field repeats one reference as many times as the row
+ * has fields. The card draws the blanket once, in its footer, as what answers
+ * for the place; a field carries a mark of its own only where the row made a
+ * claim about that field in particular. A per-field claim equal to the blanket
+ * is the blanket, so it goes to the footer with it rather than twice.
+ */
+fun cardMark(kind: CellKind, field: String, row: CellRow): Provenance? =
+    markFor(kind, field, row)?.takeIf { it != row.blanket }
