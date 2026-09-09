@@ -1,8 +1,12 @@
 name: release
 
+# A dispatch rather than a tag push, for two reasons. The run's ref is then the
+# branch it was dispatched on, which is what the `prod` environment can be
+# limited to -- a deployment rule naming branches never matches a run started by
+# a tag push, whose ref is the tag. And a dispatch runs the workflow file from
+# the ref it was dispatched on, so the file that reaches the signing key is
+# master's copy rather than one carried by the commit being released.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
@@ -34,7 +38,6 @@ jobs:
       # narrows it. The role is read from the API rather than inferred from the
       # event, and an unreadable role fails the job.
       - name: The dispatcher may cut a release
-        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.triggering_actor }}
@@ -49,15 +52,14 @@ jobs:
               ;;
           esac
 
-      # One tag name for both events: a push names it in the ref, a dispatch in
-      # its input. Every later job reads it from here rather than from the ref,
-      # which for a dispatch is the branch the workflow was run from. First, so
-      # a malformed name fails before the toolchains and the two Zig
+      # The tag is an input, and every later job reads it from here rather than
+      # from the run's ref, which is the branch the workflow was dispatched on.
+      # First, so a malformed name fails before the toolchains and the two Zig
       # cross-compiles.
       - name: Read the tag and derive the version
         id: tag
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           # The encoding gives minor and patch two digits each, so a wider
