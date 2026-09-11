@@ -1,6 +1,6 @@
 # harness.apk -- From Tinkerers For Tinkerers
 
->A full agentic loop delivered to your phone
+>A full agentic loop delivered to your phone as a drop-in single apk
 
 ## Description
 
@@ -34,13 +34,33 @@ flowchart TB
 
 ## Restrictions
 
-- It is modern android. We can't achieve true persistence so claude should be instructed to be careful with background jobs and heavy tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
+- It is modern android. We can't achieve a true persistence, so claude should be instructed to be careful with background jobs and heavy tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
 - targetSdk=28 and compileSdk=35
 - not enough interactive widgets (only map), so it is more like a proof of concept. But it works good enough to deliver *self updates* for this app. And it succesfully planned my upcoming vacation
 
 ## Shoulders of giants we're standing on
 
-- ghostty -- the best tty
-- ghostty-android author @tapthaker, who did a lot of heavy lifting running it on an alien platform with an alien renderer
-- claude-code-android for the inspiration with shimming glibc with bionic and in general showing me that it is possible
-- termux for the userland, and it's wonderful community who provides precompiled stuff like arm ndk
+- [ghostty](https://github.com/ghostty-org/ghostty) -- the best tty
+- [ghostty-android](https://github.com/tapthaker/ghostty-android) author [@tapthaker](https://github.com/tapthaker), who did a lot of heavy lifting running it on an alien platform with an alien renderer
+- [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) for the inspiration with shimming glibc with bionic and in general showing me that it is possible
+- [termux](https://github.com/termux/termux-packages) for the userland, and it's wonderful community who provides precompiled stuff like arm ndk
+
+## Changelog
+
+### v0.1.0
+
+- Barebones claude-code harness works🎉
+- Agents can show you diffs and files
+- Supports Projects View (left side, projects/chat list) and Files View (right side, files in selected project)
+  - Supports opening new dirs as projects
+  - Supports adding files to projects
+  - Files View are in sync with the current project in almost a hundret percent of the time
+- Code highlighting
+- Code selection in writeups and code files
+- Ability to discard selection in writeups and code files (trust me, it deserves its own line in changelog)
+- Screen rotation or low batterry spawns stray background agents no more
+- Support rich map widgets in markdown writeups
+- Agents can ping you by sending a notification
+- Agents can send arbitrary intents
+- Clickable links
+- Lots of changes to get the stuff above working
