@@ -69,7 +69,14 @@ class PanelServer(
         scope.launch {
             while (!listening.isClosed) {
                 val client = runCatching { listening.accept() }.getOrNull() ?: break
-                scope.launch { serve(client) }
+                // A client that leaves mid-exchange throws out of the read or
+                // the write, and a throw that leaves a launched coroutine ends
+                // the process -- taking the agent, its shell and every child
+                // with it. One connection is not worth the session.
+                scope.launch {
+                    runCatching { serve(client) }
+                        .onFailure { Log.w(TAG, "dropped a panel connection", it) }
+                }
             }
         }
     }
