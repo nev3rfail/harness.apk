@@ -43,7 +43,7 @@ flowchart TB
 - [ghostty](https://github.com/ghostty-org/ghostty) -- the best tty
 - [ghostty-android](https://github.com/tapthaker/ghostty-android) author [@tapthaker](https://github.com/tapthaker), who did a lot of heavy lifting running it on an alien platform with an alien renderer
 - [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) for the inspiration with shimming glibc with bionic and in general showing me that it is possible
-- [termux](https://github.com/termux/termux-packages) for the userland, and it's wonderful community who provides precompiled stuff like arm ndk
+- [termux](https://github.com/termux/termux-packages) for the userland, and its wonderful community who provides precompiled stuff like arm ndk
 
 ## Changelog
 
