@@ -1,6 +1,6 @@
 ---
 name: firefox-remote-debug
-description: Use when something is needed out of a page open in Firefox on this device -- its JSON, its DOM, a value only the loaded page holds -- or when a debugger socket, `adb forward`, `evaluateJSAsync` or a `longString` reply is involved.
+description: Use when something is needed out of a page open in Firefox on this device -- its JSON, its DOM, a value only the loaded page holds -- or when a debugger socket, `adb forward`, `evaluateJSAsync` or a `longString` reply is involved. For a page you go to yourself rather than one the operator has open, use headless-browser.
 ---
 
 # Reading a Firefox page on this device
@@ -9,6 +9,9 @@ Firefox exposes its remote debugging protocol on an abstract unix socket, and
 that socket lets you evaluate JavaScript in a live page and read the result back.
 It is the way to get a payload the page already holds without a share link, a
 screenshot, or the operator reading anything off the screen.
+
+This is for a page the operator already has open. For a page *you* go to, that is
+`headless-browser`.
 
 ## What does not work from in here
 
@@ -29,17 +32,20 @@ The operator turns the socket on once, in Firefox: **Settings -> Advanced ->
 Remote debugging via USB**. The label says USB; the toggle is what creates the
 socket, and USB is not involved.
 
+Getting adb pointed at this device is `self-adb`, and it is a prerequisite
+rather than a step here: `127.0.0.1:5555` answers only once `tcpip 5555` has
+been pinned, and that property resets on every reboot. Follow that skill first,
+then the two calls this one needs:
+
 ```sh
-pkg install android-tools                 # if adb is not already here
-adb connect 127.0.0.1:5555                # accept the debugging dialog once
-adb -s 127.0.0.1:5555 shell 'cat /proc/net/unix | grep firefox'
-adb -s 127.0.0.1:5555 forward tcp:6080 \
-    localabstract:org.mozilla.firefox/firefox-debugger-socket
+D="adb-mdns -s 127.0.0.1:5555"
+$D shell 'cat /proc/net/unix | grep firefox'
+$D forward tcp:6080 localabstract:org.mozilla.firefox/firefox-debugger-socket
 ```
 
 The socket's name carries the package, so it is `org.mozilla.fenix/...` for
-Nightly. Two transports appear for one device, so always pass `-s`. After the
-forward, `127.0.0.1:6080` is an ordinary TCP socket any language can open.
+Nightly. Several transports can be connected at once, so always pass `-s`. After
+the forward, `127.0.0.1:6080` is an ordinary TCP socket any language can open.
 
 ## The protocol
 

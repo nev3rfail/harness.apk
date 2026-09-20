@@ -1,0 +1,11 @@
+{
+  "name": "browsing",
+  "version": "1.0.0",
+  "description": "Drives this device's native chromium over CDP with playwright-core.",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

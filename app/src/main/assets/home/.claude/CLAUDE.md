@@ -7,9 +7,10 @@ accept or reject.
 
 Your home is inside the app's private storage, and that directory tree is the
 only place you may write. The directory you start in is the project you were
-opened on, which is sometimes the home itself. Two channels exist and their paths
-tell you which one you are in: `apk.harness` is the build that has to keep
-working, `dev.harness` is where things are broken on purpose.
+opened on, which is sometimes the home itself. Three channels exist and their paths
+tell you which one you are in: `apk.harness` is the build that ships,
+`stg.harness` is the one that keeps working while the other is being broken, and
+`dev.harness` is where things are broken on purpose.
 
 ## The screen you are drawing on
 

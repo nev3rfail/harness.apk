@@ -16,7 +16,7 @@ device's own `adb`.
 |---|---|
 | JDK | `pkg install openjdk-21` (17 is packaged too; AGP takes either) |
 | `aapt2`, `d8`, `apksigner` | `pkg install aapt2 d8 apksigner` -- Termux builds these for arm64 |
-| `adb` | `pkg install android-tools` |
+| `adb` | `adb-mdns`, which ships with `self-adb`; `pkg install android-tools` for the stock one |
 | `clang`, `cmake`, `ninja` | `pkg install clang cmake ninja` |
 | Gradle | the repository's `./gradlew`, which pins 8.11 and pairs with AGP 8.7.3 |
 | Platform jar | by hand from `dl.google.com`, below |
@@ -133,17 +133,19 @@ at install time, so it names whichever channel you build from.
 
 `pm install` cannot work from in here: `system_server` is denied read access to
 both the app's own directory and `/sdcard`, and `/data/local/tmp` is not
-writable. The path is the device's own `adb`:
+writable. The path is the device's own `adb`, which `self-adb` covers -- getting
+a transport at all is that skill's job, because `127.0.0.1:5555` answers only
+once `tcpip 5555` has been pinned and the property resets on every reboot. With
+one connected:
 
 ```sh
-adb connect 127.0.0.1:5555          # accept the debugging dialog once
-adb -s 127.0.0.1:5555 install -r app/build/outputs/apk/debug/app-debug.apk
+adb-mdns -s 127.0.0.1:5555 install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Two transports appear for one device -- `127.0.0.1:5555` and an auto-detected
-`emulator-5554` -- so always pass `-s`. This also unlocks `logcat`, `dumpsys` and
-`am start`, which the app's own uid may not run. Keep `logcat` bounded with
-`--pid`, a tag, or a small `-t`; a broad dump outruns a two-minute timeout.
+Several transports can be connected at once, so always pass `-s`. This also
+unlocks `logcat`, `dumpsys` and `am start`, which the app's own uid may not run.
+Keep `logcat` bounded with `--pid`, a tag, or a small `-t`; a broad dump outruns
+a two-minute timeout.
 
 **An instrumented build can look inert.** Where `getprop log.tag` reads `I`,
 every `Log.d` is dropped before it reaches `logcat`, so a build full of debug
