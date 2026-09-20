@@ -10,5 +10,8 @@
 *.png binary
 *.keystore binary
 
+# An executable carries no extension to match on, so it is named in full.
+app/src/main/assets/home/.claude/skills/self-adb/bin/adb-mdns binary
+
 gradlew text eol=lf
 gradlew.bat text eol=crlf
