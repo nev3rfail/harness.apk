@@ -57,6 +57,12 @@ flowchart TB
 - [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) for the inspiration with shimming glibc with bionic and in general showing me that it is possible
 - [termux](https://github.com/termux/termux-packages) for the userland, and its wonderful community who provides precompiled stuff like arm ndk
 
+## License
+
+MIT, in [LICENSE](LICENSE). Vendored components keep their own: the terminal
+under `vendor/ghostty-android` is MIT as well, and the Termux bootstrap the app
+downloads at runtime carries the licences of the packages in it.
+
 ## Roadmap
 
 - More phone handles for the model
