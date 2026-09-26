@@ -1,0 +1,333 @@
+The loader's changes to musl 1.2.5: exec routing (harness-exec.c), /etc under
+$HARNESS_ETC, and getifaddrs without the link dump. Applied by
+scripts/stage-claude.sh with patch -p1.
+
+diff -ruN a/src/env/__libc_start_main.c b/src/env/__libc_start_main.c
+--- a/src/env/__libc_start_main.c
++++ b/src/env/__libc_start_main.c
+@@ -6,6 +6,7 @@
+ #include "syscall.h"
+ #include "atomic.h"
+ #include "libc.h"
++#include "harness-exec.h"
+ 
+ static void dummy(void) {}
+ weak_alias(dummy, _init);
+@@ -39,6 +40,10 @@
+ 	__init_tls(aux);
+ 	__init_ssp((void *)aux[AT_RANDOM]);
+ 
++	/* Exec routing's configuration, from the environment the process
++	 * started with, before anything can exec. */
++	hx_capture(envp, 0);
++
+ 	if (aux[AT_UID]==aux[AT_EUID] && aux[AT_GID]==aux[AT_EGID]
+ 		&& !aux[AT_SECURE]) return;
+ 
+diff -ruN a/src/misc/realpath.c b/src/misc/realpath.c
+--- a/src/misc/realpath.c
++++ b/src/misc/realpath.c
+@@ -3,6 +3,7 @@
+ #include <errno.h>
+ #include <unistd.h>
+ #include <string.h>
++#include "harness-exec.h"
+ 
+ static size_t slash_len(const char *s)
+ {
+@@ -15,6 +16,7 @@
+ {
+ 	char stack[PATH_MAX+1];
+ 	char output[PATH_MAX];
++	char exe[PATH_MAX];
+ 	size_t p, q, l, l0, cnt=0, nup=0;
+ 	int check_dir=0;
+ 
+@@ -22,6 +24,7 @@
+ 		errno = EINVAL;
+ 		return 0;
+ 	}
++	if (hx_proc_exe(filename, exe)) filename = exe;
+ 	l = strnlen(filename, sizeof stack);
+ 	if (!l) {
+ 		errno = ENOENT;
+diff -ruN a/src/network/getifaddrs.c b/src/network/getifaddrs.c
+--- a/src/network/getifaddrs.c
++++ b/src/network/getifaddrs.c
+@@ -5,6 +5,8 @@
+ #include <unistd.h>
+ #include <ifaddrs.h>
+ #include <syscall.h>
++#include <sys/ioctl.h>
++#include <sys/socket.h>
+ #include <net/if.h>
+ #include <netinet/in.h>
+ #include "netlink.h"
+@@ -102,6 +104,37 @@
+ 	*r = &sa->sa;
+ }
+ 
++/* A link from its index alone, for an address whose link the refused link
++ * dump did not report: the name from if_indextoname, the flags from
++ * SIOCGIFFLAGS, and no hardware address. */
++static struct ifaddrs_storage *link_from_index(struct ifaddrs_ctx *ctx, unsigned int index)
++{
++	struct ifaddrs_storage *ifs;
++	struct ifreq ifr;
++	unsigned int bucket;
++	int fd;
++
++	if (!if_indextoname(index, ifr.ifr_name)) return 0;
++	ifs = calloc(1, sizeof *ifs);
++	if (!ifs) return 0;
++	ifs->index = index;
++	memcpy(ifs->name, ifr.ifr_name, IFNAMSIZ);
++	ifs->ifa.ifa_name = ifs->name;
++	fd = socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC, 0);
++	if (fd >= 0) {
++		if (!ioctl(fd, SIOCGIFFLAGS, &ifr))
++			ifs->ifa.ifa_flags = (unsigned short)ifr.ifr_flags;
++		__syscall(SYS_close, fd);
++	}
++	bucket = index % IFADDRS_HASH_SIZE;
++	ifs->hash_next = ctx->hash[bucket];
++	ctx->hash[bucket] = ifs;
++	if (!ctx->first) ctx->first = &ifs->ifa;
++	if (ctx->last) ctx->last->ifa_next = &ifs->ifa;
++	ctx->last = &ifs->ifa;
++	return ifs;
++}
++
+ static int netlink_msg_to_ifaddr(void *pctx, struct nlmsghdr *h)
+ {
+ 	struct ifaddrs_ctx *ctx = pctx;
+@@ -121,6 +154,7 @@
+ 		for (ifs0 = ctx->hash[ifa->ifa_index % IFADDRS_HASH_SIZE]; ifs0; ifs0 = ifs0->hash_next)
+ 			if (ifs0->index == ifa->ifa_index)
+ 				break;
++		if (!ifs0) ifs0 = link_from_index(ctx, ifa->ifa_index);
+ 		if (!ifs0) return 0;
+ 	}
+ 
+diff -ruN a/src/network/netlink.c b/src/network/netlink.c
+--- a/src/network/netlink.c
++++ b/src/network/netlink.c
+@@ -32,7 +32,11 @@
+ 		if (r <= 0) return -1;
+ 		for (h = &u.reply; NLMSG_OK(h, (void*)&u.buf[r]); h = NLMSG_NEXT(h)) {
+ 			if (h->nlmsg_type == NLMSG_DONE) return 0;
+-			if (h->nlmsg_type == NLMSG_ERROR) return -1;
++			if (h->nlmsg_type == NLMSG_ERROR) {
++				/* struct nlmsgerr, which starts with the error. */
++				errno = -*(int *)NLMSG_DATA(h);
++				return -1;
++			}
+ 			ret = cb(ctx, h);
+ 			if (ret) return ret;
+ 		}
+@@ -46,6 +50,9 @@
+ 	fd = socket(PF_NETLINK, SOCK_RAW|SOCK_CLOEXEC, NETLINK_ROUTE);
+ 	if (fd < 0) return -1;
+ 	r = __netlink_enumerate(fd, 1, RTM_GETLINK, link_af, cb, ctx);
++	/* Android refuses the link dump to an app targeting API 30 or later
++	 * and still answers the address dump. */
++	if (r < 0 && (errno == EACCES || errno == EPERM)) r = 0;
+ 	if (!r) r = __netlink_enumerate(fd, 2, RTM_GETADDR, addr_af, cb, ctx);
+ 	__syscall(SYS_close,fd);
+ 	return r;
+diff -ruN a/src/process/execve.c b/src/process/execve.c
+--- a/src/process/execve.c
++++ b/src/process/execve.c
+@@ -1,8 +1,9 @@
+ #include <unistd.h>
+ #include "syscall.h"
++#include "harness-exec.h"
+ 
+ int execve(const char *path, char *const argv[], char *const envp[])
+ {
+-	/* do we need to use environ if envp is null? */
+-	return syscall(SYS_execve, path, argv, envp);
++	/* Every exec is routed; see harness-exec.c. */
++	return __syscall_ret(hx_execve(path, argv, envp));
+ }
+diff -ruN a/src/process/fexecve.c b/src/process/fexecve.c
+--- a/src/process/fexecve.c
++++ b/src/process/fexecve.c
+@@ -6,8 +6,8 @@
+ 
+ int fexecve(int fd, char *const argv[], char *const envp[])
+ {
+-	int r = __syscall(SYS_execveat, fd, "", argv, envp, AT_EMPTY_PATH);
+-	if (r != -ENOSYS) return __syscall_ret(r);
++	/* By path, so that the exec is routed: the kernel refuses execveat of
++	 * a file in the data directory, as it refuses execve. */
+ 	char buf[15 + 3*sizeof(int)];
+ 	__procfdname(buf, fd);
+ 	execve(buf, argv, envp);
+diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
+--- a/src/process/posix_spawn.c
++++ b/src/process/posix_spawn.c
+@@ -5,11 +5,14 @@
+ #include <signal.h>
+ #include <fcntl.h>
+ #include <errno.h>
++#include <limits.h>
++#include <stdlib.h>
+ #include <sys/wait.h>
+ #include "syscall.h"
+ #include "lock.h"
+ #include "pthread_impl.h"
+ #include "fdop.h"
++#include "harness-exec.h"
+ 
+ struct args {
+ 	int p[2];
+@@ -148,11 +151,8 @@
+ 	pthread_sigmask(SIG_SETMASK, (attr->__flags & POSIX_SPAWN_SETSIGMASK)
+ 		? &attr->__mask : &args->oldmask, 0);
+ 
+-	int (*exec)(const char *, char *const *, char *const *) =
+-		attr->__fn ? (int (*)())attr->__fn : execve;
+-
+-	exec(args->path, args->argv, args->envp);
+-	ret = -errno;
++	/* The parent searched PATH and routed the call. */
++	ret = __syscall(SYS_execve, args->path, args->argv, args->envp);
+ 
+ fail:
+ 	/* Since sizeof errno < PIPE_BUF, the write is atomic. */
+@@ -166,6 +166,21 @@
+ }
+ 
+ 
++/* The directory the file actions leave the child in, or null for the
++ * parent's own, which a relative path is resolved against. */
++static const char *spawn_dir(const posix_spawn_file_actions_t *fa, char *dir)
++{
++	struct fdop *op;
++	dir[0] = 0;
++	if (!fa || !fa->__actions) return 0;
++	for (op = fa->__actions; op->next; op = op->next);
++	for (; op; op = op->prev)
++		if ((op->cmd == FDOP_CHDIR || op->cmd == FDOP_FCHDIR)
++		    && hx_chdir(dir, op->cmd == FDOP_CHDIR ? op->path : 0, op->fd))
++			return 0;
++	return dir[0] ? dir : 0;
++}
++
+ int posix_spawn(pid_t *restrict res, const char *restrict path,
+ 	const posix_spawn_file_actions_t *fa,
+ 	const posix_spawnattr_t *restrict attr,
+@@ -173,16 +188,28 @@
+ {
+ 	pid_t pid;
+ 	char stack[1024+PATH_MAX];
++	char dir[PATH_MAX];
++	const char *search;
+ 	int ec=0, cs;
+ 	struct args args;
++	struct hx_exec hx;
++
++	/* PATH is searched and the call routed here, so that the child only
++	 * issues the system call. posix_spawnp marks itself with __fn. */
++	args.attr = attr ? attr : &(const posix_spawnattr_t){0};
++	search = getenv("PATH");
++	ec = args.attr->__fn
++		? hx_route_search(path, search ? search : "/usr/local/bin:/bin:/usr/bin",
++			argv, envp, spawn_dir(fa, dir), &hx)
++		: hx_route(path, argv, envp, spawn_dir(fa, dir), &hx);
++	if (ec) return ec;
+ 
+ 	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+ 
+-	args.path = path;
++	args.path = hx.path;
+ 	args.fa = fa;
+-	args.attr = attr ? attr : &(const posix_spawnattr_t){0};
+-	args.argv = argv;
+-	args.envp = envp;
++	args.argv = hx.argv;
++	args.envp = hx.envp;
+ 	pthread_sigmask(SIG_BLOCK, SIGALL_SET, &args.oldmask);
+ 
+ 	/* The lock guards both against seeing a SIGABRT disposition change
+@@ -214,6 +241,7 @@
+ fail:
+ 	pthread_sigmask(SIG_SETMASK, &args.oldmask, 0);
+ 	pthread_setcancelstate(cs, 0);
++	hx_release(&hx);
+ 
+ 	return ec;
+ }
+diff -ruN a/src/stdio/__fopen_rb_ca.c b/src/stdio/__fopen_rb_ca.c
+--- a/src/stdio/__fopen_rb_ca.c
++++ b/src/stdio/__fopen_rb_ca.c
+@@ -1,12 +1,18 @@
+ #include "stdio_impl.h"
+ #include <fcntl.h>
++#include <limits.h>
+ #include <string.h>
++#include "harness-exec.h"
+ 
+ FILE *__fopen_rb_ca(const char *filename, FILE *f, unsigned char *buf, size_t len)
+ {
++	char mapped[PATH_MAX];
++
+ 	memset(f, 0, sizeof *f);
+ 
+-	f->fd = sys_open(filename, O_RDONLY|O_CLOEXEC);
++	/* Android keeps nothing for a resolver under /etc; the app keeps it
++	 * under $HARNESS_ETC. */
++	f->fd = sys_open(hx_etc_path(filename, mapped), O_RDONLY|O_CLOEXEC);
+ 	if (f->fd < 0) return 0;
+ 	__syscall(SYS_fcntl, f->fd, F_SETFD, FD_CLOEXEC);
+ 
+diff -ruN a/src/unistd/readlinkat.c b/src/unistd/readlinkat.c
+--- a/src/unistd/readlinkat.c
++++ b/src/unistd/readlinkat.c
+@@ -1,9 +1,19 @@
+ #include <unistd.h>
++#include <limits.h>
++#include <string.h>
+ #include "syscall.h"
++#include "harness-exec.h"
+ 
+ ssize_t readlinkat(int fd, const char *restrict path, char *restrict buf, size_t bufsize)
+ {
+-	char dummy[1];
++	char dummy[1], exe[PATH_MAX];
++	const char *self = hx_proc_exe(path, exe);
++	if (self) {
++		size_t l = strlen(self);
++		if (l > bufsize) l = bufsize;
++		memcpy(buf, self, l);
++		return l;
++	}
+ 	if (!bufsize) {
+ 		buf = dummy;
+ 		bufsize = 1;
+diff -ruN a/src/unistd/readlink.c b/src/unistd/readlink.c
+--- a/src/unistd/readlink.c
++++ b/src/unistd/readlink.c
+@@ -1,10 +1,20 @@
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <limits.h>
++#include <string.h>
+ #include "syscall.h"
++#include "harness-exec.h"
+ 
+ ssize_t readlink(const char *restrict path, char *restrict buf, size_t bufsize)
+ {
+-	char dummy[1];
++	char dummy[1], exe[PATH_MAX];
++	const char *self = hx_proc_exe(path, exe);
++	if (self) {
++		size_t l = strlen(self);
++		if (l > bufsize) l = bufsize;
++		memcpy(buf, self, l);
++		return l;
++	}
+ 	if (!bufsize) {
+ 		buf = dummy;
+ 		bufsize = 1;

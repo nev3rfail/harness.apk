@@ -4,24 +4,25 @@
 # Anthropic publishes musl builds of Claude Code. A musl binary asks for one
 # thing Android does not have -- /lib/ld-musl-<arch>.so.1 -- and on musl that
 # loader is also libc, satisfying the binary's only DT_NEEDED from itself. So
-# the whole port is: build one shared library, and point the binary at where it
-# will live on the device.
+# the whole port is: build one shared library, and run it as a program with the
+# binary as its argument.
 #
-# Usage: stage-claude.sh [--abi ABI] [--version X.Y.Z] [--prefix DIR]
-#                        [--out DIR] [--loader FILE] [--loader-only]
+# The library is patched (app/src/main/cpp/harness-exec/musl.patch) to route
+# every exec it makes, to read /etc through $HARNESS_ETC, and to list addresses
+# without the link dump Android refuses. Nothing in it names a channel, so one
+# build serves them all.
+#
+# Usage: stage-claude.sh [--abi ABI] [--version X.Y.Z] [--out DIR]
+#                        [--loader FILE] [--loader-only]
 #
 #   --abi          x86_64 (default) or arm64-v8a
 #   --version      Claude Code version; defaults to the latest on npm
-#   --prefix       where the staged files will live on the device, baked into the
-#                  loader's own /etc paths
 #   --out          staging directory on this machine
 #   --loader       use this loader instead of building one. A loader built
-#                  anywhere else reads the real /etc, where Android keeps no
-#                  resolver, so name resolution through libc will not work.
+#                  anywhere else lacks the patches: its programs cannot start
+#                  anything, and name resolution through libc does not work.
 #   --loader-only  build the loader and stop. This is what the APK needs: the
-#                  binary is downloaded on the device, and the loader is run as
-#                  a program rather than named as an ELF interpreter, so nothing
-#                  patches it.
+#                  binary is downloaded on the device and stored as it arrived.
 #
 # Building for another architecture takes a cross compiler, passed as CC. Note
 # that `zig cc` is not one for this purpose: it is itself a musl toolchain, and
@@ -39,7 +40,6 @@ MUSL_SHA256=a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ABI=x86_64
 VERSION=
-PREFIX=/data/data/apk.harness/files/claude
 OUT=$ROOT/build/claude
 SUPPLIED_LOADER=
 LOADER_ONLY=
@@ -51,7 +51,6 @@ while [ $# -gt 0 ]; do
   case $1 in
     --abi) ABI=$2; shift 2 ;;
     --version) VERSION=$2; shift 2 ;;
-    --prefix) PREFIX=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --loader) SUPPLIED_LOADER=$2; shift 2 ;;
     --loader-only) LOADER_ONLY=1; shift ;;
@@ -68,11 +67,11 @@ esac
 LOADER=ld-musl-$MUSL_ARCH.so.1
 info() { printf '\033[36m==\033[0m %s\n' "$*"; }
 
-# The loader needs a compiler and an archive; the binary needs a manifest read and
-# an interpreter rewritten. Only what the requested path uses is demanded, so a
-# host that can build a loader is not turned away for lacking jq.
-tools="curl make"
-[ -n "$LOADER_ONLY" ] || tools="$tools jq patchelf"
+# The loader needs a compiler, an archive and its patch; the binary needs a
+# manifest read. Only what the requested path uses is demanded, so a host that
+# can build a loader is not turned away for lacking jq.
+tools="curl make patch"
+[ -n "$LOADER_ONLY" ] || tools="$tools jq"
 for tool in $tools; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
 done
@@ -98,19 +97,21 @@ verify_loader() {
   done
 }
 
-# The loader carries the prefix inside it -- see the /etc patch below -- so a
-# cached one is only good for the prefix it was built for.
-stamp=$CACHE/$MUSL_ARCH/prefix
+# A cached loader is good for as long as the patch, the router and this script
+# are the ones it was built from.
+HX=$ROOT/app/src/main/cpp/harness-exec
+inputs=$(cat "$HX/musl.patch" "$HX/harness-exec.c" "$HX/harness-exec.h" "${BASH_SOURCE[0]}" \
+  | sha256sum | cut -d' ' -f1)
+stamp=$CACHE/$MUSL_ARCH/inputs
 cached_loader() {
-  [ -f "$CACHE/$MUSL_ARCH/$LOADER" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$PREFIX" ]
+  [ -f "$CACHE/$MUSL_ARCH/$LOADER" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$inputs" ]
 }
 
 if [ -n "$SUPPLIED_LOADER" ]; then
   verify_loader "$SUPPLIED_LOADER"
   mkdir -p "$CACHE/$MUSL_ARCH"
   cp "$SUPPLIED_LOADER" "$CACHE/$MUSL_ARCH/$LOADER"
-  # A loader built elsewhere reads the real /etc, which on Android is not
-  # writable and holds no resolver.
+  # A loader built elsewhere carries none of the patches.
   printf '%s' "(supplied)" > "$stamp"
 elif ! cached_loader; then
   tarball=$CACHE/musl-$MUSL_VERSION.tar.gz
@@ -123,19 +124,29 @@ elif ! cached_loader; then
   [ "$actual" = "$MUSL_SHA256" ] || {
     echo "musl checksum mismatch: expected $MUSL_SHA256, got $actual" >&2; exit 1; }
 
-  # Extracted fresh every time: the patches below are rewrites, not deletions,
-  # and a tree already carrying one prefix would silently keep it.
+  # Extracted fresh every time, so the patch meets the tree it was made against.
   src=$CACHE/musl-$MUSL_VERSION
   rm -rf "$src"
   tar -xzf "$tarball" -C "$CACHE"
 
+  # An app targeting API 29 or later may not execve a file in its data
+  # directory, and every program the agent starts is one. The router decides
+  # how each exec runs; musl binds its internal calls locally, so patching
+  # execve, posix_spawn and the readlinks covers execvp, posix_spawnp, system
+  # and popen too.
+  #
   # musl opens /etc/resolv.conf, /etc/hosts and /etc/services from inside libc,
   # by way of calls that never reach the PLT -- so nothing outside can redirect
   # them, and on Android there is nothing at /etc to read. Without a resolver
   # musl falls back to a nameserver on loopback that nothing answers, and every
-  # name takes its full timeout to fail. Pointing libc at the staged directory
-  # is what makes getaddrinfo work at all, which is the resolver behind fetch.
-  sed -i "s|\"/etc/|\"$PREFIX/etc/|g" "$src"/src/network/*.c
+  # name takes its full timeout to fail. The patch reads them from $HARNESS_ETC.
+  #
+  # At API 30 and later Android refuses an app the netlink link dump, which
+  # musl's getifaddrs starts with; the patch lists the addresses without it.
+  cp "$HX/harness-exec.c" "$src/src/process/harness-exec.c"
+  cp "$HX/harness-exec.h" "$src/src/internal/harness-exec.h"
+  patch -d "$src" -p1 --fuzz=0 --no-backup-if-mismatch --quiet < "$HX/musl.patch" \
+    || { echo "musl.patch does not apply to musl $MUSL_VERSION" >&2; exit 1; }
 
   # Android grants an app an allowlist of syscalls that omits the legacy calls
   # bionic never makes, and answers the rest with SECCOMP_RET_KILL_PROCESS. musl
@@ -165,11 +176,15 @@ elif ! cached_loader; then
   # them -- drop the dynamic symbol table from the shared libc, which links and
   # installs perfectly and then fails at run time with a page of
   # "symbol not found" for every libc function the program wanted.
+  #
+  # Play rejects a library with a LOAD segment aligned below 16 KB, and a 16 KB
+  # device cannot map one.
   (cd "$build" && "$src/configure" \
       --target="$MUSL_ARCH-linux-musl" \
       --disable-static \
       CC="${CC:-$DEFAULT_CC}" \
-      LDFLAGS="-Wl,--export-dynamic" >configure.log 2>&1 \
+      CFLAGS="-DHX_MUSL" \
+      LDFLAGS="-Wl,--export-dynamic -Wl,-z,max-page-size=16384" >configure.log 2>&1 \
     && make -j"$(nproc)" lib/libc.so >build.log 2>&1) \
     || { echo "musl build failed; see $build/{configure,build}.log" >&2; exit 1; }
 
@@ -177,7 +192,7 @@ elif ! cached_loader; then
 
   mkdir -p "$CACHE/$MUSL_ARCH"
   cp "$build/lib/libc.so" "$CACHE/$MUSL_ARCH/$LOADER"
-  printf '%s' "$PREFIX" > "$stamp"
+  printf '%s' "$inputs" > "$stamp"
 fi
 cp "$CACHE/$MUSL_ARCH/$LOADER" "$OUT/$LOADER"
 chmod 755 "$OUT/$LOADER"
@@ -222,9 +237,6 @@ fi
 binary=$OUT/claude
 cp "$pristine" "$binary"
 chmod 755 "$binary"
-
-patchelf --set-interpreter "$PREFIX/$LOADER" "$binary"
-info "interpreter: $(patchelf --print-interpreter "$binary")"
 
 printf '%s\n' "$VERSION" > "$OUT/VERSION"
 info "staged in $OUT"

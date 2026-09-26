@@ -11,13 +11,6 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# The prefix compiled into the loader, which BootstrapRelocation.kt rewrites
-# against whichever channel is running. Both sides have to name the same
-# application id, and it has to be eleven characters: every path in this project
-# is sized against that budget.
-PREFIX_ID=apk.harness
-PREFIX=/data/data/$PREFIX_ID/files/claude
-
 PACKAGED=libmuslloader.so
 ABIS=("$@")
 [ ${#ABIS[@]} -gt 0 ] || ABIS=(arm64-v8a x86_64)
@@ -32,7 +25,7 @@ for abi in "${ABIS[@]}"; do
   out=$ROOT/build/loader/$abi
   mkdir -p "$out"
   "$ROOT/scripts/stage-claude.sh" \
-    --loader-only --abi "$abi" --prefix "$PREFIX" --out "$out"
+    --loader-only --abi "$abi" --out "$out"
 
   dest=$ROOT/app/src/main/jniLibs/$abi
   mkdir -p "$dest"

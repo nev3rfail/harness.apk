@@ -1,0 +1,12 @@
+harness-exec
+
+harness-exec.c and interpose.c are derived from termux-exec, the build published
+for the Play Store at https://github.com/termux-play-store/termux-exec, commit
+47633d5df2db3dfea34cef568c6c82a7ba8dcc2e, licensed under the Apache License,
+Version 2.0 (LICENSE in this directory).
+
+These files are modified. The compiled-in Termux prefix is replaced by a routing
+table configured from the process's own start; the router allocates nothing and
+is safe in a vfork child; it is also compiled into a patched musl libc; and it
+covers posix_spawn, posix_spawnp and realpath, and /proc/self/exe as an exec
+target.

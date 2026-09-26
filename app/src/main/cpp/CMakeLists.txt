@@ -9,3 +9,13 @@ set_target_properties(relocate PROPERTIES
     OUTPUT_NAME "relocate"
     PREFIX "lib"
     SUFFIX ".so")
+
+# Exec routing for bionic programs, preloaded into each of them. The musl side is
+# the same router compiled into the loader by scripts/stage-claude.sh.
+add_library(termuxexec SHARED
+    harness-exec/harness-exec.c
+    harness-exec/interpose.c)
+set_target_properties(termuxexec PROPERTIES C_VISIBILITY_PRESET hidden)
+target_compile_options(termuxexec PRIVATE -Wall -Wextra -Werror)
+target_link_options(termuxexec PRIVATE -Wl,-z,max-page-size=16384)
+target_link_libraries(termuxexec dl)
