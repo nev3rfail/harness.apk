@@ -24,8 +24,9 @@
  *      8    anything else                    as asked, environment unchanged
  *
  * Everything here is safe in a vfork child: raw system calls, no allocator, no
- * stdio, no writes to environ. The new argument and environment arrays live in
- * one anonymous mapping sized from the caller's.
+ * stdio, no writes to environ. The working state and the new argument and
+ * environment arrays live in the caller's struct hx_exec; arrays too large for
+ * it take one anonymous mapping.
  */
 #define _GNU_SOURCE
 #include <elf.h>
@@ -61,9 +62,6 @@ static long hx_ret(long r) { return r == -1 ? -errno : r; }
 #error "unsupported architecture"
 #endif
 
-#define HX_DEPTH 4
-/* The kernel reads at most this much of a shebang line. */
-#define HX_HEADER 256
 #define HX_PSE "TERMUX_EXEC__PROC_SELF_EXE"
 
 #define HX_LOADER "libmuslloader.so"
@@ -96,18 +94,6 @@ static struct {
 	char self[PATH_MAX];
 	int use_shim;
 } hx_cfg;
-
-/* The working state of one decision, at the head of the mapping. */
-struct hx_scratch {
-	char path[HX_DEPTH + 1][PATH_MAX];
-	char header[HX_DEPTH + 1][HX_HEADER];
-	char interp[HX_HEADER];
-	char norm[PATH_MAX];
-	char canon[PATH_MAX];
-	char pse[PATH_MAX];
-	char tmp[PATH_MAX];
-	const char *head[2 * HX_DEPTH + 2];
-};
 
 enum { HX_KEEP, HX_OURS, HX_DROP };
 
@@ -292,8 +278,8 @@ static int hx_normalize(const char *p, char *out) {
 	return 0;
 }
 
-/* Step 1, in place. */
-static void hx_rewrite(char *p, char *tmp) {
+/* Step 1, in place in p, which holds cap bytes. */
+static void hx_rewrite(char *p, size_t cap, char *tmp) {
 	const char *rest;
 	if (!hx_cfg.prefix[0]) return;
 	if (!strncmp(p, "/bin/", 5))
@@ -302,7 +288,7 @@ static void hx_rewrite(char *p, char *tmp) {
 		rest = p + 9;
 	else
 		return;
-	if (hx_join(tmp, hx_cfg.prefix, "bin") || hx_join(tmp, tmp, rest)) return;
+	if (hx_join(tmp, hx_cfg.prefix, "bin") || hx_join(tmp, tmp, rest) || strlen(tmp) >= cap) return;
 	if (hx_sys(SYS_faccessat, AT_FDCWD, tmp, F_OK, 0) == 0) memcpy(p, tmp, strlen(tmp) + 1);
 }
 
@@ -349,18 +335,31 @@ static void hx_elf(long fd, const char *h, size_t n, int *native, char *interp) 
 	}
 }
 
+/* The arguments as asked: what the shebangs put in front, then the caller's
+ * after its argv[0]. */
+struct hx_args {
+	const char **head;
+	size_t hn;
+	char *const *tail;
+	size_t n;
+};
+
+static const char *hx_arg(const struct hx_args *a, size_t i) {
+	return i >= a->n ? 0 : i < a->hn ? a->head[i] : a->tail[i - a->hn];
+}
+
 /* The program a loader's arguments name, after its options. */
-static const char *hx_loader_program(char *const *av) {
-	for (; *av; av++) {
-		const char *o = *av;
+static const char *hx_loader_program(const struct hx_args *a) {
+	for (size_t i = 1; i < a->n; i++) {
+		const char *o = hx_arg(a, i);
 		if (o[0] != '-' || o[1] != '-') return o;
 		o += 2;
-		if (!*o) return av[1];
+		if (!*o) return hx_arg(a, i + 1);
 		if (!strcmp(o, "list") || !strncmp(o, "library-path=", 13) || !strncmp(o, "preload=", 8) ||
 		    !strncmp(o, "argv0=", 6))
 			continue;
 		if (strcmp(o, "library-path") && strcmp(o, "preload") && strcmp(o, "argv0")) return 0;
-		if (!*++av) return 0;
+		i++;
 	}
 	return 0;
 }
@@ -402,6 +401,12 @@ static char *hx_preload(char **area, const char *old) {
 	return s;
 }
 
+/* The most hx_environ writes past the caller's entries: pointers and text. */
+static size_t hx_environ_size(const struct hx_env *e, const char *old) {
+	return 6 * sizeof(char *) + (e->preload == HX_OURS ? 13 + strlen(hx_cfg.preload) + (old ? strlen(old) : 0) : 0) +
+	       (e->pse ? 28 + strlen(e->pse) : 0) + 16 + strlen(hx_cfg.prefix) + 2 * (18 + strlen(hx_cfg.etc));
+}
+
 static char **hx_environ(char **out, char *area, char *const envp[], const struct hx_env *e, const char *old) {
 	size_t k = 0;
 	for (; *envp; envp++) {
@@ -431,61 +436,71 @@ static int hx_row(const char *real, int native, const char *interp) {
 	return 8;
 }
 
-static int hx_decide(const char *path, char *const argv[], char *const envp[], const char *base, size_t argc,
-                     size_t envc, const char *old, struct hx_exec *x) {
-	struct hx_scratch *s = x->map;
-	char **av = (char **)(s + 1) + 5;
-	char **ev = av + argc + 2 * HX_DEPTH + 4;
-	char *area = (char *)(ev + envc + 8);
-	const char **head = s->head, *head0, *prog;
-	char *const *tail = argv[0] ? argv + 1 : argv;
-	char *p = s->path[0];
-	size_t hn = 0, depth, i, k = 0;
-	unsigned long pid;
-	int native = 0, row, shim = 0, e;
+int hx_route(const char *path, char *const argv[], char *const envp[], const char *base, struct hx_exec *x) {
+	static char *const none[] = {0};
+	struct hx_scratch *s = &x->s;
+	char *w = s->work, *p = s->path, **av, **ev;
+	const char **head = s->head, *old, *head0, *prog, *pre[4];
+	struct hx_args a;
 	struct hx_env env = {HX_KEEP, HX_KEEP, 0, 0};
+	size_t argc = 0, envc = 0, hn = 0, pn = 0, depth, i, k = 0, need;
+	unsigned long pid;
+	int native = 0, row, shim = 0, first = 0, e;
+
+	x->map = 0;
+	if (!path) return EFAULT;
+	if (!argv) argv = none;
+	if (!envp) envp = none;
+	while (argv[argc])
+		argc++;
+	while (envp[envc])
+		envc++;
+	old = hx_env_get(envp, "LD_PRELOAD");
 
 	if (argv[0]) head[hn++] = argv[0];
 	e = base && path[0] != '/' ? hx_join(p, base, path) : hx_copy(p, path);
 	if (e) return e;
 
 	/* Step 0. */
-	if (hx_cfg.self[0] && hx_proc_pid(p, &pid) && hx_own(pid) && !hx_link("/proc/self/exe", s->tmp) &&
-	    hx_loaded(s->tmp))
+	if (hx_cfg.self[0] && hx_proc_pid(p, &pid) && hx_own(pid) && !hx_link("/proc/self/exe", w) && hx_loaded(w))
 		memcpy(p, hx_cfg.self, strlen(hx_cfg.self) + 1);
 
 	for (depth = 0;; depth++) {
-		char *h = s->header[depth], *interp, *arg;
+		char *h, *interp, *arg;
 		long fd, n, r;
 		size_t add, keep;
-		p = s->path[depth];
 
 		/* Step 1. */
-		hx_rewrite(p, s->tmp);
+		hx_rewrite(p, depth ? HX_INTERP_PATH : PATH_MAX, w);
 		r = hx_sys(SYS_faccessat, AT_FDCWD, p, X_OK, 0);
 		if (r < 0) return (int)-r;
 
 		/* A file that cannot be read is classified by its path alone. */
-		s->interp[0] = 0;
+		s->elf_interp[0] = 0;
 		fd = hx_sys(SYS_openat, AT_FDCWD, p, O_RDONLY | O_CLOEXEC);
 		if (fd < 0) break;
-		n = hx_sys(SYS_pread64, fd, h, HX_HEADER - 1, 0);
+		n = hx_sys(SYS_pread64, fd, w, HX_HEADER - 1, 0);
 		if (n < 0) {
 			hx_sys(SYS_close, fd);
 			return n == -EISDIR ? EACCES : (int)-n;
 		}
-		h[n] = 0;
-		if (n >= SELFMAG && !memcmp(h, ELFMAG, SELFMAG)) {
-			hx_elf(fd, h, (size_t)n, &native, s->interp);
+		w[n] = 0;
+		if (n >= SELFMAG && !memcmp(w, ELFMAG, SELFMAG)) {
+			hx_elf(fd, w, (size_t)n, &native, s->elf_interp);
 			hx_sys(SYS_close, fd);
 			break;
 		}
 		hx_sys(SYS_close, fd);
 
-		/* Step 2. */
-		if (n < 2 || h[0] != '#' || h[1] != '!' || hx_shebang(h, (size_t)n, &interp, &arg)) return ENOEXEC;
+		/* Step 2. The line stays in header[depth], where the interpreter's
+		 * argument and name are pointed at from head. */
+		if (n < 2 || w[0] != '#' || w[1] != '!') return ENOEXEC;
 		if (depth == HX_DEPTH) return ELOOP;
-		if ((e = hx_copy(s->path[depth + 1], interp))) return e;
+		h = s->header[depth];
+		memcpy(h, w, (size_t)n + 1);
+		if (hx_shebang(h, (size_t)n, &interp, &arg)) return ENOEXEC;
+		/* A shebang line is shorter than HX_HEADER, so this fits. */
+		memcpy(s->interp[depth], interp, strlen(interp) + 1);
 		add = arg ? 3 : 2;
 		keep = hn ? hn - 1 : 0;
 		memmove(head + add, head + 1, keep * sizeof *head);
@@ -493,39 +508,37 @@ static int hx_decide(const char *path, char *const argv[], char *const envp[], c
 		if (arg) head[1] = arg;
 		head[add - 1] = p;
 		hn = add + keep;
+		p = s->interp[depth];
 	}
 
 	/* Step 3. */
-	if (hx_normalize(p, s->norm)) hx_copy(s->norm, p);
-	if (hx_canon(p, s->canon)) memcpy(s->canon, s->norm, strlen(s->norm) + 1);
-	row = hx_row(s->canon, native, s->interp);
-	if ((row == 2 || row == 7) && hx_cfg.use_shim && hx_cfg.shim[0] && !hx_shimmed(s->tmp)) shim = 1;
+	if (hx_canon(p, w) && hx_normalize(p, w)) hx_copy(w, p);
+	row = hx_row(w, native, s->elf_interp);
+	if ((row == 2 || row == 7) && hx_cfg.use_shim && hx_cfg.shim[0] && !hx_shimmed(w)) shim = 1;
 
-	for (i = 0; i < hn; i++)
-		av[k++] = (char *)head[i];
-	for (i = 0; tail[i]; i++)
-		av[k++] = tail[i];
-	av[k] = av[k + 1] = 0;
-	head0 = hn ? head[0] : s->norm;
+	a = (struct hx_args){head, hn, argv[0] ? argv + 1 : argv, hn + argc - (argv[0] ? 1 : 0)};
+	/* Where P goes in place of argv[0], it is normalized into w; head0 may
+	 * point there before it is written. */
+	head0 = hn ? head[0] : w;
 	x->path = p;
 
 	switch (row) {
 	case 1:
 		env = (struct hx_env){HX_OURS, HX_KEEP, 0, 0};
-		if (av[0] && av[1] && !hx_normalize(av[1], s->pse)) env.pse = s->pse;
+		if (hx_arg(&a, 1) && !hx_normalize(hx_arg(&a, 1), w)) env.pse = w;
 		break;
 	case 2:
 		if (shim) {
 			/* The shim runs the loader, which this router in the shim then
 			 * decides again, without the shim. */
 			env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0};
-			av[0] = s->norm;
-			*--av = hx_cfg.shim;
+			pre[pn++] = hx_cfg.shim;
+			first = 1;
 			x->path = hx_cfg.shim;
 		} else {
 			env = (struct hx_env){HX_DROP, HX_DROP, 0, 0};
-			prog = av[0] ? hx_loader_program(av + 1) : 0;
-			if (prog && !hx_normalize(prog, s->pse)) env.pse = s->pse;
+			prog = hx_loader_program(&a);
+			if (prog && !hx_normalize(prog, w)) env.pse = w;
 		}
 		break;
 	case 3:
@@ -538,59 +551,48 @@ static int hx_decide(const char *path, char *const argv[], char *const envp[], c
 		env = (struct hx_env){HX_DROP, HX_DROP, 0, 0};
 		break;
 	case 6:
-		env = (struct hx_env){HX_OURS, HX_KEEP, 0, s->norm};
-		av[0] = s->norm;
-		*--av = (char *)head0;
+		env = (struct hx_env){HX_OURS, HX_KEEP, 0, w};
+		pre[pn++] = head0;
+		first = 1;
 		x->path = hx_linker64;
 		break;
 	case 7:
-		av[0] = s->norm;
-		*--av = (char *)head0;
-		*--av = (char *)"--argv0";
-		*--av = hx_cfg.loader;
-		x->path = hx_cfg.loader;
-		if (shim) {
-			env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0};
-			*--av = hx_cfg.shim;
-			x->path = hx_cfg.shim;
-		} else {
-			env = (struct hx_env){HX_DROP, HX_DROP, 0, s->norm};
-		}
+		if (shim) pre[pn++] = hx_cfg.shim;
+		pre[pn++] = hx_cfg.loader;
+		pre[pn++] = "--argv0";
+		pre[pn++] = head0;
+		first = 1;
+		x->path = shim ? hx_cfg.shim : hx_cfg.loader;
+		env = shim ? (struct hx_env){HX_OURS, HX_KEEP, 1, 0} : (struct hx_env){HX_DROP, HX_DROP, 0, w};
 		break;
-	default:
-		x->argv = av;
+	}
+	if (first && hx_normalize(p, w)) hx_copy(w, p);
+
+	need = (pn + a.n + 2) * sizeof(char *);
+	if (row != 8) need += envc * sizeof(char *) + hx_environ_size(&env, old);
+	if (need <= sizeof x->area) {
+		av = x->area;
+	} else {
+		long m = hx_sys(SYS_mmap, 0, need, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (m < 0 && m > -4096) return E2BIG;
+		x->map = (void *)m;
+		x->len = need;
+		av = x->map;
+	}
+	for (i = 0; i < pn; i++)
+		av[k++] = (char *)pre[i];
+	if (first) av[k++] = w;
+	for (i = (size_t)first; i < a.n; i++)
+		av[k++] = (char *)hx_arg(&a, i);
+	av[k++] = 0;
+	x->argv = av;
+	if (row == 8) {
 		x->envp = (char **)envp;
 		return 0;
 	}
-	x->argv = av;
-	x->envp = hx_environ(ev, area, envp, &env, old);
+	ev = av + k;
+	x->envp = hx_environ(ev, (char *)(ev + envc + 6), envp, &env, old);
 	return 0;
-}
-
-int hx_route(const char *path, char *const argv[], char *const envp[], const char *base, struct hx_exec *x) {
-	static char *const none[] = {0};
-	const char *old;
-	size_t argc = 0, envc = 0;
-	long m;
-	int e;
-
-	x->map = 0;
-	if (!path) return EFAULT;
-	if (!argv) argv = none;
-	if (!envp) envp = none;
-	while (argv[argc])
-		argc++;
-	while (envp[envc])
-		envc++;
-	old = hx_env_get(envp, "LD_PRELOAD");
-	x->len = sizeof(struct hx_scratch) + (argc + envc + 2 * HX_DEPTH + 32) * sizeof(char *) + 6 * PATH_MAX + 128 +
-	         (old ? strlen(old) : 0);
-	m = hx_sys(SYS_mmap, 0, x->len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (m < 0 && m > -4096) return E2BIG;
-	x->map = (void *)m;
-	e = hx_decide(path, argv, envp, base, argc, envc, old, x);
-	if (e) hx_release(x);
-	return e;
 }
 
 int hx_route_search(const char *file, const char *search, char *const argv[], char *const envp[], const char *base,
@@ -681,7 +683,7 @@ found:
 
 const char *hx_proc_exe(const char *path, char *buf) {
 	unsigned long pid;
-	if (!hx_proc_pid(path, &pid) || hx_link(path, buf) || !hx_loaded(buf)) return 0;
+	if (!path || !hx_proc_pid(path, &pid) || hx_link(path, buf) || !hx_loaded(buf)) return 0;
 	if (hx_own(pid)) {
 		if (!hx_cfg.self[0]) return 0;
 		memcpy(buf, hx_cfg.self, strlen(hx_cfg.self) + 1);

@@ -306,6 +306,13 @@ static const char *PRE, *HP, *HE, *SE;
 
 /* --- tests --- */
 
+static const char *loader_program(const char **v) {
+	size_t n = 0;
+	while (v[n])
+		n++;
+	return hx_loader_program(&(struct hx_args){v, n, NULL, n});
+}
+
 static void test_units(void) {
 	char b[HX_HEADER], *interp, *arg, out[PATH_MAX];
 
@@ -321,17 +328,17 @@ static void test_units(void) {
 	CHECK(hx_shebang(b, strlen(b), &interp, &arg) == ENOEXEC);
 
 	strcpy(out, "/usr/bin/hxtool");
-	hx_rewrite(out, (char[PATH_MAX]){0});
+	hx_rewrite(out, sizeof out, (char[PATH_MAX]){0});
 	CHECK(!strcmp(out, S("%s/bin/hxtool", PX)));
 	strcpy(out, "/bin/sh");
-	hx_rewrite(out, (char[PATH_MAX]){0});
+	hx_rewrite(out, sizeof out, (char[PATH_MAX]){0});
 	CHECK(!strcmp(out, S("%s/bin/sh", PX)));
 	strcpy(out, "/usr/bin/hx-absent");
-	hx_rewrite(out, (char[PATH_MAX]){0});
+	hx_rewrite(out, sizeof out, (char[PATH_MAX]){0});
 	CHECK(!strcmp(out, "/usr/bin/hx-absent"));
 	for (const char *const *p = V("/system/bin/sh", "/usr/local/bin/hxtool", "/binx/hxtool", "bin/hxtool"); *p; p++) {
 		strcpy(out, *p);
-		hx_rewrite(out, (char[PATH_MAX]){0});
+		hx_rewrite(out, sizeof out, (char[PATH_MAX]){0});
 		CHECK(!strcmp(out, *p));
 	}
 
@@ -339,11 +346,11 @@ static void test_units(void) {
 	CHECK(!hx_normalize("/../..", out) && !strcmp(out, "/"));
 	CHECK(!hx_normalize("rel/./x", out) && !strcmp(out, S("%s/rel/x", R)));
 
-	CHECK(!strcmp(hx_loader_program((char *[]){"--preload", "x", "--argv0=a", "--library-path", "y", "p", "q", NULL}),
+	CHECK(!strcmp(loader_program((const char *[]){"ld", "--preload", "x", "--argv0=a", "--library-path", "y", "p", "q", NULL}),
 	              "p"));
-	CHECK(!strcmp(hx_loader_program((char *[]){"--list", "--", "--weird", NULL}), "--weird"));
-	CHECK(!hx_loader_program((char *[]){"--bogus", "p", NULL}));
-	CHECK(!hx_loader_program((char *[]){"--preload", NULL}));
+	CHECK(!strcmp(loader_program((const char *[]){"ld", "--list", "--", "--weird", NULL}), "--weird"));
+	CHECK(!loader_program((const char *[]){"ld", "--bogus", "p", NULL}));
+	CHECK(!loader_program((const char *[]){"ld", "--preload", NULL}));
 
 	{
 		char area[2 * PATH_MAX], *a = area;
@@ -596,6 +603,7 @@ static void test_proc_self_exe(void) {
 	CHECK(!hx_proc_exe(S("/proc/%d/cwd", getpid()), buf));
 	CHECK(!hx_proc_exe("/proc/selfish/exe", buf));
 	CHECK(!hx_proc_exe("/tmp/exe", buf));
+	CHECK(!hx_proc_exe(NULL, buf));
 
 	/* Not started through a loader: the real answer stands. */
 	t_self = NULL;
@@ -650,6 +658,8 @@ static void test_large_and_e2big(void) {
 	CHECK(!hx_route(musl, argv, ENV, NULL, &x));
 	CHECK(!strcmp(x.argv[0], LOADER) && !strcmp(x.argv[3], musl) && !strcmp(x.argv[4], "arg1") &&
 	      !strcmp(x.argv[n + 2], "arg4999") && !x.argv[n + 3]);
+	/* Too large for struct hx_exec, so mapped. */
+	CHECK(x.map != NULL);
 	hx_release(&x);
 
 	/* With no address space left for the mapping, E2BIG. */
@@ -669,10 +679,11 @@ static void test_large_and_e2big(void) {
 	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
-/* In a vfork child, on the stack musl's posix_spawn gives its child, with the
- * allocator forbidden. */
+/* In a vfork child, on the stack musl's posix_spawn gives a child that routes
+ * its own call, with the allocator forbidden. The stack is painted first, so
+ * the depth the router reached can be read off afterwards. */
 static struct {
-	const char *musl, *script, *hxtool;
+	const char *musl, *script, *hxtool, *search;
 	char **big;
 	int result;
 } vf;
@@ -683,7 +694,7 @@ static int vfork_child(void *arg) {
 	forbid_alloc = 1;
 	vf.result = 1;
 	if (hx_route(vf.musl, (char *[]){"rg", "x", NULL}, ENV, NULL, &x)) _exit(0);
-	if (strcmp(x.path, LOADER) || strcmp(x.argv[2], "rg") || strcmp(x.argv[3], vf.musl)) _exit(0);
+	if (strcmp(x.path, LOADER) || strcmp(x.argv[2], "rg") || strcmp(x.argv[3], vf.musl) || x.map) _exit(0);
 	hx_release(&x);
 	vf.result = 2;
 	if (hx_route(vf.script, (char *[]){"tool.sh", NULL}, ENV, NULL, &x)) _exit(0);
@@ -695,27 +706,32 @@ static int vfork_child(void *arg) {
 	vf.result = 4;
 	if (hx_route("/proc/self/exe", (char *[]){"me", NULL}, ENV, NULL, &x)) _exit(0);
 	hx_release(&x);
+	vf.result = 5;
+	if (hx_route_search("musl", vf.search, (char *[]){"rg", NULL}, ENV, NULL, &x) || x.map) _exit(0);
+	hx_release(&x);
 	vf.result = 0;
 	_exit(0);
 }
 
-static void test_vfork_small_stack(void) {
-	size_t page = (size_t)sysconf(_SC_PAGESIZE), size = 1024 + PATH_MAX;
-	size_t total = page + (size + page - 1) / page * page;
-	char *region = mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+static void test_vfork_stack(void) {
+	size_t page = (size_t)sysconf(_SC_PAGESIZE), size = 1024 + 2 * PATH_MAX + sizeof(struct hx_exec);
+	size_t span = (size + page - 1) / page * page, used;
+	char *region = mmap(NULL, page + span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), *low;
 	int status;
 	pid_t pid;
 	configure(1);
 	vf.musl = S("%s/musl", D);
 	vf.script = S("%s/tool.sh", D);
 	vf.hxtool = S("%s/bin/hxtool", PX);
+	vf.search = S("/nowhere:%s", D);
 	vf.big = calloc(3001, sizeof *vf.big);
 	for (int i = 0; i < 3000; i++)
 		vf.big[i] = i ? "a" : (char *)vf.musl;
 	t_self = SHIM;
 	vf.result = -1;
-	/* A guard page, then a stack of exactly musl's size above it. */
+	/* A guard page, then the stack above it, painted. */
 	mprotect(region, page, PROT_NONE);
+	memset(region + page, 0xa5, span);
 	pid = clone(vfork_child, region + page + size, CLONE_VM | CLONE_VFORK | SIGCHLD, NULL);
 	forbid_alloc = 0;
 	CHECK(pid > 0);
@@ -723,7 +739,59 @@ static void test_vfork_small_stack(void) {
 	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	if (vf.result) fprintf(stderr, "vfork child stopped at step %d (status %#x)\n", vf.result, status);
 	CHECK(vf.result == 0);
-	munmap(region, total);
+	for (low = region + page; low < region + page + size && (unsigned char)*low == 0xa5; low++)
+		;
+	used = (size_t)(region + page + size - low);
+	printf("struct hx_exec: %zu bytes; deepest stack use in the vfork child: %zu of %zu bytes\n",
+	       sizeof(struct hx_exec), used, size);
+	CHECK(sizeof(struct hx_exec) < 16384);
+	munmap(region, page + span);
+}
+
+static unsigned long status_kb(const char *key) {
+	FILE *f = fopen("/proc/self/status", "r");
+	char line[256];
+	unsigned long kb = 0;
+	size_t n = strlen(key);
+	while (fgets(line, sizeof line, f))
+		if (!strncmp(line, key, n) && line[n] == ':') kb = strtoul(line + n + 1, NULL, 10);
+	fclose(f);
+	return kb;
+}
+
+/* vfork and exec, as a shell does, a thousand times: the parent must not grow. */
+static void test_vfork_exec_leak(void) {
+	char *copy = S("%s/system/bin/true", SR);
+	char *argv[] = {"true", "a", "b", NULL};
+	int null = open("/dev/null", O_WRONLY);
+	configure(1);
+	t_self = "/system/bin/sh";
+	if (system(S("cp /bin/true '%s'", copy))) abort();
+	for (const char *const *p = V("/bin/true", copy); *p; p++) {
+		unsigned long rss = 0, vm = 0;
+		int bad = 0;
+		for (int i = 0; i < 1050; i++) {
+			int status;
+			pid_t pid;
+			/* The first runs settle the allocator and the libraries. */
+			if (i == 50) {
+				rss = status_kb("RssAnon");
+				vm = status_kb("VmSize");
+			}
+			pid = vfork();
+			if (!pid) {
+				dup2(null, 2);
+				_exit(100 - hx_execve(*p, argv, ENV));
+			}
+			if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status)) bad++;
+		}
+		printf("vfork+exec %s x1000: RssAnon %lu -> %lu kB, VmSize %lu -> %lu kB\n", *p, rss, status_kb("RssAnon"),
+		       vm, status_kb("VmSize"));
+		CHECK(!bad);
+		CHECK(status_kb("RssAnon") <= rss + 256);
+		CHECK(status_kb("VmSize") <= vm + 256);
+	}
+	close(null);
 }
 
 int main(void) {
@@ -740,7 +808,8 @@ int main(void) {
 	test_rewrite_and_scripts();
 	test_proc_self_exe();
 	test_large_and_e2big();
-	test_vfork_small_stack();
+	test_vfork_stack();
+	test_vfork_exec_leak();
 
 	if (system(S("rm -rf '%s'", R))) fprintf(stderr, "could not remove %s\n", R);
 	printf("%d checks, %d failures\n", checks, failures);

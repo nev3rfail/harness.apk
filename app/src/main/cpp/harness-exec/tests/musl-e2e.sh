@@ -58,6 +58,11 @@ check "posix_spawn"                "$seen" "$LD" "$P" spawn "$P" rg exe
 check "posix_spawnp"               "$seen" "$LD" "$P" spawnp probe rg exe
 check "posix_spawn, empty envp"    "$seen" "$LD" "$P" spawnenv "$P" rg exe
 check "posix_spawn, addchdir"      "$seen" "$LD" "$P" spawndir "$E/data" ./probe rg exe
+check "posix_spawn, addfchdir"     "$seen" "$LD" "$P" spawnfd "$E/data" ./probe rg exe
+check "posix_spawn, addopen+fchdir" "$seen" "$LD" "$P" spawnopen "$E/data" ./probe rg exe
+# A relative open the parent cannot place: the child routes the call itself.
+check "posix_spawn, routed in child" "$seen" "$LD" "$P" spawnrelopen "$E" data ./probe rg exe
+check "readlink of a null path"    "EFAULT EFAULT" "$LD" "$P" nullreadlink
 check "execv"                      "$seen" "$LD" "$P" exec "$P" rg exe
 check "execvp"                     "$seen" "$LD" "$P" execvp probe rg exe
 check "execv /proc/self/exe"       "$seen" env TERMUX_EXEC__PROC_SELF_EXE="$P" "$LD" "$P" exec /proc/self/exe rg exe

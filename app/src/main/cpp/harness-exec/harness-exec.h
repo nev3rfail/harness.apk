@@ -8,6 +8,7 @@
 #ifndef HARNESS_EXEC_H
 #define HARNESS_EXEC_H
 
+#include <limits.h>
 #include <stddef.h>
 #include <sys/types.h>
 
@@ -17,14 +18,49 @@
 #define HX_API
 #endif
 
-/* One routed exec. path, argv and envp point into map, which the caller hands
- * back to hx_release once the exec has failed or the spawn has returned. */
+/* Shebangs followed, and the most the kernel reads of a shebang line. */
+#define HX_DEPTH 4
+#define HX_HEADER 256
+/* An interpreter from a shebang line, after /usr/bin is rewritten under the
+ * prefix. */
+#define HX_INTERP_PATH 512
+/* Room for the new argument and environment arrays and the entries the router
+ * writes, inside struct hx_exec. More than this takes a mapping. */
+#ifndef HX_INLINE
+#define HX_INLINE 2048
+#endif
+
+/* The working state of one decision. */
+struct hx_scratch {
+	char path[PATH_MAX];
+	char interp[HX_DEPTH][HX_INTERP_PATH];
+	char header[HX_DEPTH][HX_HEADER];
+	char elf_interp[HX_HEADER];
+	/* In turn: the rewrite, the ELF header, the realpath, then the
+	 * normalized path or TERMUX_EXEC__PROC_SELF_EXE. */
+	char work[PATH_MAX];
+	const char *head[2 * HX_DEPTH + 2];
+};
+
+/* One routed exec, kept by the caller for as long as the exec or spawn it
+ * describes: path, argv and envp point into it, or into map when the arrays did
+ * not fit inline. hx_release unmaps that once the exec has failed or the spawn
+ * has returned.
+ *
+ * It lives on the caller's stack, 13688 bytes on LP64, because a vfork child
+ * shares the parent's address space: a mapping made there and followed by a
+ * successful exec stays in the parent for good. Only arrays larger than
+ * HX_INLINE, an argument list in the hundreds, still take one. The unit tests
+ * measure the deepest stack a routing vfork child reaches, a PATH search
+ * included, at 18528 bytes on x86_64. */
 struct hx_exec {
 	const char *path;
 	char **argv;
 	char **envp;
 	void *map;
 	size_t len;
+	struct hx_scratch s;
+	char *area[HX_INLINE / sizeof(char *)];
 };
 
 /* Records the configuration from the process's own start: HARNESS_PREFIX,
@@ -52,7 +88,7 @@ HX_API int hx_execve(const char *path, char *const argv[], char *const envp[]);
 
 /* For /proc/self/exe and /proc/<pid>/exe of a process started through a loader,
  * the program it was started as, resolved, in buf (PATH_MAX bytes). Null
- * otherwise. */
+ * otherwise, and for a null path. */
 HX_API const char *hx_proc_exe(const char *path, char *buf);
 
 /* A name under /etc/ mapped under $HARNESS_ETC into buf (PATH_MAX bytes), or

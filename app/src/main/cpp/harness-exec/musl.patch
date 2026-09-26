@@ -182,7 +182,19 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
  
  struct args {
  	int p[2];
-@@ -148,11 +151,8 @@
+@@ -18,6 +21,11 @@
+ 	const posix_spawn_file_actions_t *fa;
+ 	const posix_spawnattr_t *restrict attr;
+ 	char *const *argv, *const *envp;
++	/* Set when the parent cannot tell which directory the file actions leave
++	 * the child in, and the child routes the call itself; search is PATH for
++	 * posix_spawnp. */
++	int route;
++	const char *search;
+ };
+ 
+ static int __sys_dup2(int old, int new)
+@@ -148,11 +156,18 @@
  	pthread_sigmask(SIG_SETMASK, (attr->__flags & POSIX_SPAWN_SETSIGMASK)
  		? &attr->__mask : &args->oldmask, 0);
  
@@ -191,71 +203,128 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
 -
 -	exec(args->path, args->argv, args->envp);
 -	ret = -errno;
-+	/* The parent searched PATH and routed the call. */
-+	ret = __syscall(SYS_execve, args->path, args->argv, args->envp);
++	if (args->route) {
++		struct hx_exec hx;
++		ret = -(args->search
++			? hx_route_search(args->path, args->search, args->argv, args->envp, 0, &hx)
++			: hx_route(args->path, args->argv, args->envp, 0, &hx));
++		if (ret) goto fail;
++		ret = __syscall(SYS_execve, hx.path, hx.argv, hx.envp);
++		hx_release(&hx);
++	} else {
++		/* The parent searched PATH and routed the call. */
++		ret = __syscall(SYS_execve, args->path, args->argv, args->envp);
++	}
  
  fail:
  	/* Since sizeof errno < PIPE_BUF, the write is atomic. */
-@@ -166,6 +166,21 @@
+@@ -166,23 +181,85 @@
  }
  
  
-+/* The directory the file actions leave the child in, or null for the
-+ * parent's own, which a relative path is resolved against. */
-+static const char *spawn_dir(const posix_spawn_file_actions_t *fa, char *dir)
++/* The directory the file actions leave the child in, into dir: empty for the
++ * parent's own. Nonzero when that cannot be told from the parent: a chdir that
++ * does not resolve, or an fchdir to a descriptor an earlier action changes
++ * other than by opening an absolute path. */
++static int spawn_dir(const posix_spawn_file_actions_t *fa, char *dir)
 +{
-+	struct fdop *op;
++	struct fdop *op, *q;
 +	dir[0] = 0;
 +	if (!fa || !fa->__actions) return 0;
 +	for (op = fa->__actions; op->next; op = op->next);
-+	for (; op; op = op->prev)
-+		if ((op->cmd == FDOP_CHDIR || op->cmd == FDOP_FCHDIR)
-+		    && hx_chdir(dir, op->cmd == FDOP_CHDIR ? op->path : 0, op->fd))
-+			return 0;
-+	return dir[0] ? dir : 0;
++	for (; op; op = op->prev) {
++		if (op->cmd == FDOP_CHDIR) {
++			if (hx_chdir(dir, op->path, -1)) return 1;
++		} else if (op->cmd == FDOP_FCHDIR) {
++			/* The last earlier action on the descriptor, if any. */
++			for (q = op->next; q && !(q->fd == op->fd && (q->cmd == FDOP_OPEN
++			     || q->cmd == FDOP_DUP2 || q->cmd == FDOP_CLOSE)); q = q->next);
++			if (!q) {
++				if (hx_chdir(dir, 0, op->fd)) return 1;
++			} else if (q->cmd == FDOP_OPEN && q->path[0] == '/') {
++				if (hx_chdir(dir, q->path, -1)) return 1;
++			} else {
++				return 1;
++			}
++		}
++	}
++	return 0;
 +}
 +
  int posix_spawn(pid_t *restrict res, const char *restrict path,
  	const posix_spawn_file_actions_t *fa,
  	const posix_spawnattr_t *restrict attr,
-@@ -173,16 +188,28 @@
+ 	char *const argv[restrict], char *const envp[restrict])
  {
  	pid_t pid;
- 	char stack[1024+PATH_MAX];
-+	char dir[PATH_MAX];
+-	char stack[1024+PATH_MAX];
++	/* A call routed here needs the routed arrays kept for the child and a
++	 * child stack that only issues the system call; one the child routes
++	 * needs room on its stack for the router instead. */
++	union {
++		struct {
++			struct hx_exec hx;
++			char stack[1024+PATH_MAX];
++		} routed;
++		char stack[1024 + 2*PATH_MAX + sizeof(struct hx_exec)];
++	} u;
++	char dir[PATH_MAX], *stack;
++	size_t stack_size;
 +	const char *search;
  	int ec=0, cs;
  	struct args args;
-+	struct hx_exec hx;
-+
+ 
+-	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+-
+-	args.path = path;
+-	args.fa = fa;
 +	/* PATH is searched and the call routed here, so that the child only
 +	 * issues the system call. posix_spawnp marks itself with __fn. */
-+	args.attr = attr ? attr : &(const posix_spawnattr_t){0};
-+	search = getenv("PATH");
-+	ec = args.attr->__fn
-+		? hx_route_search(path, search ? search : "/usr/local/bin:/bin:/usr/bin",
-+			argv, envp, spawn_dir(fa, dir), &hx)
-+		: hx_route(path, argv, envp, spawn_dir(fa, dir), &hx);
-+	if (ec) return ec;
- 
- 	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
- 
--	args.path = path;
-+	args.path = hx.path;
- 	args.fa = fa;
--	args.attr = attr ? attr : &(const posix_spawnattr_t){0};
+ 	args.attr = attr ? attr : &(const posix_spawnattr_t){0};
 -	args.argv = argv;
 -	args.envp = envp;
-+	args.argv = hx.argv;
-+	args.envp = hx.envp;
++	search = getenv("PATH");
++	if (!search) search = "/usr/local/bin:/bin:/usr/bin";
++	args.search = args.attr->__fn ? search : 0;
++	args.route = spawn_dir(fa, dir);
++	if (args.route) {
++		args.path = path;
++		args.argv = argv;
++		args.envp = envp;
++		stack = u.stack;
++		stack_size = sizeof u.stack;
++	} else {
++		const char *base = dir[0] ? dir : 0;
++		ec = args.search
++			? hx_route_search(path, search, argv, envp, base, &u.routed.hx)
++			: hx_route(path, argv, envp, base, &u.routed.hx);
++		if (ec) return ec;
++		args.path = u.routed.hx.path;
++		args.argv = u.routed.hx.argv;
++		args.envp = u.routed.hx.envp;
++		stack = u.routed.stack;
++		stack_size = sizeof u.routed.stack;
++	}
++	args.fa = fa;
++
++	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
  	pthread_sigmask(SIG_BLOCK, SIGALL_SET, &args.oldmask);
  
  	/* The lock guards both against seeing a SIGABRT disposition change
-@@ -214,6 +241,7 @@
+@@ -195,7 +272,7 @@
+ 		goto fail;
+ 	}
+ 
+-	pid = __clone(child, stack+sizeof stack,
++	pid = __clone(child, stack+stack_size,
+ 		CLONE_VM|CLONE_VFORK|SIGCHLD, &args);
+ 	close(args.p[1]);
+ 	UNLOCK(__abort_lock);
+@@ -214,6 +291,7 @@
  fail:
  	pthread_sigmask(SIG_SETMASK, &args.oldmask, 0);
  	pthread_setcancelstate(cs, 0);
-+	hx_release(&hx);
++	if (!args.route) hx_release(&u.routed.hx);
  
  	return ec;
  }

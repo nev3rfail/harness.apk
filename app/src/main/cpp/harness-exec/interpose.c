@@ -183,22 +183,39 @@ EXPORT int fexecve(int fd, char *const *argv, char *const *envp) {
 typedef int spawn_fn(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *,
                      char *const[], char *const[]);
 
+/* Whether the path, or with search any PATH entry, is relative. */
+static bool relative(int search, const char *path, const char *search_path) {
+	if (!search || strchr(path, '/')) return path[0] != '/';
+	for (const char *p = search_path;; p++) {
+		if (*p != '/') return true;
+		p = strchr(p, ':');
+		if (!p) return false;
+	}
+}
+
 /* The path is searched and routed here, so the child bionic forks execs an
  * already-routed path; routing that again, should the child's execve reach this
- * library, changes nothing. A relative path resolves against the parent's
- * working directory. */
+ * library, changes nothing. */
 static int spawn_routed(int search, pid_t *pid, const char *path, const posix_spawn_file_actions_t *fa,
                         const posix_spawnattr_t *attr, char *const argv[], char *const envp[]) {
-	static spawn_fn *real;
+	static spawn_fn *real, *real_p;
 	struct hx_exec x;
 	const char *search_path;
 	int e;
 	if (!real) real = (spawn_fn *)dlsym(RTLD_NEXT, "posix_spawn");
-	if (!real) return ENOSYS;
+	if (!real_p) real_p = (spawn_fn *)dlsym(RTLD_NEXT, "posix_spawnp");
+	if (!real || !real_p) return ENOSYS;
+	if (!path) return EFAULT;
 	if (!envp) envp = environ;
 	search_path = getenv("PATH");
-	e = search ? hx_route_search(path, search_path ? search_path : _PATH_DEFPATH, argv, envp, NULL, &x)
-	           : hx_route(path, argv, envp, NULL, &x);
+	if (!search_path) search_path = _PATH_DEFPATH;
+	/* Bionic's file actions are opaque, so a chdir among them cannot be seen
+	 * from here, and a relative path would be resolved in the wrong directory.
+	 * With file actions present such a call is handed on as asked; the child
+	 * resolves it where it ends up, and routes it there should its execve reach
+	 * this library. */
+	if (fa && relative(search, path, search_path)) return (search ? real_p : real)(pid, path, fa, attr, argv, envp);
+	e = search ? hx_route_search(path, search_path, argv, envp, NULL, &x) : hx_route(path, argv, envp, NULL, &x);
 	if (e) return e;
 	e = real(pid, x.path, fa, attr, x.argv, x.envp);
 	hx_release(&x);

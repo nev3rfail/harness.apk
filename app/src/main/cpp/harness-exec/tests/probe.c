@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <limits.h>
 #include <netdb.h>
@@ -49,12 +50,30 @@ int main(int argc, char **argv) {
 		}
 		return wait_for(pid);
 	}
-	/* spawndir DIR RELPATH ARGV0 ARGS... */
-	if (!strcmp(mode, "spawndir")) {
+	/* spawndir DIR RELPATH ARGV0 ARGS...: addchdir to DIR
+	 * spawnfd DIR RELPATH ARGV0 ARGS...: addfchdir to DIR open in the parent
+	 * spawnopen DIR RELPATH ARGV0 ARGS...: addopen of DIR, then addfchdir to it
+	 * spawnrelopen DIR SUB RELPATH ARGV0 ARGS...: addchdir to DIR, addopen of
+	 *   SUB relative to it, then addfchdir to that */
+	if (!strcmp(mode, "spawndir") || !strcmp(mode, "spawnfd") || !strcmp(mode, "spawnopen") ||
+	    !strcmp(mode, "spawnrelopen")) {
 		posix_spawn_file_actions_t fa;
+		char **rest = argv + 3;
 		posix_spawn_file_actions_init(&fa);
-		posix_spawn_file_actions_addchdir_np(&fa, argv[2]);
-		e = posix_spawn(&pid, argv[3], &fa, NULL, argv + 4, environ);
+		if (!strcmp(mode, "spawndir")) {
+			posix_spawn_file_actions_addchdir_np(&fa, argv[2]);
+		} else if (!strcmp(mode, "spawnfd")) {
+			posix_spawn_file_actions_addfchdir_np(&fa, open(argv[2], O_RDONLY | O_DIRECTORY));
+		} else if (!strcmp(mode, "spawnopen")) {
+			posix_spawn_file_actions_addopen(&fa, 40, argv[2], O_RDONLY | O_DIRECTORY, 0);
+			posix_spawn_file_actions_addfchdir_np(&fa, 40);
+		} else {
+			posix_spawn_file_actions_addchdir_np(&fa, argv[2]);
+			posix_spawn_file_actions_addopen(&fa, 40, argv[3], O_RDONLY | O_DIRECTORY, 0);
+			posix_spawn_file_actions_addfchdir_np(&fa, 40);
+			rest++;
+		}
+		e = posix_spawn(&pid, rest[0], &fa, NULL, rest + 1, environ);
 		if (e) {
 			printf("spawn: %s\n", strerror(e));
 			return 1;
@@ -72,6 +91,14 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	if (!strcmp(mode, "system")) return WEXITSTATUS(system(argv[2]));
+	if (!strcmp(mode, "nullreadlink")) {
+		char b[16];
+		const char *none = NULL;
+		int r = readlink(none, b, sizeof b) < 0 && errno == EFAULT;
+		int s = readlinkat(AT_FDCWD, none, b, sizeof b) < 0 && errno == EFAULT;
+		printf("%s %s\n", r ? "EFAULT" : "?", s ? "EFAULT" : "?");
+		return 0;
+	}
 	if (!strcmp(mode, "hosts")) {
 		struct addrinfo *ai, hints = {.ai_family = AF_INET};
 		char b[INET_ADDRSTRLEN];
