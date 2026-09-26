@@ -191,6 +191,69 @@ jobs:
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
+  # The app falls back to this repository's copy of the pinned bootstrap
+  # archives when the upstream release is gone, so every tag it pins has a
+  # release here named after it, carrying both archives.
+  mirror-bootstrap:
+    needs: guard
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.guard.outputs.tag }}
+
+      # The tag and the checksums are read from BootstrapSource.kt, which is
+      # what the app itself verifies against.
+      - name: Mirror the pinned bootstrap archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SRC=app/src/main/java/apk/harness/bootstrap/BootstrapSource.kt
+          TAG=$(sed -n 's/^private const val RELEASE = "\(.*\)"$/\1/p' "$SRC")
+          [ -n "$TAG" ] || { echo "no RELEASE in $SRC" >&2; exit 1; }
+          UPSTREAM=https://github.com/termux-play-store/termux-packages/releases/download/$TAG
+          ASSETS="bootstrap-aarch64.zip bootstrap-x86_64.zip"
+
+          HAVE=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          MISSING=
+          for a in $ASSETS; do
+            printf '%s\n' "$HAVE" | grep -qxF "$a" || MISSING="$MISSING $a"
+          done
+          if [ -z "$MISSING" ]; then
+            echo "release $TAG already carries $ASSETS"
+            exit 0
+          fi
+
+          cd "$RUNNER_TEMP"
+          for a in $MISSING; do
+            SUM=$(grep -A1 "asset = \"$a\"" "$GITHUB_WORKSPACE/$SRC" \
+                | sed -n 's/.*sha256 = "\([0-9a-f]\{64\}\)".*/\1/p')
+            [ -n "$SUM" ] || { echo "no sha256 for $a in $SRC" >&2; exit 1; }
+            curl -fsSLO "$UPSTREAM/$a"
+            echo "$SUM  $a" | sha256sum -c -
+          done
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $MISSING --clobber
+          else
+            cat > notes.md <<EOF
+          The bootstrap archives the app installs, mirrored from the upstream
+          release \`$TAG\`: https://github.com/termux-play-store/termux-packages/releases/tag/$TAG
+
+          The matching sources are the termux-play-store/termux-packages
+          repository at \`$TAG\` (https://github.com/termux-play-store/termux-packages/tree/$TAG)
+          and the source packages of the termux.net repository the archives are
+          built from.
+          EOF
+            # Not the latest release: that one is the app's.
+            gh release create "$TAG" $MISSING --title "$TAG" \
+                --notes-file notes.md --latest=false
+          fi
+
   sign:
     needs: [guard, build]
     runs-on: ubuntu-24.04

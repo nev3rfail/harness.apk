@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val prebuiltNative = (findProperty("prebuiltNative") as String?)?.let { file(it) }
+val prebuiltAbi = (findProperty("prebuiltAbi") as String?) ?: "arm64-v8a"
+val prebuiltJni = layout.buildDirectory.dir("prebuilt-jni").get().asFile
+
 android {
     namespace = "apk.harness"
     compileSdk = 36
@@ -109,12 +113,34 @@ android {
     // The prefix relocator. It is built here rather than beside the Zig
     // libraries, because that build is skipped whenever -PskipNativeBuild is
     // passed and the ordinary loop always passes it.
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    if (prebuiltNative == null) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
+    } else {
+        // Every native library comes from the prebuilt directory, so the
+        // src/main/jniLibs tree is left out rather than packaged twice, and a
+        // dependency's libraries are packaged for that one ABI only.
+        sourceSets.getByName("main").jniLibs.setSrcDirs(listOf(prebuiltJni))
+        defaultConfig.ndk.abiFilters.apply { clear(); add(prebuiltAbi) }
     }
+}
+
+// -PprebuiltNative=<dir> packages the lib*.so files of <dir> -- one ABI's, as an
+// installed app's nativeLibraryDir holds them -- instead of building any. The
+// ABI is -PprebuiltAbi, arm64-v8a by default. No CMake target and no loader
+// build runs, here or in terminal-library, so a Kotlin change builds where
+// neither toolchain does.
+if (prebuiltNative != null) {
+    val sync = tasks.register<Sync>("syncPrebuiltNative") {
+        description = "Copy the prebuilt native libraries into a jniLibs tree"
+        from(prebuiltNative) { include("*.so") }
+        into(prebuiltJni.resolve(prebuiltAbi))
+    }
+    tasks.named("preBuild") { dependsOn(sync) }
 }
 
 // A build type carries a suffix, not an application id of its own, and no
@@ -160,7 +186,7 @@ tasks.register<Exec>("buildMuslLoader") {
 }
 
 tasks.named("preBuild") {
-    if (!project.hasProperty("skipLoaderBuild")) dependsOn("buildMuslLoader")
+    if (!project.hasProperty("skipLoaderBuild") && prebuiltNative == null) dependsOn("buildMuslLoader")
 }
 
 dependencies {

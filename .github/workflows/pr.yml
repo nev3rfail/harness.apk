@@ -71,3 +71,17 @@ jobs:
           set -euo pipefail
           ./gradlew :app:assembleRelease :app:testDebugUnitTest \
               -PskipNativeBuild=true -PskipLoaderBuild=true
+
+      # The Play channel ships as a bundle, so the bundle is what gets built.
+      - name: Bundle the Play channel
+        run: |
+          set -euo pipefail
+          ./gradlew :app:bundlePlay \
+              -PskipNativeBuild=true -PskipLoaderBuild=true
+
+      # Play refuses a native library with a LOAD segment aligned below 16 KB.
+      - name: Every native library is 16 KB aligned
+        run: |
+          bash scripts/check-page-alignment.sh \
+              app/build/outputs/apk/release/app-release-unsigned.apk \
+              app/build/outputs/bundle/play/app-play.aab
