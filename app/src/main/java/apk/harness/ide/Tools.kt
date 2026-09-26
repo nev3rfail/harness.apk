@@ -5,6 +5,7 @@ import apk.harness.cells.promoteCells
 import apk.harness.intents.Handoff
 import apk.harness.intents.HandoffOutcome
 import apk.harness.intents.HandoffRefusalException
+import apk.harness.intents.SOME_APP
 import apk.harness.intents.confirmationNeeded
 import apk.harness.intents.handoffFor
 import apk.harness.ui.Rendered
@@ -51,6 +52,8 @@ class Tools(
      * `Context`, so everything it decides is decided off the device.
      */
     private val callOperator: (Long, String) -> String?,
+    /** False when an ask would never be seen: notifications are off for the app. */
+    private val notificationsOn: () -> Boolean,
 ) {
 
     fun editorDefinitions(): JSONArray = JSONArray()
@@ -271,7 +274,9 @@ class Tools(
         val handoff = handoffFor(arguments, writable).getOrElse {
             return errorContent((it as HandoffRefusalException).refusal.reason)
         }
-        val app = describeHandoff(handoff) ?: return errorContent(NOTHING_HANDLES_IT)
+        // An app the package manager cannot show may still take it, so the fire
+        // decides whether anything handles it.
+        val app = describeHandoff(handoff) ?: SOME_APP
 
         if (confirmationNeeded(handoff)) {
             val asked = Surface.Handoff(handoff, app)
@@ -305,6 +310,7 @@ class Tools(
     private fun notifyOperator(arguments: JSONObject, owner: Long): JSONObject {
         val message = arguments.optString("message").trim().take(MESSAGE_LIMIT)
         if (message.isEmpty()) return errorContent("notify_operator needs a message")
+        if (!notificationsOn()) return errorContent(NOTIFICATIONS_OFF)
         val name = callOperator(owner, message)
             ?: return errorContent("this chat is no longer open")
         return textContent("Asked the operator to come back to $name")
@@ -363,5 +369,8 @@ class Tools(
         const val NOTHING_HANDLES_IT = "nothing on this device handles that"
 
         const val DECLINED = "The operator declined"
+
+        const val NOTIFICATIONS_OFF =
+            "notifications are off for this app, so the operator was not reached"
     }
 }

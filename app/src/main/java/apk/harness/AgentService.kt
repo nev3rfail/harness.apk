@@ -7,9 +7,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import androidx.core.app.ServiceCompat
 
 /**
  * Keeps the agent alive while the app is not on screen.
@@ -30,7 +32,16 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        startForeground(NOTIFICATION_ID, notification())
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notification(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            } else {
+                0
+            },
+        )
 
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_TAG).apply {
@@ -39,7 +50,9 @@ class AgentService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    // A service the system restarts has no agents to keep: they were children of
+    // the process that went.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     override fun onDestroy() {
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -142,6 +155,18 @@ class AgentService : Service() {
             }
 
             manager.notify(id, builder.build())
+        }
+
+        /**
+         * True when an ask would reach the shade: notifications are on for the
+         * app, and the ask channel, once it exists, has not been turned off.
+         */
+        fun canAsk(context: Context): Boolean {
+            val manager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (!manager.areNotificationsEnabled()) return false
+            val channel = manager.getNotificationChannel(ASK_CHANNEL_ID) ?: return true
+            return channel.importance != NotificationManager.IMPORTANCE_NONE
         }
 
         /** Takes away the ask for one chat, whether or not one is standing. */

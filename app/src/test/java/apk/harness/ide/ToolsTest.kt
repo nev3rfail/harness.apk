@@ -37,6 +37,9 @@ class ToolsTest {
     /** The name an ask would go out under; null is a chat that has gone. */
     private var asked: String? = "the trip"
 
+    /** Whether the device would show an ask at all. */
+    private var notifying = true
+
     private val tools = Tools(
         surfaces = surfaces,
         describeHandoff = { receiver },
@@ -53,6 +56,7 @@ class ToolsTest {
             asks += owner to message
             asked
         },
+        notificationsOn = { notifying },
     )
 
     private fun call(
@@ -204,6 +208,17 @@ class ToolsTest {
     }
 
     @Test
+    fun `a link no app can be named for is still fired`() {
+        receiver = null
+
+        val result = call("open_in_phone_app", JSONObject().put("uri", "https://example.test"))
+
+        assertEquals(listOf(Handoff(Action.View, uri = "https://example.test")), fired)
+        assertTrue(result.optBoolean("isError"))
+        assertEquals("nothing on this device handles that", result.text())
+    }
+
+    @Test
     fun `notify_operator takes a message and nothing else`() {
         val definitions = tools.panelDefinitions()
         val declared = (0 until definitions.length())
@@ -264,6 +279,20 @@ class ToolsTest {
 
         assertTrue(result.optBoolean("isError"))
         assertEquals("this chat is no longer open", result.text())
+    }
+
+    @Test
+    fun `an ask with notifications off is refused and reaches nobody`() {
+        notifying = false
+
+        val result = call("notify_operator", message("Ready when you are"), owner = 4L)
+
+        assertTrue(result.optBoolean("isError"))
+        assertEquals(
+            "notifications are off for this app, so the operator was not reached",
+            result.text(),
+        )
+        assertEquals(emptyList<Pair<Long, String>>(), asks)
     }
 
     @Test

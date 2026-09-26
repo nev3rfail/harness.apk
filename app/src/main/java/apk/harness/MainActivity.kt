@@ -1,13 +1,14 @@
 package apk.harness
 
 import android.Manifest
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -24,9 +25,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -48,7 +53,6 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.app.ActivityCompat
-import androidx.core.content.PermissionChecker
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStateAtLeast
@@ -128,6 +132,21 @@ class MainActivity : ComponentActivity() {
         // already the event that replaces every one of them.
         AgentService.clearAsks(this)
 
+        // The service's notification and every ask are drawn only with this
+        // granted. Asked once per launch while it is not; the platform stops
+        // drawing the dialog after the second refusal.
+        if (savedInstanceState == null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATIONS_REQUEST,
+            )
+        }
+
         // The stage's spellings rather than the platform's, so the paths the
         // agent is told about and the paths the app compares against are one
         // set. The tab holder builds an agent of its own; this one is here for
@@ -160,6 +179,7 @@ class MainActivity : ComponentActivity() {
             // title cut to a line, and a post. What is worth asking, and whether
             // to ask at all, is decided in `Tools`.
             callOperator = ::askOperator,
+            notificationsOn = { AgentService.canAsk(this) },
         )
 
         // The panels the agent chooses for itself travel the other way in, as a
@@ -364,6 +384,9 @@ class MainActivity : ComponentActivity() {
 
         /** What a notification draws on its first line. */
         const val TITLE_LIMIT = 40
+
+        /** The request code the notification permission is asked under. */
+        const val NOTIFICATIONS_REQUEST = 1
     }
 }
 
@@ -522,38 +545,40 @@ private fun HarnessScreen(
         }
     }
 
-    // What a folder outside the app needs to be worth opening. Without it the app
-    // writes into shared storage and reads back only what it wrote, so a folder
-    // someone else filled reads as empty.
+    // What a folder outside the app needs to be worth opening. Without all-files
+    // access the app writes into shared storage and reads back only what it
+    // wrote, so a folder someone else filled reads as empty.
     //
-    // Asked for on the way to the picker rather than at launch, most sessions
-    // never leaving the agent's own home. An agent forked before the grant keeps
-    // the view it was forked with, which costs nothing: what follows the grant is
-    // a new agent in a new tab.
-    val storagePermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { _ ->
-        // The platform is asked again rather than the result being read. A
-        // request the operator never answered -- a back press, a system dialog
-        // taking the screen -- arrives as an empty answer, and an empty answer
-        // is one every permission in it passes.
-        when {
-            holdsStorage(context) ->
-                if (runCatching { folderPicker.launch(null) }.isFailure) {
-                    Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
-                }
-
-            // Refused twice is refused for good: the platform stops drawing the
-            // dialog, so a control that only asks again is one that does
-            // nothing. Its own settings screen is where the answer can still be
-            // changed.
-            !asksAgain(context) ->
-                if (runCatching { context.startActivity(appSettings(context)) }.isFailure) {
-                    Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
-                }
-
-            else -> Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
+    // Asked for on the way to such a folder rather than at launch, most sessions
+    // never leaving the agent's own home. The grant is made on a settings screen
+    // of its own, so what was on its way there is held until the app is back in
+    // front, and goes on only when the grant is there.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var awaitingAccess by remember { mutableStateOf<(() -> Unit)?>(null) }
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val next = awaitingAccess ?: return@repeatOnLifecycle
+            awaitingAccess = null
+            if (Environment.isExternalStorageManager()) next()
+            else Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
         }
+    }
+    val withAllFiles = { then: () -> Unit ->
+        if (Environment.isExternalStorageManager()) {
+            then()
+        } else {
+            awaitingAccess = then
+            if (runCatching { context.startActivity(allFilesSettings(context)) }.isFailure) {
+                awaitingAccess = null
+                Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    // The app's own directories need no grant, so a tab reopened in one of them
+    // goes straight on.
+    val ownData = remember { bothSpellings(context, context.dataDir) }
+    val reopen = { directory: File, then: () -> Unit ->
+        if (outsideApp(directory.path, ownData)) withAllFiles(then) else then()
     }
 
     // Files are copied into the project the drawer is showing, and named in the
@@ -582,9 +607,17 @@ private fun HarnessScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         // The terminal stays mounted underneath: a panel is a look at something,
         // not a change of screen, and the agent keeps running behind it.
-        // The status bar inset lives here, so the terminal's first line is never
-        // under the bar when the bar is showing.
-        Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
+        // The system bar insets live here, so the terminal's first line is never
+        // under the status bar and no edge is under the navigation bar. The
+        // navigation bar and the keyboard are one inset taken once, the larger
+        // of the two on each side, so an open keyboard is not padded twice; the
+        // toolbar's own navigation-bar padding finds it already taken.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .statusBarsPadding(),
+        ) {
             // The strips overlay the terminal's edges and are declared after
             // it, so a drag starting there reaches a strip rather than the
             // surface underneath.
@@ -922,9 +955,10 @@ private fun HarnessScreen(
                     // filed, and the home is a directory that exists.
                     onOpenChat = { project: Project, chat: Chat ->
                         close()
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                tabs.resume(chat, File(project.path ?: agentHome.path))
+                        val directory = File(project.path ?: agentHome.path)
+                        reopen(directory) {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { tabs.resume(chat, directory) }
                             }
                         }
                     },
@@ -951,12 +985,12 @@ private fun HarnessScreen(
 
                             else -> {
                                 close()
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        tabs.continueHere(
-                                            chat,
-                                            File(project.path ?: agentHome.path),
-                                        )
+                                val directory = File(project.path ?: agentHome.path)
+                                reopen(directory) {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            tabs.continueHere(chat, directory)
+                                        }
                                     }
                                 }
                             }
@@ -969,11 +1003,11 @@ private fun HarnessScreen(
                         // A project naming no directory draws no way to start a
                         // conversation in it, so this is a guard rather than a
                         // path anyone takes.
-                        val directory = project.path ?: return@SessionTree
+                        val directory = File(project.path ?: return@SessionTree)
                         close()
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                tabs.start(File(directory), project.name)
+                        reopen(directory) {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { tabs.start(directory, project.name) }
                             }
                         }
                     },
@@ -981,11 +1015,10 @@ private fun HarnessScreen(
                     // other control that puts a conversation on the screen.
                     onOpenFolder = {
                         close()
-                        val launch =
-                            if (holdsStorage(context)) ({ folderPicker.launch(null) })
-                            else ({ storagePermission.launch(STORAGE) })
-                        if (runCatching { launch() }.isFailure) {
-                            Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
+                        withAllFiles {
+                            if (runCatching { folderPicker.launch(null) }.isFailure) {
+                                Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
                     onDismiss = close,
@@ -1008,7 +1041,6 @@ private fun HarnessScreen(
     // a wait rather than a repeat: the Activity resumes the terminal on screen
     // itself, and a keyboard raised on every return from every other app is one
     // nobody asked for.
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(view, lifecycle) {
         lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {
             view?.onResumeView()
@@ -1149,42 +1181,10 @@ private fun documentName(resolver: ContentResolver, uri: Uri): String {
 /** What a file being copied is called until all of it is there. */
 private const val PARTIAL = ".harness-part"
 
-/**
- * True when the app may read and write shared storage as one filesystem.
- *
- * Both, because a project is read from and written to, and the platform hands
- * out the two views separately.
- *
- * Asked through the checker rather than of the permission alone, because the two
- * can disagree: an app operation turned off leaves the permission granted and
- * every read empty, which is the state this control exists to keep out of.
- */
-private fun holdsStorage(context: Context): Boolean = STORAGE.all {
-    PermissionChecker.checkSelfPermission(context, it) == PermissionChecker.PERMISSION_GRANTED
-}
-
-/**
- * True when the platform will still draw a dialog for these.
- *
- * A permission refused twice is refused for good, and the request that follows
- * returns without asking anyone. False says the operator has to be sent
- * somewhere they can still answer.
- */
-private fun asksAgain(context: Context): Boolean {
-    val activity = context as? Activity ?: return true
-    return STORAGE.any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
-}
-
-/** This app's own page in the platform's settings. */
-private fun appSettings(context: Context) = Intent(
-    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+/** The settings screen that grants this app all-files access. */
+private fun allFilesSettings(context: Context) = Intent(
+    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
     Uri.fromParts("package", context.packageName, null),
-).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-/** What a project outside the agent's own home needs to be a project. */
-private val STORAGE = arrayOf(
-    Manifest.permission.READ_EXTERNAL_STORAGE,
-    Manifest.permission.WRITE_EXTERNAL_STORAGE,
 )
 
 /** What the operator is told when nothing chosen could be read. */
@@ -1194,12 +1194,9 @@ private const val NOTHING_COPIED = "Nothing was copied."
 private const val NO_PICKER = "This device has no file picker."
 
 /**
- * What the operator is told when a folder is picked with nothing to read it.
- *
- * It names where the answer can be changed, because a permission refused twice
- * is one the platform stops asking about, and the dialog not appearing is
- * otherwise the whole of what the control does.
+ * What the operator is told when a folder outside the app is on its way to being
+ * opened and all-files access is not there to read it.
  */
 private const val NO_STORAGE =
-    "Without access to storage a folder outside the app reads as empty. " +
-        "Android's settings for this app is where that is turned on."
+    "Without all-files access a folder outside the app reads as empty. " +
+        "It is turned on under \"All files access\" in Android's settings."

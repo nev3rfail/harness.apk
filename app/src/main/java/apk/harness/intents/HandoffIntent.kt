@@ -84,9 +84,9 @@ fun intentFor(context: Context, handoff: Handoff): Intent {
  * A share resolves to the sheet rather than to an app: the person is about to
  * pick, so there is nothing yet to name.
  *
- * This answers at all because the app targets API 28. Package visibility
- * filtering arrives at API 30, and at that target without a `<queries>` block
- * this would silently answer null for everything.
+ * Package visibility limits what this can see to the apps the manifest's
+ * `<queries>` block names, so null means nothing visible would take it, not that
+ * nothing installed would.
  */
 fun appFor(context: Context, handoff: Handoff): String? {
     if (chooserInstead(handoff)) return "the share sheet"
@@ -98,19 +98,19 @@ fun appFor(context: Context, handoff: Handoff): String? {
 /**
  * Starts it, and says what happened.
  *
+ * An app [appFor] cannot name may still take it, so the intent is started either
+ * way and only the platform's own answer that nothing handles it is reported as
+ * such. The app is then reported as [SOME_APP].
+ *
  * Every way this can fail is caught here, because the caller is a tool call and
  * an exception from inside the platform would leave the MCP endpoint rather than
  * the agent. `SecurityException` is the one that matters most: a `content://`
  * the receiving app was not granted arrives as that and nothing else.
  */
 fun fire(context: Context, handoff: Handoff): HandoffOutcome = try {
-    val app = appFor(context, handoff)
-    if (app == null) {
-        HandoffOutcome.NoHandler
-    } else {
-        context.startActivity(intentFor(context, handoff))
-        HandoffOutcome.Started(app)
-    }
+    val app = appFor(context, handoff) ?: SOME_APP
+    context.startActivity(intentFor(context, handoff))
+    HandoffOutcome.Started(app)
 } catch (notFound: ActivityNotFoundException) {
     HandoffOutcome.NoHandler
 } catch (refused: SecurityException) {
@@ -118,6 +118,9 @@ fun fire(context: Context, handoff: Handoff): HandoffOutcome = try {
 } catch (bad: IllegalArgumentException) {
     HandoffOutcome.Failed("that cannot be handed over: ${bad.message}")
 }
+
+/** What a started handoff names when [appFor] could not see the app that took it. */
+const val SOME_APP = "an app"
 
 /**
  * A file as something another app can read.

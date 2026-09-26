@@ -93,6 +93,13 @@ private fun normalise(path: String): String {
     return "/" + segments.joinToString("/")
 }
 
+/**
+ * True when [path] is in none of [own], the app's own directories, and so needs
+ * all-files access to be read as a project.
+ */
+fun outsideApp(path: String, own: List<String>): Boolean =
+    own.none { path == it || path.startsWith("$it/") }
+
 /** What the probe file's name begins with, and the text written into it. */
 private const val PROBE = ".harness-probe"
 

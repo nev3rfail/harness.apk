@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "apk.harness"
-    compileSdk = 35
+    compileSdk = 36
     // The revision terminal-library pins, so AGP consumes one NDK for both.
     ndkVersion = "29.0.14206865"
 
@@ -16,11 +16,14 @@ android {
         // compiled into its binaries -- 31 bytes, which an eleven-character id
         // affords by naming the directory below it in four.
         applicationId = (findProperty("harnessAppId") as String?) ?: "apk.harness"
-        minSdk = 24
-        // An app targeting API 29 or later may not execute a file in its own data
-        // directory, which is where the agent binary is staged. 28 is the last
-        // level that allows it, and is where Termux sits for the same reason.
-        targetSdk = 28
+        // The first level with all-files access, which is what lets a folder on
+        // shared storage be opened by path.
+        minSdk = 30
+        // At this target `execve` of a file in the app's own data directory is
+        // refused, and mapping one executable is not. Every program there is
+        // started through a loader: `linker64` for bionic, the packaged musl
+        // loader for the agent.
+        targetSdk = 36
         // A release's identity is its tag, passed in by the workflow that
         // builds it. A build given neither property keeps these values.
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
@@ -34,8 +37,8 @@ android {
     }
 
     buildTypes {
-        // The channel that ships. It carries the plain application id, which is
-        // the one the loader's compiled-in paths are built against.
+        // The channel that ships from GitHub releases. It carries the plain
+        // application id.
         release {
             // Unminified until R8 has been taught about the reflection in
             // `org.json`, osmdroid, ktoml, Java-WebSocket and Compose.
@@ -58,6 +61,15 @@ android {
             versionNameSuffix = "-stg"
             // The library module has no matching build type.
             matchingFallbacks += "debug"
+        }
+        // The channel Google Play distributes, as a bundle. Play refuses a
+        // debuggable build. Outside CI it carries the debug key, so a local build
+        // installs; CI (which sets `CI`) leaves it unsigned, as it does `release`.
+        create("play") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            if (System.getenv("CI") == null) signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
         }
     }
 
@@ -110,11 +122,10 @@ android {
 // `release` keeps the id from `defaultConfig`. Left alone when an id is given on
 // the command line, so a throwaway build still gets the one it asked for.
 //
-// Every id is eleven characters, which is what `retargetLoader` requires: the
-// loader's compiled-in paths are rewritten in place, so the name that replaces
-// one must be the same length.
+// Every id is eleven characters, which is what the bootstrap relocation's byte
+// budget affords.
 androidComponents {
-    val ids = mapOf("debug" to "dev.harness", "stable" to "stg.harness")
+    val ids = mapOf("debug" to "dev.harness", "stable" to "stg.harness", "play" to "btl.harness")
     for ((buildType, id) in ids) {
         onVariants(selector().withBuildType(buildType)) { variant ->
             if (findProperty("harnessAppId") == null) variant.applicationId.set(id)
