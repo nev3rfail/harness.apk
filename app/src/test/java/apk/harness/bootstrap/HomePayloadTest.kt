@@ -79,11 +79,16 @@ class HomePayloadTest {
         assertEquals("the environment", target.readText())
     }
 
-    private fun stage(into: File): List<File> {
+    private fun stage(into: File, shipped: String = "the invocation"): List<File> {
         val backups = mutableListOf<File>()
-        stageScripts(listOf("agent.sh"), ::open, into) { backups += it }
+        stageScripts(listOf("agent.sh"), { ByteArrayInputStream(shipped.toByteArray()) }, into) {
+            backups += it
+        }
         return backups
     }
+
+    private fun temporaries(into: File): List<File> =
+        into.listFiles()!!.filter { it.name.endsWith(".tmp") }
 
     @Test
     fun `a missing script is written and made executable`() {
@@ -94,7 +99,7 @@ class HomePayloadTest {
         val script = File(into, "agent.sh")
         assertEquals("the invocation", script.readText())
         assertTrue(script.canExecute())
-        assertFalse(File(into, "agent.sh.tmp").exists())
+        assertEquals(emptyList<File>(), temporaries(into))
     }
 
     @Test
@@ -110,7 +115,7 @@ class HomePayloadTest {
 
         runCatching { stage(into) }
 
-        assertTrue(File(into, "agent.sh.tmp").canExecute())
+        assertTrue(temporaries(into).single().canExecute())
     }
 
     @Test
@@ -149,6 +154,57 @@ class HomePayloadTest {
 
         assertEquals("the invocation", File(into, "agent.sh").readText())
         assertArrayEquals(bytes, backup.readBytes())
+    }
+
+    @Test
+    fun `an edit stays in the backup across two releases`() {
+        val into = folder.newFolder()
+        val script = File(into, "agent.sh")
+        val backup = File(into, "agent.sh.bak")
+        stage(into, "release one")
+        script.writeText("edited on the device")
+
+        assertEquals(listOf(backup), stage(into, "release two"))
+        assertEquals(emptyList<File>(), stage(into, "release three"))
+
+        assertEquals("release three", script.readText())
+        assertEquals("edited on the device", backup.readText())
+    }
+
+    @Test
+    fun `an unedited older copy is replaced and the backup is left alone`() {
+        val into = folder.newFolder()
+        val backup = File(into, "agent.sh.bak").apply { writeText("an older edit") }
+        stage(into, "release one")
+
+        assertEquals(emptyList<File>(), stage(into, "release two"))
+
+        assertEquals("release two", File(into, "agent.sh").readText())
+        assertEquals("an older edit", backup.readText())
+    }
+
+    @Test
+    fun `two starts staging at once leave a complete script`() {
+        // Windows refuses a rename over a file another thread has open, which
+        // the device's filesystem allows.
+        assumeTrue(
+            "needs a filesystem that renames over an open file",
+            FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+        )
+        val into = folder.newFolder()
+        val shipped = "the invocation ".repeat(10_000)
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val threads = List(2) {
+            Thread {
+                runCatching { repeat(50) { stage(into, shipped) } }.onFailure { errors += it }
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        assertEquals(emptyList<Throwable>(), errors)
+        assertEquals(shipped, File(into, "agent.sh").readText())
+        assertEquals(emptyList<File>(), temporaries(into))
     }
 
     @Test

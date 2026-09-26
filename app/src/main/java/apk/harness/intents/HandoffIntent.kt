@@ -50,8 +50,9 @@ fun intentFor(context: Context, handoff: Handoff): Intent {
         Action.Settings -> settingsIntent(context, screenOf(handoff))
 
         // An absent package answers with nothing to launch. The implicit intent
-        // in its place resolves to nothing either, so `appFor` says so and the
-        // fire never happens, rather than this throwing on a null.
+        // in its place resolves to nothing either, so starting it throws
+        // `ActivityNotFoundException` and the handoff reports `NoHandler`,
+        // rather than this throwing on a null.
         Action.Launch -> context.packageManager.getLaunchIntentForPackage(handoff.target.orEmpty())
             ?: Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LAUNCHER)

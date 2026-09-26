@@ -185,6 +185,12 @@ jobs:
               -PskipNativeBuild=true -PskipLoaderBuild=true \
               -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
 
+      # Play refuses a native library with a LOAD segment aligned below 16 KB.
+      - name: Every native library is 16 KB aligned
+        run: |
+          bash scripts/check-page-alignment.sh \
+              app/build/outputs/apk/release/app-release-unsigned.apk
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: app-release-unsigned
@@ -255,7 +261,7 @@ jobs:
           fi
 
   sign:
-    needs: [guard, build]
+    needs: [guard, build, mirror-bootstrap]
     runs-on: ubuntu-24.04
     # The signing secrets live here behind required reviewers, so a workflow
     # pushed on a branch cannot reach the key without a human approving the run.

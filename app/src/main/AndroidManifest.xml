@@ -87,10 +87,9 @@
 
              screenSize is the flag the declaration turns on: an app targeting
              API 13 or higher is recreated for it even when orientation is
-             handled, and every rotation changes it. mcc and mnc are here for
-             minSdk 24, which is below the level where the platform stopped
-             recreating for them. A device below the API level that introduced a
-             flag never sets that bit, so the extra bits are inert. -->
+             handled, and every rotation changes it. A device below the API level
+             that introduced a flag never sets that bit, so the extra bits are
+             inert. -->
         <activity
             android:name=".MainActivity"
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density|layoutDirection|colorMode|grammaticalGender|fontScale|fontWeightAdjustment"

@@ -4,6 +4,7 @@ import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 
 /**
  * What the app tells the agent about itself, carried in the APK as two trees of
@@ -74,14 +75,19 @@ fun copyAssets(
  * Writes each of [names] into [into] from the assets root, replacing what is
  * there.
  *
- * The shipped bytes go to a temporary file that is made executable and renamed
- * over the script, so a shell in another tab reading the old copy keeps reading
- * it, and a launcher starting the script by path never finds it absent or
- * without its execute bit.
+ * The shipped bytes go to a temporary file of its own that is made executable
+ * and renamed over the script, so a shell in another tab reading the old copy
+ * keeps reading it, a launcher starting the script by path never finds it
+ * absent or without its execute bit, and two starts staging at once never
+ * write into one file.
  *
- * A copy on the device that differs from the shipped one and from its `.bak`
- * is copied to `.bak` first and reported to [onBackup], so an edit survives one
- * update. Local changes belong in `launcher.local.sh`, which nothing writes.
+ * The SHA-256 of the bytes written is recorded in `.<name>.sha256` beside the
+ * script. A copy on the device whose hash differs from that record was edited
+ * there, and it is copied to `.bak` first and reported to [onBackup]; a copy
+ * matching the record is replaced as it is, so `.bak` keeps the last edit
+ * across any number of updates. With no record, a copy that differs from the
+ * shipped one and from its `.bak` counts as edited. Local changes belong in
+ * `launcher.local.sh`, which nothing writes.
  */
 fun stageScripts(
     names: List<String>,
@@ -93,25 +99,41 @@ fun stageScripts(
         val shipped = open(name).use { it.readBytes() }
         val script = File(into, name)
         val backup = File(into, "$name.bak")
+        val record = File(into, ".$name.sha256")
         if (script.isFile) {
             val current = script.readBytes()
-            val kept = backup.isFile && backup.readBytes().contentEquals(current)
-            if (!current.contentEquals(shipped) && !kept) {
+            val written = record.takeIf { it.isFile }?.runCatching { readText().trim() }?.getOrNull()
+            val edited = if (written != null) {
+                sha256(current) != written
+            } else {
+                !current.contentEquals(shipped) &&
+                    !(backup.isFile && backup.readBytes().contentEquals(current))
+            }
+            if (edited) {
                 script.copyTo(backup, overwrite = true)
                 onBackup(backup)
             }
         }
-        val temporary = File(into, "$name.tmp")
-        temporary.writeBytes(shipped)
-        temporary.setExecutable(true, true)
-        Files.move(
-            temporary.toPath(),
-            script.toPath(),
-            StandardCopyOption.REPLACE_EXISTING,
-            StandardCopyOption.ATOMIC_MOVE,
-        )
+        replace(into, name, shipped, executable = true)
+        replace(into, record.name, sha256(shipped).toByteArray(), executable = false)
     }
 }
+
+/** Writes [bytes] to a temporary file in [into] and renames it over [name]. */
+private fun replace(into: File, name: String, bytes: ByteArray, executable: Boolean) {
+    val temporary = File.createTempFile(name, ".tmp", into)
+    temporary.writeBytes(bytes)
+    if (executable) temporary.setExecutable(true, true)
+    Files.move(
+        temporary.toPath(),
+        File(into, name).toPath(),
+        StandardCopyOption.REPLACE_EXISTING,
+        StandardCopyOption.ATOMIC_MOVE,
+    )
+}
+
+private fun sha256(bytes: ByteArray): String =
+    MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
 /**
  * Whether the payload has yet to be staged for [installed].
