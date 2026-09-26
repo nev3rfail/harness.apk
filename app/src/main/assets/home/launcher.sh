@@ -6,6 +6,11 @@
 #
 # What the agent needs from the platform. Paths arrive as HARNESS_ variables, so
 # one copy serves every channel.
+#
+# The session starts with the exec router in LD_PRELOAD, so every program this
+# starts from the data directory is routed through a loader the platform lets
+# run: a script by its shebang, a bionic program through linker64, the agent
+# through the musl loader.
 
 export HOME="$HARNESS_HOME"
 export TMPDIR="$HARNESS_TMP"
@@ -44,8 +49,9 @@ fi
 # Run the agent rather than become it: exec would take the pty down on its exit.
 #
 # HARNESS_AGENT_SCRIPT names the script that starts the agent, so a backend
-# brings its own invocation. It falls back to agent.sh for a caller that names
-# none.
+# brings its own invocation and launcher.local.sh can name one of its own. It
+# falls back to agent.sh for a caller that names none. The script is started by
+# path and routed by its shebang.
 #
 # HARNESS_AGENT_ARGS is what the app asks for on behalf of a tab -- which
 # conversation to open, which id to give a new one, where its MCP config is.
@@ -54,8 +60,9 @@ fi
 # script its own defaults.
 "$HARNESS_HOME/${HARNESS_AGENT_SCRIPT:-agent.sh}" $HARNESS_AGENT_ARGS
 
-# The session then belongs to a shell. The wrapper carries termux-exec, so it
-# comes first; bash directly when the wrapper is gone; toybox with no userland.
+# The session then belongs to a shell. The wrapper sets up the userland's
+# environment, so it comes first; bash directly when the wrapper is gone, still
+# routed by the session's preload; toybox with no userland.
 if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
     [ -x "$HARNESS_HOME/shell.sh" ] && exec "$HARNESS_HOME/shell.sh"
     exec "$HARNESS_PREFIX/bin/bash"

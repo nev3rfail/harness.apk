@@ -29,10 +29,84 @@ class BootstrapSourceTest {
     }
 
     @Test
-    fun `the plus in the release tag is escaped in the url`() {
-        val url = downloadUrl(releaseFor("arm64-v8a")!!)
-        assertTrue(url, url.contains("%2Bapt.android-7/bootstrap-aarch64.zip"))
-        assertFalse(url, url.contains("+"))
+    fun `the play bootstrap is pinned per abi`() {
+        assertEquals(
+            BootstrapRelease(
+                asset = "bootstrap-aarch64.zip",
+                sha256 = "8dce2a667b1d1e1de0b87f8228538e9035f286553cb7dbd4a35af191783d0a92",
+                bytes = 24564124L,
+                entries = 2863,
+            ),
+            releaseFor("arm64-v8a"),
+        )
+        assertEquals(
+            BootstrapRelease(
+                asset = "bootstrap-x86_64.zip",
+                sha256 = "115b21acb995c2da36a66c3c76fa07e9b4c69cac851a80b4876f48468eec5b73",
+                bytes = 24218072L,
+                entries = 2864,
+            ),
+            releaseFor("x86_64"),
+        )
+    }
+
+    @Test
+    fun `the archive comes from the play release and then from the mirror`() {
+        val release = releaseFor("x86_64")!!
+        assertEquals(
+            "https://github.com/termux-play-store/termux-packages/releases/download/" +
+                "bootstrap-2026.09.20-r1/bootstrap-x86_64.zip",
+            downloadUrl(release),
+        )
+        assertEquals(
+            "https://github.com/nev3rfail/harness.apk/releases/download/" +
+                "bootstrap-2026.09.20-r1/bootstrap-x86_64.zip",
+            mirrorUrl(release),
+        )
+    }
+
+    private val tiny = BootstrapRelease("t.zip", hiSha, 2L, 1)
+
+    @Test
+    fun `a failed upstream fetch falls back to the mirror`() {
+        val into = folder.newFolder("cache")
+        val asked = mutableListOf<String>()
+        val got = fetchBootstrap(tiny, into, { url ->
+            asked += url
+            if (url == downloadUrl(tiny)) error("pruned") else ByteArrayInputStream(hi)
+        }) {}
+        assertEquals(listOf(downloadUrl(tiny), mirrorUrl(tiny)), asked)
+        assertEquals("hi", got.readText())
+    }
+
+    @Test
+    fun `a mismatched upstream archive falls back to the mirror`() {
+        val into = folder.newFolder("cache")
+        val got = fetchBootstrap(tiny, into, { url ->
+            ByteArrayInputStream(if (url == downloadUrl(tiny)) "no".toByteArray() else hi)
+        }) {}
+        assertEquals("hi", got.readText())
+    }
+
+    @Test
+    fun `a working upstream leaves the mirror alone`() {
+        val into = folder.newFolder("cache")
+        val asked = mutableListOf<String>()
+        fetchBootstrap(tiny, into, { asked += it; ByteArrayInputStream(hi) }) {}
+        assertEquals(listOf(downloadUrl(tiny)), asked)
+    }
+
+    @Test
+    fun `both failing reports the mirror and carries the upstream failure`() {
+        val into = folder.newFolder("cache")
+        val thrown = try {
+            fetchBootstrap(tiny, into, { url -> error(url) }) {}
+            null
+        } catch (e: IllegalStateException) {
+            e
+        }
+        assertEquals(mirrorUrl(tiny), thrown?.message)
+        assertEquals(downloadUrl(tiny), thrown?.suppressed?.single()?.message)
     }
 
     @Test

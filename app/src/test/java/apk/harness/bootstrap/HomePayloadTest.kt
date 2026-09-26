@@ -3,10 +3,12 @@ package apk.harness.bootstrap
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.nio.file.FileSystems
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -77,28 +79,76 @@ class HomePayloadTest {
         assertEquals("the environment", target.readText())
     }
 
+    private fun stage(into: File): List<File> {
+        val backups = mutableListOf<File>()
+        stageScripts(listOf("agent.sh"), ::open, into) { backups += it }
+        return backups
+    }
+
     @Test
     fun `a missing script is written and made executable`() {
         val into = folder.newFolder()
 
-        stageScripts(listOf("agent.sh"), ::open, into)
+        assertEquals(emptyList<File>(), stage(into))
 
         val script = File(into, "agent.sh")
         assertEquals("the invocation", script.readText())
         assertTrue(script.canExecute())
+        assertFalse(File(into, "agent.sh.tmp").exists())
     }
 
     @Test
-    fun `a script that is there is left byte for byte and made executable`() {
+    fun `the temporary copy is executable before it is renamed into place`() {
+        // A file named by a directory pins the rename to fail, which leaves the
+        // temporary copy behind to be inspected.
+        assumeTrue(
+            "needs a filesystem that records an execute bit",
+            FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+        )
         val into = folder.newFolder()
-        val script = File(into, "agent.sh").apply { writeText("edited on the device") }
-        val bytes = script.readBytes()
+        File(into, "agent.sh/occupied").mkdirs()
+
+        runCatching { stage(into) }
+
+        assertTrue(File(into, "agent.sh.tmp").canExecute())
+    }
+
+    @Test
+    fun `a script matching the shipped one is rewritten with no backup`() {
+        val into = folder.newFolder()
+        val script = File(into, "agent.sh").apply { writeText("the invocation") }
         script.setExecutable(false, false)
 
-        stageScripts(listOf("agent.sh"), ::open, into)
+        assertEquals(emptyList<File>(), stage(into))
 
-        assertArrayEquals(bytes, script.readBytes())
+        assertEquals("the invocation", script.readText())
         assertTrue(script.canExecute())
+        assertFalse(File(into, "agent.sh.bak").exists())
+    }
+
+    @Test
+    fun `an edited script is replaced and kept as the backup`() {
+        val into = folder.newFolder()
+        File(into, "agent.sh").writeText("edited on the device")
+        File(into, "agent.sh.bak").writeText("an older edit")
+
+        assertEquals(listOf(File(into, "agent.sh.bak")), stage(into))
+
+        assertEquals("the invocation", File(into, "agent.sh").readText())
+        assertEquals("edited on the device", File(into, "agent.sh.bak").readText())
+    }
+
+    @Test
+    fun `an edit already kept as the backup is not reported again`() {
+        val into = folder.newFolder()
+        File(into, "agent.sh").writeText("edited on the device")
+        val backup = File(into, "agent.sh.bak").apply { writeText("edited on the device") }
+        val bytes = backup.readBytes()
+
+        assertEquals(emptyList<File>(), stage(into))
+
+        assertEquals("the invocation", File(into, "agent.sh").readText())
+        assertArrayEquals(bytes, backup.readBytes())
     }
 
     @Test

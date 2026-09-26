@@ -2,40 +2,76 @@ package apk.harness.bootstrap
 
 import java.io.File
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 
-/** One architecture's bootstrap archive, pinned by checksum. */
-data class BootstrapRelease(val asset: String, val sha256: String, val bytes: Long)
+/**
+ * One architecture's bootstrap archive, pinned by checksum.
+ *
+ * [entries] is the archive's zip entry count, which is what the extraction
+ * progress is measured against.
+ */
+data class BootstrapRelease(val asset: String, val sha256: String, val bytes: Long, val entries: Int)
 
-// The release the tree is measured against. The archives are release assets, so
-// the tag cannot be moved under us the way an apt repository can.
-private const val RELEASE = "bootstrap-2026.08.23-r1+apt.android-7"
-private const val ASSETS = "https://github.com/termux/termux-packages/releases/download"
+// The Play build's bootstrap, built from the termux.net repository whose Go
+// runtime routes its own execs. The archives are release assets, so the tag
+// cannot be moved under us the way an apt repository can.
+private const val RELEASE = "bootstrap-2026.09.20-r1"
+private const val ASSETS = "https://github.com/termux-play-store/termux-packages/releases/download"
+
+// The same archives, carried as assets of the harness release, for when the
+// upstream release is pruned or unreachable.
+private const val MIRROR = "https://github.com/nev3rfail/harness.apk/releases/download"
 
 // The checksums come from the same host as the archives, so they catch a
 // truncated or corrupted download. That is not code signing.
 private val RELEASES = mapOf(
     "arm64-v8a" to BootstrapRelease(
         asset = "bootstrap-aarch64.zip",
-        sha256 = "f902017cf09c84189732b6174b56d69b9890468f4fa7394fc1354b573153688e",
-        bytes = 32672724L,
+        sha256 = "8dce2a667b1d1e1de0b87f8228538e9035f286553cb7dbd4a35af191783d0a92",
+        bytes = 24564124L,
+        entries = 2863,
     ),
     "x86_64" to BootstrapRelease(
         asset = "bootstrap-x86_64.zip",
-        sha256 = "5f7c54e860df1ef5146b8475dc90e69af666da6588ca1fd47be8f7036b07e8cb",
-        bytes = 32584674L,
+        sha256 = "115b21acb995c2da36a66c3c76fa07e9b4c69cac851a80b4876f48468eec5b73",
+        bytes = 24218072L,
+        entries = 2864,
     ),
 )
 
 /** The archive pinned for [abi], or null when there is none. */
 fun releaseFor(abi: String): BootstrapRelease? = RELEASES[abi]
 
-/** Where [release] is downloaded from. */
-// A literal + in a URL path is a space to some servers, so the tag is escaped.
-fun downloadUrl(release: BootstrapRelease): String =
-    "$ASSETS/${RELEASE.replace("+", "%2B")}/${release.asset}"
+/** Where [release] is downloaded from first. */
+fun downloadUrl(release: BootstrapRelease): String = "$ASSETS/$RELEASE/${release.asset}"
+
+/** Where [release] is downloaded from when [downloadUrl] fails. */
+fun mirrorUrl(release: BootstrapRelease): String = "$MIRROR/$RELEASE/${release.asset}"
+
+/**
+ * Puts [release] in [into] and returns it, from [downloadUrl] and then from
+ * [mirrorUrl] when that fails for any reason -- no answer, a short read, a
+ * checksum that does not match. Both hold the same bytes, so one checksum
+ * verifies either. [open] is the connection, which a test replaces.
+ */
+fun fetchBootstrap(
+    release: BootstrapRelease,
+    into: File,
+    open: (String) -> InputStream = { openUrl(it) },
+    onProgress: (Long) -> Unit,
+): File {
+    fun from(url: String) = fetchVerified({ open(url) }, release.asset, release.sha256, into, onProgress)
+    return try {
+        from(downloadUrl(release))
+    } catch (upstream: Exception) {
+        try {
+            from(mirrorUrl(release))
+        } catch (mirror: Exception) {
+            mirror.addSuppressed(upstream)
+            throw mirror
+        }
+    }
+}
 
 /** The SHA-256 of [file] as lowercase hex, read in chunks rather than whole. */
 fun sha256(file: File): String {
@@ -51,18 +87,6 @@ fun sha256(file: File): String {
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-/** Opens [release] over HTTP, following the redirect to the signed asset host. */
-fun openRelease(release: BootstrapRelease): InputStream {
-    val connection = URL(downloadUrl(release)).openConnection() as HttpURLConnection
-    connection.instanceFollowRedirects = true
-    connection.connectTimeout = 30_000
-    connection.readTimeout = 60_000
-    check(connection.responseCode == HttpURLConnection.HTTP_OK) {
-        "${downloadUrl(release)} answered ${connection.responseCode}"
-    }
-    return connection.inputStream
-}
-
 /**
  * Puts a file named [name] in [into] and returns it, reading from [source] only
  * when what is already there does not hash to [checksum], and reporting bytes
@@ -73,7 +97,7 @@ fun openRelease(release: BootstrapRelease): InputStream {
  *
  * The bytes arrive from [source] rather than from a URL of this function's own
  * making, so everything except the connection is driven by a stream a caller can
- * supply. [openRelease] is that connection, and the only part not covered.
+ * supply. [openUrl] is that connection, and the only part not covered.
  */
 fun fetchVerified(
     source: () -> InputStream,

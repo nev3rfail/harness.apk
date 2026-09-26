@@ -35,21 +35,8 @@ private val PLATFORMS = mapOf(
     "x86_64" to "linux-x64-musl",
 )
 
-// One shared libc per architecture, built by `scripts/build-loaders.sh` from
-// musl's own release and shipped as a native library because that directory stays
-// executable whatever the app targets. Both are named `libmuslloader.so` there;
-// this is what the copy in the data directory is called, which is the name a musl
-// binary would have asked for as its interpreter.
-private val LOADERS = mapOf(
-    "arm64-v8a" to "ld-musl-aarch64.so.1",
-    "x86_64" to "ld-musl-x86_64.so.1",
-)
-
 /** The release platform for [abi], or null when there is none. */
 fun platformFor(abi: String): String? = PLATFORMS[abi]
-
-/** What the staged loader for [abi] is called, or null when there is none. */
-fun loaderFor(abi: String): String? = LOADERS[abi]
 
 /** Where the manifest for [version] is published. */
 fun manifestUrl(version: String): String = "$RELEASES/$version/manifest.json"

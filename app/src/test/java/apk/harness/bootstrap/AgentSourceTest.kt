@@ -20,17 +20,14 @@ class AgentSourceTest {
     """.trimIndent()
 
     @Test
-    fun `each shipped abi names a musl platform and a loader`() {
+    fun `each shipped abi names a musl platform`() {
         assertEquals("linux-arm64-musl", platformFor("arm64-v8a"))
         assertEquals("linux-x64-musl", platformFor("x86_64"))
-        assertEquals("ld-musl-aarch64.so.1", loaderFor("arm64-v8a"))
-        assertEquals("ld-musl-x86_64.so.1", loaderFor("x86_64"))
     }
 
     @Test
     fun `an abi with no renderer has no agent`() {
         assertEquals(null, platformFor("armeabi-v7a"))
-        assertEquals(null, loaderFor("armeabi-v7a"))
     }
 
     @Test

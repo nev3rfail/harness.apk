@@ -84,16 +84,13 @@ class Bootstrap(private val context: Context) {
         val release = releaseFor(abi) ?: error("no bootstrap for $abi")
         val pairs = relocationPairs(context.packageName)
 
-        val archive = fetchVerified(
-            source = { openRelease(release) },
-            name = release.asset,
-            checksum = release.sha256,
-            into = context.cacheDir,
-        ) { onProgress(BootstrapProgress.Downloading(it, release.bytes)) }
+        val archive = fetchBootstrap(release, context.cacheDir) {
+            onProgress(BootstrapProgress.Downloading(it, release.bytes))
+        }
 
         prefix.mkdirs()
         val entries = extractArchive(archive.inputStream(), prefix) {
-            onProgress(BootstrapProgress.Extracting(it, EXPECTED_ENTRIES))
+            onProgress(BootstrapProgress.Extracting(it, release.entries))
         }
         // Checked here rather than at the end: an archive that unpacked to
         // nothing relocates and configures without complaint, and the only
@@ -239,10 +236,6 @@ class Bootstrap(private val context: Context) {
         // A program, shipped as a library because that directory stays executable
         // whatever the app targets.
         const val RELOCATE_NAME = "librelocate.so"
-
-        // For the progress bar only: an entry count that is one archive out of
-        // date makes a bar slightly wrong, not a tree.
-        const val EXPECTED_ENTRIES = 3766
     }
 }
 

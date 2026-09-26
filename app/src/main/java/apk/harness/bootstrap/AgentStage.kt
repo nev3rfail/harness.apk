@@ -2,6 +2,7 @@ package apk.harness.bootstrap
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import java.io.File
 
 /**
@@ -9,7 +10,8 @@ import java.io.File
  *
  * The binary is proprietary and is not redistributed, so it is downloaded from
  * the host that publishes it and verified against the checksum in that release's
- * manifest. The loader is ours and ships in the APK.
+ * manifest. The loader is ours and runs from the native library directory as
+ * packaged.
  *
  * The paths are public because two callers need the same ones: this class writes
  * them, and the session that runs the agent names them in its environment.
@@ -43,16 +45,10 @@ class AgentStage(private val context: Context) {
 
     private val abi: String = Build.SUPPORTED_ABIS.first()
 
-    /** The staged loader, or null on an architecture the app carries none for. */
-    val loader: File? = loaderFor(abi)?.let { File(stage, it) }
+    private val libraries: File = File(context.applicationInfo.nativeLibraryDir)
 
-    /**
-     * The tracer, on the architecture that needs one. The aarch64 Linux ABI has
-     * only the `*at` syscalls, which is exactly the set Android's seccomp policy
-     * allows, so nothing needs rewriting there.
-     */
-    val shim: File? = File(context.applicationInfo.nativeLibraryDir, SHIM_NAME)
-        .takeIf { abi == "x86_64" && it.canExecute() }
+    /** The musl loader, which runs the agent with the agent as its argument. */
+    private val loader: File = File(libraries, LOADER_NAME)
 
     /**
      * True once this device holds the pinned version.
@@ -64,21 +60,19 @@ class AgentStage(private val context: Context) {
      */
     fun isStaged(): Boolean =
         binary.isFile &&
-            loader?.canExecute() == true &&
             launcher.canExecute() &&
             stamp.takeIf { it.isFile }?.readText()?.trim() == AGENT_VERSION
 
     /**
      * Downloads and stages the agent, reporting each phase to [onProgress].
      *
-     * Every step is repeatable. A verified binary is not fetched twice, the
-     * loader and the resolver are overwritten, and the scripts are written only
-     * when absent -- so the answer to a failure is another call, which is what
-     * the next launch makes.
+     * Every step is repeatable. A verified binary is not fetched twice and the
+     * resolver is overwritten, so the answer to a failure is another call, which
+     * is what the next launch makes.
      */
     fun install(onProgress: (BootstrapProgress) -> Unit) {
         val platform = platformFor(abi) ?: error("no agent build for $abi")
-        val loader = loader ?: error("no loader for $abi")
+        check(loader.isFile) { "$LOADER_NAME is not in the native library directory" }
 
         onProgress(BootstrapProgress.Resolving)
         val release = fetchRelease(AGENT_VERSION, platform)
@@ -95,7 +89,6 @@ class AgentStage(private val context: Context) {
         ) { onProgress(BootstrapProgress.FetchingAgent(it, release.bytes)) }
 
         onProgress(BootstrapProgress.StagingAgent)
-        stageLoader(loader)
         configure()
 
         // The launcher comes from the payload, and [isStaged] answers from it,
@@ -118,10 +111,7 @@ class AgentStage(private val context: Context) {
      *
      * A missing launcher also brings the copy forward, whatever the stamp says,
      * because deleting a staged file is how a device asks for the shipped one
-     * back and the launcher is the file a session cannot start without. The
-     * operator-owned scripts follow the same rule ahead of the stamp, each
-     * written when it is absent, so deleting one restores it on the next
-     * session start.
+     * back and the launcher is the file a session cannot start without.
      */
     fun stageHome() {
         val installed = File(context.applicationInfo.sourceDir).lastModified().toString()
@@ -134,10 +124,14 @@ class AgentStage(private val context: Context) {
         // yet, which the copy below answers.
         launcher.setExecutable(true, true)
 
-        // Ahead of the guard, because a current stamp says the app's own
-        // statements are staged and says nothing about a script the device
-        // deleted. One stat per script when both are there.
-        stageScripts(SCRIPTS, { context.assets.open(it) }, home)
+        // Ahead of the guard, because a current version stamp says nothing
+        // about the binary's execute bit or the files beside it.
+        refreshStage(stage, binary)
+
+        // Ahead of the guard, because the scripts are rewritten on every start.
+        stageScripts(SCRIPTS, { context.assets.open(it) }, home) {
+            Log.w(TAG, "${it.name} holds the copy that differed from the shipped script")
+        }
 
         if (!payloadDue(payload, installed) && launcher.isFile) return
 
@@ -155,22 +149,6 @@ class AgentStage(private val context: Context) {
     private fun copyTree(tree: String, overwrite: Boolean) {
         val entries = assetEntries({ context.assets.list(it) }, tree)
         copyAssets(entries, { context.assets.open(it) }, tree, home, overwrite)
-    }
-
-    /**
-     * Copies the loader out of the native library directory and points its
-     * compiled-in paths at this channel.
-     *
-     * The native library directory is read-only to the app, and the loader has
-     * to be written to, so the copy is the thing that runs.
-     */
-    private fun stageLoader(destination: File) {
-        val packaged = File(context.applicationInfo.nativeLibraryDir, LOADER_NAME)
-        check(packaged.isFile) { "$LOADER_NAME is not in the native library directory" }
-        val image = packaged.readBytes()
-        retargetLoader(image, context.packageName)
-        destination.writeBytes(image)
-        destination.setExecutable(true, true)
     }
 
     /**
@@ -202,11 +180,7 @@ class AgentStage(private val context: Context) {
         put("HARNESS_PREFIX", prefix.absolutePath)
         put("HARNESS_ETC", etc.absolutePath)
         put("HARNESS_AGENT", binary.absolutePath)
-        put("HARNESS_LOADER", loader?.absolutePath ?: "")
-        // Empty rather than absent on the architecture that needs no tracer: the
-        // script tests the value, and an unset variable and an empty one read the
-        // same there.
-        put("HARNESS_SHIM", shim?.absolutePath ?: "")
+        putAll(libraryEnvironment(libraries))
     }
 
     private val stamp: File get() = File(stage, VERSION_NAME)
@@ -214,6 +188,7 @@ class AgentStage(private val context: Context) {
     private val payload: File get() = File(stage, PAYLOAD_NAME)
 
     private companion object {
+        const val TAG = "AgentStage"
         const val STAGE_DIRECTORY = "claude"
         const val BINARY_NAME = "claude"
         const val VERSION_NAME = "VERSION"
@@ -229,14 +204,10 @@ class AgentStage(private val context: Context) {
         // nothing writes.
         const val LAUNCHER = "launcher.sh"
 
-        // Operator-owned: the invocation and the shell are what a device is
-        // expected to change, and an edit to either stands until it is deleted.
+        // App-owned like the launcher and rewritten on every start. A device
+        // that wants another invocation or shell sets HARNESS_AGENT_SCRIPT or
+        // SHELL in launcher.local.sh.
         val SCRIPTS = listOf("agent.sh", "shell.sh")
-
-        // Programs shipped as libraries, because that directory stays executable
-        // whatever the app targets.
-        const val LOADER_NAME = "libmuslloader.so"
-        const val SHIM_NAME = "libsyscallshim.so"
 
         const val CONFIG_NAME = ".claude.json"
         const val ONBOARDED = """{"hasCompletedOnboarding":true}"""
@@ -252,6 +223,43 @@ class AgentStage(private val context: Context) {
         val SETDNS_JS = RESOLVERS.joinToString(", ") { "\"$it\"" }
             .let { "try { require(\"dns\").setServers([$it]); } catch (e) {}\n" }
     }
+}
+
+// Programs shipped as libraries, because that directory stays executable
+// whatever the app targets.
+private const val LOADER_NAME = "libmuslloader.so"
+private const val TERMUX_EXEC_NAME = "libtermuxexec.so"
+
+// Loader copies under the names a musl binary asks for as its interpreter. The
+// loader runs from the native library directory, so nothing runs these.
+private val STALE_LOADERS = listOf("ld-musl-aarch64.so.1", "ld-musl-x86_64.so.1")
+
+/**
+ * The part of the session environment that names the native library directory
+ * [libraries].
+ *
+ * `LD_PRELOAD` carries the exec router into the launcher's shell, and from there
+ * into every bionic program the session starts: each exec of a file in the data
+ * directory is rewritten into one the platform allows. The router adds the
+ * tracer where one is needed, so the scripts never name it.
+ */
+fun libraryEnvironment(libraries: File): Map<String, String> {
+    val termuxExec = File(libraries, TERMUX_EXEC_NAME).absolutePath
+    return mapOf(
+        "HARNESS_LOADER" to File(libraries, LOADER_NAME).absolutePath,
+        "HARNESS_TERMUX_EXEC" to termuxExec,
+        "LD_PRELOAD" to termuxExec,
+    )
+}
+
+/**
+ * Brings the stage directory [stage] up to what a start needs: [binary] made
+ * executable, since an exec of it is checked with `X_OK` before it is routed,
+ * and the loader copies deleted by name.
+ */
+fun refreshStage(stage: File, binary: File) {
+    binary.setExecutable(true, true)
+    for (name in STALE_LOADERS) File(stage, name).delete()
 }
 
 /**

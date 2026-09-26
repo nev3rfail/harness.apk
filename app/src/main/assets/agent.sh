@@ -1,14 +1,18 @@
 #!/system/bin/sh
-# How the agent is started. This is the file to edit to change that.
+# How the agent is started.
 #
-# The loader runs as a program with the agent as its argument, so the download is
-# stored exactly as it arrived and needs no execute bit. On x86_64 the tracer goes
-# in front: Android's seccomp allowlist covers only the *at syscalls bionic uses,
-# and the agent's runtime calls the legacy ones where the ABI still has them.
-# aarch64 never had them, so HARNESS_SHIM is empty there.
+# Do not edit: the app rewrites this file on every start, and keeps a copy that
+# differed from the shipped one as agent.sh.bak. To start the agent another way,
+# set HARNESS_AGENT_SCRIPT in launcher.local.sh to a script of your own.
+#
+# The loader runs from the native library directory with the agent as its
+# argument. The exec router in the calling shell's preload sees the loader and
+# puts the tracer in front on x86_64: Android's seccomp allowlist covers only the
+# *at syscalls bionic uses, and the agent's runtime calls the legacy ones where
+# the ABI still has them.
 
-# A shell that starts this carries the wrapper's preload, which is bionic and
-# cannot relocate against the agent's musl.
+# The router's preload is bionic and cannot relocate against the agent's musl.
+# The router in the loader's own libc takes over from here.
 unset LD_PRELOAD
 
 # Bun resolves names through libc for fetch and c-ares for dns. c-ares finds no
@@ -46,7 +50,4 @@ if [ "$#" -eq 0 ]; then
     fi
 fi
 
-if [ -n "$HARNESS_SHIM" ]; then
-    exec "$HARNESS_SHIM" "$HARNESS_LOADER" "$HARNESS_AGENT" --ide "$@"
-fi
 exec "$HARNESS_LOADER" "$HARNESS_AGENT" --ide "$@"

@@ -2,6 +2,8 @@ package apk.harness.bootstrap
 
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * What the app tells the agent about itself, carried in the APK as two trees of
@@ -69,23 +71,45 @@ fun copyAssets(
 }
 
 /**
- * Writes each of [names] into [into] from the assets root.
+ * Writes each of [names] into [into] from the assets root, replacing what is
+ * there.
  *
- * A name already on the device is left exactly as it is, so an edit made there
- * stands and deleting the file is how the device asks for the shipped one back.
- * The execute bit is set whichever way the file got there: a copy carries
- * content and not permissions, and an editor on the device can take the bit off
- * a file this leaves alone.
+ * The shipped bytes go to a temporary file that is made executable and renamed
+ * over the script, so a shell in another tab reading the old copy keeps reading
+ * it, and a launcher starting the script by path never finds it absent or
+ * without its execute bit.
+ *
+ * A copy on the device that differs from the shipped one and from its `.bak`
+ * is copied to `.bak` first and reported to [onBackup], so an edit survives one
+ * update. Local changes belong in `launcher.local.sh`, which nothing writes.
  */
-fun stageScripts(names: List<String>, open: (String) -> InputStream, into: File) {
+fun stageScripts(
+    names: List<String>,
+    open: (String) -> InputStream,
+    into: File,
+    onBackup: (File) -> Unit,
+) {
     for (name in names) {
+        val shipped = open(name).use { it.readBytes() }
         val script = File(into, name)
-        if (!script.isFile) {
-            open(name).use { input ->
-                script.outputStream().use { output -> input.copyTo(output) }
+        val backup = File(into, "$name.bak")
+        if (script.isFile) {
+            val current = script.readBytes()
+            val kept = backup.isFile && backup.readBytes().contentEquals(current)
+            if (!current.contentEquals(shipped) && !kept) {
+                script.copyTo(backup, overwrite = true)
+                onBackup(backup)
             }
         }
-        script.setExecutable(true, true)
+        val temporary = File(into, "$name.tmp")
+        temporary.writeBytes(shipped)
+        temporary.setExecutable(true, true)
+        Files.move(
+            temporary.toPath(),
+            script.toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+            StandardCopyOption.ATOMIC_MOVE,
+        )
     }
 }
 
