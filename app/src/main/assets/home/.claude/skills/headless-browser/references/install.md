@@ -31,7 +31,7 @@ apt install -y chromium nodejs
 Verify:
 
 ```sh
-chromium-browser --headless=new --no-sandbox --version   # -> Chromium 149.x
+chromium-browser --headless=new --no-sandbox --version   # -> Chromium 133.x
 node -v                                                   # -> v26.x
 ```
 
@@ -46,10 +46,9 @@ chmod +x $HOME/browsing/chromium-headless.sh
 ```
 
 The copy out of the assets carries content and not permissions, which is what the
-`chmod` is for. The launcher's shebang is `/system/bin/sh` -- an absolute path
-that resolves on every channel, where `#!/usr/bin/env` resolves on none. It puts
-the chromium profile beside itself, so the tree is relocatable and no channel id
-is written down anywhere.
+`chmod` is for. The launcher's shebang is `/system/bin/sh`, which needs no
+userland on `PATH`. It puts the chromium profile beside itself, so the tree is
+relocatable and no channel id is written down anywhere.
 
 ## 4. Playwright -- core only, no browser download
 

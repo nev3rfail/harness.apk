@@ -7,31 +7,30 @@ description: Use when building or installing this app's APK on the device itself
 
 Everything the build needs is packaged for Android by Termux or hand-installed
 once. Google's own tooling is x86_64-only and never runs here, so the build is
-Termux's binaries plus two hand-placed pieces, and the install goes through the
-device's own `adb`.
+Termux's binaries, one hand-placed platform jar, and the native libraries of the
+app that is already running. The install goes through the device's own `adb`.
 
 ## Quick reference
 
 | Piece | Where it comes from |
 |---|---|
-| JDK | `pkg install openjdk-21` (17 is packaged too; AGP takes either) |
+| JDK | `pkg install openjdk-21` |
 | `aapt2`, `d8`, `apksigner` | `pkg install aapt2 d8 apksigner` -- Termux builds these for arm64 |
 | `adb` | `adb-mdns`, which ships with `self-adb`; `pkg install android-tools` for the stock one |
-| `clang`, `cmake`, `ninja` | `pkg install clang cmake ninja` |
-| Gradle | the repository's `./gradlew`, which pins 8.11 and pairs with AGP 8.7.3 |
+| Gradle | the repository's `./gradlew`, which pins 8.11.1 and pairs with AGP 8.9.1 |
 | Platform jar | by hand from `dl.google.com`, below |
-| NDK | by hand, below, or avoided with `-PskipNativeBuild=true` |
+| Native libraries | the running app's own, through `-PprebuiltNative`, below |
 
-The packaged `gradle` is 9.7.1 and does not pair with this AGP. Use the wrapper.
+The packaged `gradle` is 9.6.0 and does not pair with this AGP. Use the wrapper.
 
-## The two hand-placed pieces
+## The hand-placed platform jar
 
-**The platform jar.** No package carries one. Take `platform-35_r02.zip` from
+No package carries one. Take `platform-36_r02.zip` from
 `https://dl.google.com/android/repository/`, unzip it, and rename the extracted
-directory to `android-35` under an SDK root you own:
+directory to `android-36` under an SDK root you own:
 
 ```
-$HOME/android-sdk/platforms/android-35/android.jar
+$HOME/android-sdk/platforms/android-36/android.jar
 ```
 
 `local.properties` names that root, and the shell writes that line too:
@@ -41,13 +40,6 @@ printf 'sdk.dir=%s/android-sdk\n' "$HOME" > $HOME/harness.apk/local.properties
 ```
 
 That file is git-ignored, which is where a device-specific path belongs.
-
-**The NDK, only if CMake has to run.** Google publishes no arm64-Linux host
-tooling at all, so their NDK cannot be used. `lzhiyong/termux-ndk` publishes
-`android-ndk-r29-aarch64.tar.xz`, built with Zig and musl, reporting exactly the
-`Pkg.Revision` this project pins. Unpacked to
-`$ANDROID_HOME/ndk/<pinned-revision>/`, AGP finds it with no other change. It is
-1.8 GB for two small libraries, so reach for it only when you need them.
 
 ## The override that makes it work
 
@@ -78,56 +70,33 @@ unquoted and the shell does the expanding.
 
 ```sh
 cd $HOME/harness.apk
-./gradlew assembleDebug --no-daemon -PskipNativeBuild=true -PskipLoaderBuild
+./gradlew assembleDebug --no-daemon \
+  -PprebuiltNative="$(dirname "$HARNESS_TERMUX_EXEC")" \
+  -PprebuiltAbi="$(getprop ro.product.cpu.abi)"
 ```
 
 A debug build takes the `dev.harness` id unless `-PharnessAppId` says otherwise,
 so the default target is the channel that is safe to break.
 
-The two flags consume the native pieces already in `jniLibs` rather than
-building them: the renderer's `libghostty-vt.so` and `libghostty_renderer.so`
-under `terminal-library/src/main/jniLibs/<abi>/`, and `libmuslloader.so` under
-`app/src/main/jniLibs/<abi>/`. Neither is committed, so an APK built with the
-flags and nothing in place installs and then throws in
-`AgentStage.stageLoader`.
+`-PprebuiltNative=<dir>` skips every CMake target, the terminal library's
+included, and the loader build, and packages every `lib*.so` in `<dir>` as the
+ABI `-PprebuiltAbi` names (`arm64-v8a` when it is left out). `$HARNESS_TERMUX_EXEC`
+is the exec router in the running app's native library directory, so that
+directory holds the renderer, the loader, the router and the rest, already built
+for this device. Its path changes on every update: take it from the variable,
+never type it.
 
 **Build against the channel that is not hosting your session.** A Gradle JVM at
 `-Xmx1536m` in the same sandbox as the agent is enough for Android to reclaim the
 app, and the session dies with it.
 
-## The native pieces, built here
+## What cannot be built here
 
-**The renderer** is Zig, and the version is not negotiable: both `build.zig.zon`
-files pin a `minimum_zig_version` that Termux's `zig` package satisfies, so
-`$PREFIX/bin/zig` is the one to use and a tarball fetched by hand is refused.
-`patchelf` comes from Termux too.
-
-Zig resolves the whole dependency manifest before it compiles anything, and its
-static binary reads `/etc/resolv.conf`, which Android has not got, so every fetch
-ends in `TemporaryNameServerFailure`. `curl` resolves names normally, so the loop
-is: run the build, take the URL out of the error, `curl` it, hand the file to
-`zig fetch`, run again. The directory those land in is the one never to delete --
-a dependency bump shows up here as a build that stops on one URL.
-
-**The loader** is built by `scripts/stage-claude.sh`. Its wrapper
-`scripts/build-loaders.sh` cannot run it for you: both are committed
-non-executable, so the wrapper fails on the script it calls. Drive the inner one
-with the NDK's clang, and not with `zig cc`, which is itself a musl toolchain and
-shadows musl's own `memcpy`:
-
-```sh
-NDK=$HOME/android-sdk/ndk/29.0.14206865
-out=$PWD/build/loader/arm64-v8a
-CC=$NDK/toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang \
-  bash scripts/stage-claude.sh --loader-only --abi arm64-v8a \
-  --prefix $HOME/claude --out "$out"
-cp "$out"/ld-musl-aarch64.so.1 app/src/main/jniLibs/arm64-v8a/libmuslloader.so
-```
-
-About a minute, musl's own download included, and the script's `verify_loader`
-gate is what says it worked. `x86_64` goes the same way through
-`x86_64-linux-android21-clang`. The prefix compiled in is rewritten per channel
-at install time, so it names whichever channel you build from.
+The renderer, the musl loader and the CMake targets cannot be built on the
+device, so only a Kotlin or resource change builds here. Android runs no
+statically linked program from the app's data directory, and each of those builds
+needs one: Termux's `zig` package and the `termux-ndk` toolchain are static, and
+`termux.net` carries no `zig`. A change to native code is built on a desktop.
 
 ## Install
 
@@ -157,6 +126,8 @@ reboot.
 
 | Mistake | What is true |
 |---|---|
+| Fetching the NDK or `zig` to build native code | Both are static and cannot run here. Build with `-PprebuiltNative` |
+| Typing the native library directory | It changes on every update. `dirname "$HARNESS_TERMUX_EXEC"` |
 | Hunting third-party `aapt2` prebuilts | Termux packages the arm64 build; install it and override the Maven one |
 | Unzipping Google's `build-tools_r*-linux.zip` | Those binaries are x86_64 and will not exec |
 | Assembling a full SDK by hand | Only the platform jar is needed; the override covers the rest |

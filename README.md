@@ -28,14 +28,14 @@ flowchart TB
   l["launcher.sh<br/>assembles the platform; no abspath used here and below"]
   a["agent.sh<br/>names the command, its flags; uses bun preload hack to get dns working"]
   s["syscall-shim<br/>unpacked into the native library directory"]
-  ld["ld-musl-&lt;arch&gt;.so.1<br/>run as a program, not named as PT_INTERP"]
+  ld["ld-musl-&lt;arch&gt;.so.1<br/>packaged as libmuslloader.so, run as a program from the native library directory"]
   c["claude --ide<br/>launching a pristine claude binary from the upstream"]
 
   l --> a --> s --> ld --> c
 
-  sdk["targetSdk 28 — API 29 and later grant an app<br/>no right to execute its own data directory"]
+  sdk["targetSdk 36 — the platform refuses execve of a data-directory file<br/>and lets a loader map one; an exec router, preloaded into every bionic<br/>process and compiled into this loader's libc, sends each program<br/>through linker64 or this loader"]
   abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp.<br/>aarch64 — the ABI is already the allowlist, so the shim only execs"]
-  dns["names — the staged prefix is compiled into the loader, so libc<br/>finds a resolver file; the dns module goes through c-ares,<br/>named by a preload that BUN_OPTIONS points at"]
+  dns["names — the loader's libc reads /etc files from HARNESS_ETC, so it<br/>finds a resolver file; the dns module goes through c-ares,<br/>named by a preload that BUN_OPTIONS points at"]
 
   abi -.-> s
   sdk -.-> ld
@@ -48,7 +48,9 @@ flowchart TB
 ## Restrictions
 
 - It is modern android. We can't achieve a true persistence, so claude should be instructed to be careful with background jobs and heavy tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
-- targetSdk=28 and compileSdk=35
+- minSdk=30, targetSdk=36 and compileSdk=36. Android 7–10 stays on v0.1.1, the last targetSdk 28 release
+- Programs in the data directory run only through a loader, so static binaries such as Termux's zig and the termux-ndk toolchain cannot run, and native code is not built on the device
+- The `play` build type makes `btl.harness` ("Harness Play"), the channel for Google Play, as a bundle. It is not debuggable, so `run-as` does not reach it
 
 ## Shoulders of giants we're standing on
 
@@ -56,11 +58,13 @@ flowchart TB
 - [ghostty-android](https://github.com/tapthaker/ghostty-android) author [@tapthaker](https://github.com/tapthaker), who did a lot of heavy lifting running it on an alien platform with an alien renderer
 - [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) for the inspiration with shimming glibc with bionic and in general showing me that it is possible
 - [termux](https://github.com/termux/termux-packages) for the userland, and its wonderful community who provides precompiled stuff like arm ndk
+- [termux-play-store](https://github.com/termux-play-store) for the Play build's userland and the termux-exec the exec router is derived from
 
 ## License
 
 MIT, in [LICENSE](LICENSE). Vendored components keep their own: the terminal
-under `vendor/ghostty-android` is MIT as well, and the Termux bootstrap the app
+under `vendor/ghostty-android` is MIT as well, the exec router under
+`app/src/main/cpp/harness-exec` is Apache-2.0, and the Termux bootstrap the app
 downloads at runtime carries the licences of the packages in it.
 
 ## Roadmap
@@ -78,7 +82,7 @@ downloads at runtime carries the licences of the packages in it.
   - [ ] Termux-like folder in android's native file chooser
   - [ ] More agents
   - [ ] Text editing?
-- [ ] Figure out how can we run on more recent API versions without sacrificing much of the capability
+- [x] Figure out how can we run on more recent API versions without sacrificing much of the capability
 - More proven skills / tools for interaction
   - [x] self-adb
   - [x] playwright

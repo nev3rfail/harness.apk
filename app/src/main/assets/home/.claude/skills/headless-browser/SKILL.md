@@ -89,7 +89,7 @@ before pulling it, then follow that file.
 | `chromium.launch()` | The registry refuses `android`/glibc. Start the process, then `connectOverCDP` |
 | Importing playwright before the platform spoof | Throws `Unsupported platform: android`. Spoof `process.platform` first |
 | Running without `--no-sandbox` | No root here; it exits at startup |
-| Typing `/data/data/<channel>/files` | Three channels run this skill. Spell paths `$HOME` and `$PREFIX` |
+| Typing `/data/data/<channel>/files` | Four channels run this skill. Spell paths `$HOME` and `$PREFIX` |
 | `chromium-headless.sh: Permission denied` | The copy out of the skill carries content, not the execute bit. `chmod +x` it |
 | Writing scratch to `/tmp` | Not writable. Use `$TMPDIR` |
 | Treating dbus/GCM lines in `chromium.log` as failures | Harmless -- there is no dbus and no Play Services |

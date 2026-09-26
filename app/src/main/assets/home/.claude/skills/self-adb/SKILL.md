@@ -11,7 +11,8 @@ from in here lands a shell on the very phone the app runs on. That shell runs as
 the `shell` uid -- more than the app's uid, less than root -- and its useful
 power is `run-as`, which reads the private storage of any **debuggable** package.
 That is the route to another channel's files: `apk.harness` reaching into
-`dev.harness`, or either one's Claude sessions.
+`dev.harness`, or either one's Claude sessions. `btl.harness`, the Play channel,
+is not debuggable, so `run-as` does not reach it.
 
 ## Two routes, and why you want the loopback one
 
@@ -144,7 +145,7 @@ after `start-server` before concluding nothing is there.
 ## Reaching another app's files
 
 `run-as <pkg>` only works if that package is **debuggable** (the dev/stg/apk
-harness builds are). Its working directory is the app's data dir, so private
+harness builds are; `btl.harness` is not). Its working directory is the app's data dir, so private
 files are under `files/`:
 
 ```sh
@@ -197,4 +198,4 @@ resumes cleanly.
 | `adb pull` from another app's data | Blocked; the `shell` uid can't read it. `run-as` + tar via `exec-out` |
 | `tar` / bare dir name starting with `-` | tar not on run-as PATH (`/system/bin/tar`); prefix the name with `./` |
 | Staging in `/tmp` | Not writable. Use the scratchpad or `$TMPDIR` |
-| `run-as` on a non-debuggable app | Refused. Only debuggable packages (the harness builds) open up |
+| `run-as` on a non-debuggable app | Refused. Only debuggable packages (`dev`, `stg` and `apk.harness`) open up; `btl.harness` does not |
