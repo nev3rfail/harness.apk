@@ -1,0 +1,26 @@
+diff --git a/vendor/CMakeLists.adb.txt b/vendor/CMakeLists.adb.txt
+index 8f766fc..441ea94 100644
+--- a/vendor/CMakeLists.adb.txt
++++ b/vendor/CMakeLists.adb.txt
+@@ -137,6 +137,7 @@ add_library(liblog STATIC
+ 	logging/liblog/log_event_write.cpp
+ 	logging/liblog/logger_name.cpp
+ 	logging/liblog/logger_read.cpp
++	logging/liblog/logd_writer.cpp
+ 	logging/liblog/logger_write.cpp
+ 	logging/liblog/properties.cpp
+ 	logging/liblog/logprint.cpp)
+diff --git a/vendor/CMakeLists.fastboot.txt b/vendor/CMakeLists.fastboot.txt
+index 3440d2c..ae66492 100644
+--- a/vendor/CMakeLists.fastboot.txt
++++ b/vendor/CMakeLists.fastboot.txt
+@@ -3,7 +3,8 @@ add_library(libzip STATIC
+ 	libziparchive/zip_archive_stream_entry.cc
+ 	libziparchive/zip_cd_entry_map.cc
+ 	libziparchive/zip_error.cpp
+-	libziparchive/zip_writer.cc)
++	libziparchive/zip_writer.cc
++	libziparchive/incfs_support/signal_handling.cpp)
+ 
+ target_compile_definitions(libzip PRIVATE -DZLIB_CONST)
+ target_include_directories(libzip PUBLIC

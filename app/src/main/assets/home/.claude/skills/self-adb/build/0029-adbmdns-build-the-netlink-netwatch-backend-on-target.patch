@@ -1,0 +1,66 @@
+From 4c8b308ef745a172328be7e03252800575c09bc8 Mon Sep 17 00:00:00 2001
+From: harness build <build@localhost>
+Date: Fri, 18 Sep 2026 19:47:17 +0200
+Subject: [PATCH] adbmdns: build the netlink netwatch backend on
+ target_os=android
+
+Rust's aarch64-linux-android target reports target_os="android", so the
+linux-only cfg gates excluded netwatch_linux and monitor_network_changes_native
+was never imported (E0425). The netlink implementation works unchanged on
+Android, so gate it on linux or android.
+
+libc does not export RTMGRP_LINK for the android target; it is a fixed
+constant from linux/rtnetlink.h, so define it locally.
+---
+ client/adbmdns/netwatch.rs                | 4 ++--
+ client/adbmdns/netwatch/netwatch_linux.rs | 5 ++++-
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/client/adbmdns/netwatch.rs b/client/adbmdns/netwatch.rs
+index 69fe3de..486d2e4 100644
+--- a/client/adbmdns/netwatch.rs
++++ b/client/adbmdns/netwatch.rs
+@@ -20,7 +20,7 @@ pub mod netwatch_windows;
+ #[cfg(target_os = "macos")]
+ pub mod netwatch_darwin;
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ pub mod netwatch_linux;
+ 
+ #[cfg(target_os = "windows")]
+@@ -29,7 +29,7 @@ pub use netwatch_windows::monitor_network_changes_native;
+ #[cfg(target_os = "macos")]
+ pub use netwatch_darwin::monitor_network_changes_native;
+ 
+-#[cfg(target_os = "linux")]
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ pub use netwatch_linux::monitor_network_changes_native;
+ 
+ type NetworkMonitorCallback = Box<dyn Fn() + Send + Sync + 'static>;
+diff --git a/client/adbmdns/netwatch/netwatch_linux.rs b/client/adbmdns/netwatch/netwatch_linux.rs
+index 05ab96c..9704e1a 100644
+--- a/client/adbmdns/netwatch/netwatch_linux.rs
++++ b/client/adbmdns/netwatch/netwatch_linux.rs
+@@ -169,7 +169,7 @@ fn listen(callback: &(impl Fn() + Send + Sized)) -> Result<()> {
+     .context("Failed to open NetLink socket")?;
+ 
+     log::debug!("Creating NetlinkAddr");
+-    let sa = NetlinkAddr::new(0, libc::RTMGRP_LINK as u32);
++    let sa = NetlinkAddr::new(0, RTMGRP_LINK);
+     bind(fd.as_raw_fd(), &sa).context("Failed to bind NetLinkAddr")?;
+ 
+     let mut message_buf = MessageBuffer::default();
+@@ -245,6 +245,9 @@ fn listen_forever(callback: impl Fn() + Send + Sized) {
+     }
+ }
+ 
++// linux/rtnetlink.h: RTMGRP_LINK (libc omits it for target_os="android")
++const RTMGRP_LINK: u32 = 1;
++
+ /// Starts a background thread to listen for network changes and
+ /// sends messages to a channel.
+ pub fn monitor_network_changes_native(callback: NetworkMonitorCallback) {
+-- 
+2.55.0
+

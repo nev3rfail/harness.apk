@@ -8,8 +8,18 @@ its own -- which is what lets the bootstrap in SKILL.md (discover over Wi-Fi,
 then pin `tcpip 5555` for cellular) run without anyone touching the phone.
 
 A prebuilt binary ships at `bin/adb-mdns` next to this file; copy that into
-`$PREFIX/bin` rather than rebuilding. Build only if it is missing or the device
-is a different architecture (this one is aarch64).
+`$PREFIX/bin` rather than rebuilding. Build only if it is missing, the device
+is a different architecture (this one is aarch64), or the userland's shared
+libraries have moved on and it no longer loads.
+
+The binary is built against the Termux Google Play userland, the packages from
+`termux.net` that `apt` installs here. It links that userland's shared
+libraries (abseil, protobuf, fmt, libc++ and others), so it loads only where
+the same packages are installed; elsewhere it stops with
+`library "libabsl_....so" not found` or similar, and the fix is a rebuild.
+
+Its RUNPATH is `$ORIGIN/../lib`: installed as `$PREFIX/bin/adb-mdns` it finds
+`$PREFIX/lib` on every channel, whatever the package name in the path.
 
 ## Why the flag is all it takes
 
@@ -33,31 +43,30 @@ which no Termux package provides. Use the git master tree.
 
 ## Recipe
 
-```sh
-apt install -y git cmake ninja rust corrosion protobuf googletest
-git clone --depth 1 https://github.com/nmeum/android-tools.git ~/src/android-tools
-cd ~/src/android-tools
-git submodule update --init --depth 1 --recommend-shallow          # ALL of them, see below
-git config user.email build@localhost && git config user.name "harness build"
-for d in $(awk '/path =/{print $3}' .gitmodules); do
-    git -C "$d" config user.email build@localhost
-    git -C "$d" config user.name "harness build"
-done
-./build-adb-mdns.sh          # the script this build left in the tree
-cp build/vendor/adb $PREFIX/bin/adb-mdns
-```
+Everything the build needs is in `build/` next to this file:
 
-`build-adb-mdns.sh` is just:
+| File | What it is |
+|---|---|
+| `build-adb-mdns.sh` | Clones the tree if absent, inits every submodule, sets a local git identity everywhere, adds the two patches below, configures and builds, then sets the RUNPATH |
+| `0029-adbmdns-build-the-netlink-netwatch-backend-on-target.patch` | The Rust netwatch fix; the script copies it into `patches/adb/`, where the build applies it after the upstream series |
+| `cmake-sources.patch` | The two source files `liblog` and `libzip` need on an Android build host, applied to the superproject's `vendor/CMakeLists.*.txt` |
 
 ```sh
-FLAGS="-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__ -Wno-unguarded-availability -Wno-error=unguarded-availability"
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DANDROID_TOOLS_ADB_ENABLE_MDNS=ON \
-  -DANDROID_TOOLS_USE_BUNDLED_LIBUSB=ON \
-  -DOPENSSL_NO_ASM=ON \
-  -DCMAKE_C_FLAGS="$FLAGS" -DCMAKE_CXX_FLAGS="$FLAGS"
-ninja -C build adb
+apt install -y git cmake ninja rust corrosion protobuf googletest patchelf
+sh $HOME/.claude/skills/self-adb/build/build-adb-mdns.sh      # tree in ~/src/android-tools
+cp ~/src/android-tools/build/vendor/adb $PREFIX/bin/adb-mdns
 ```
+
+The script takes another source directory as its first argument. It configures
+with `ANDROID_TOOLS_ADB_ENABLE_MDNS=ON`, the bundled libusb, `OPENSSL_NO_ASM=ON`,
+the weak-availability flags from the table below, and
+`-Wl,-z,max-page-size=16384`, which Google Play requires (every `LOAD` segment
+aligned to 16 KB). The build takes about ten minutes on this phone.
+
+Check the result with `llvm-readelf -d` (RUNPATH `$ORIGIN/../lib`) and `llvm-readelf -lW`
+(every `LOAD` align `0x4000`), then `adb-mdns start-server` and
+`adb-mdns mdns check`, which answers `mdns daemon version [adb discovery 0.0.0]`
+rather than `unknown host service`.
 
 ## The seven things that go wrong
 
@@ -70,9 +79,9 @@ to be the **target**, never the **build host**. Here it is both.
 | `Couldn't apply patches for extras` | The patch step runs over *every* vendored project, not just adb's. Init **all** submodules, even ones adb does not need |
 | `libprotobuf-lite.so ... does not exist` | Termux splits runtime and dev: `libprotobuf` is not enough, install `protobuf` (and `googletest`) |
 | `'__android_log_logd_logger' is unavailable: introduced in Android 30` | Termux's clang targets `android24`; the device is API 35. Build with `-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__` and `-Wno-unguarded-availability` |
-| `cannot find function monitor_network_changes_native` (E0425), then `cannot find value RTMGRP_LINK in crate libc` | Rust's `aarch64-linux-android` reports `target_os = "android"`, so the crate's linux-only `cfg` gates excluded the netlink backend, and `libc` omits `RTMGRP_LINK` there. Fixed by `patches/adb/0029-*`, which gates on `any(linux, android)` and defines the constant locally |
+| `cannot find function monitor_network_changes_native` (E0425), then `cannot find value RTMGRP_LINK in crate libc` | Rust's `aarch64-linux-android` reports `target_os = "android"`, so the crate's linux-only `cfg` gates excluded the netlink backend, and `libc` omits `RTMGRP_LINK` there. Fixed by `build/0029-*`, which the script copies into `patches/adb/`; it gates on `any(linux, android)` and defines the constant locally |
 | `llvm-ar: p256-x86_64-asm-apple.S.o: No such file` | boringssl's asm selection mis-resolves this target and lists **x86_64 Apple** assembly. Build with `-DOPENSSL_NO_ASM=ON` (portable C; adb does not care) |
-| `undefined symbol: LogdWrite()` / `incfs::SignalHandler::SignalHandler()` at the final link | Upstream lists sources for a **glibc host**, where `__ANDROID__` is undefined. Here it *is* defined, so those branches compile and need their implementations. Add `logging/liblog/logd_writer.cpp` to `liblog` (in `vendor/CMakeLists.adb.txt`) and `libziparchive/incfs_support/signal_handling.cpp` to `libzip` (in `vendor/CMakeLists.fastboot.txt`) |
+| `undefined symbol: LogdWrite()` / `incfs::SignalHandler::SignalHandler()` at the final link | Upstream lists sources for a **glibc host**, where `__ANDROID__` is undefined. Here it *is* defined, so those branches compile and need their implementations. `build/cmake-sources.patch` adds `logging/liblog/logd_writer.cpp` to `liblog` (in `vendor/CMakeLists.adb.txt`) and `libziparchive/incfs_support/signal_handling.cpp` to `libzip` (in `vendor/CMakeLists.fastboot.txt`) |
 
 A patch you write yourself must be **rebased onto the upstream series**, not
 generated against the pristine checkout -- `0019` also edits `netwatch`, so a
