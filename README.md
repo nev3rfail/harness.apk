@@ -8,7 +8,7 @@
 
 - Deploys on its own (data warning!)
   > The apk bootstraps it's own termux environment for the agent to use, downloads musl claude, and installs several shims for the musl claude to work. No Anthropic's intellectual property in this repo
-- No patches, only shims and wrappers
+- The claude binary runs unpatched, through shims and wrappers
   > Linux static musl build is a great target to run on android
 - Ships with handles: view diffs, open files and urls
   > Built-in mcp server that utilizes Claude's IDE API and beyond
@@ -17,7 +17,7 @@
 - Rich interfacing
   > Several built-in capabilities like notification sending and intent triggering, aand with self adb, possibilities are endless: run as different programs, build and deploy programs written on android from said android to said android
 - Different agents theoretically possible!
-  > OhMyPi worked (but the left panel broke, which is expected). You can (and should!) try to put your favorite Codex or Pi in agent.sh and see for yourself. Merge requests are welcome.
+  > OhMyPi worked (but the left panel broke, which is expected). You can (and should!) try to point `HARNESS_AGENT_SCRIPT` in `launcher.local.sh` at a script that starts your favorite Codex or Pi and see for yourself. Merge requests are welcome.
 
 
 ## How it boots
@@ -27,14 +27,14 @@
 flowchart TB
   l["launcher.sh<br/>assembles the platform; no abspath used here and below"]
   a["agent.sh<br/>names the command, its flags; uses bun preload hack to get dns working"]
-  s["syscall-shim<br/>unpacked into the native library directory"]
+  s["syscall-shim, x86_64 only<br/>unpacked into the native library directory; the exec router puts it in front of the loader"]
   ld["ld-musl-&lt;arch&gt;.so.1<br/>packaged as libmuslloader.so, run as a program from the native library directory"]
   c["claude --ide<br/>launching a pristine claude binary from the upstream"]
 
   l --> a --> s --> ld --> c
 
   sdk["targetSdk 36 — the platform refuses execve of a data-directory file<br/>and lets a loader map one; an exec router, preloaded into every bionic<br/>process and compiled into this loader's libc, sends each program<br/>through linker64 or this loader"]
-  abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp.<br/>aarch64 — the ABI is already the allowlist, so the shim only execs"]
+  abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp.<br/>aarch64 — the ABI is already the allowlist, so there is no shim"]
   dns["names — the loader's libc reads /etc files from HARNESS_ETC, so it<br/>finds a resolver file; the dns module goes through c-ares,<br/>named by a preload that BUN_OPTIONS points at"]
 
   abi -.-> s

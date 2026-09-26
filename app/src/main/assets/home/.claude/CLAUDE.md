@@ -77,10 +77,11 @@ toybox, so `git`, `grep`, `sed`, `awk` and the rest behave as you expect.
   the app's data directory, so an exec router sends each one through
   `/system/bin/linker64` or the musl loader. Static binaries cannot run here. The
   harness-userland skill has the details.
-- **`launcher.sh`, `agent.sh` and `shell.sh` in the home belong to the app** and
-  are rewritten on every start; a copy that differed from the shipped one is kept
-  as `.bak`. Local changes go in `launcher.local.sh`, which can set
-  `HARNESS_AGENT_SCRIPT` and `SHELL`.
+- **`launcher.sh`, `agent.sh` and `shell.sh` in the home belong to the app.**
+  `agent.sh` and `shell.sh` are rewritten on every start, and an edited copy is
+  kept as `.bak`; `launcher.sh` is replaced on every install with no copy. Local
+  changes go in `launcher.local.sh`, which can set `HARNESS_AGENT_SCRIPT` and
+  `SHELL`.
 
 ## What this device does not have
 

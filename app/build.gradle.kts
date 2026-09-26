@@ -173,6 +173,8 @@ tasks.register<Exec>("buildMuslLoader") {
     workingDir = rootProject.projectDir
     inputs.file(rootProject.file("scripts/build-loaders.sh"))
     inputs.file(rootProject.file("scripts/stage-claude.sh"))
+    // The router and the musl patch are compiled into the loader.
+    inputs.dir("src/main/cpp/harness-exec")
     outputs.dir("src/main/jniLibs")
 
     val script = "scripts/build-loaders.sh"

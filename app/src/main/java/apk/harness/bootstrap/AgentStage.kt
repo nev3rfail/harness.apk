@@ -104,10 +104,11 @@ class AgentStage(private val context: Context) {
      * Stages what the app tells the agent about itself: the launcher, the
      * environment document, the skills, and the enablement the panel tools need.
      *
-     * Once per install rather than once per launch, so an edit made on the
-     * device stands until the next one. The timestamp comes off the installed
-     * APK, which changes on every install including a reinstall of the same
-     * version.
+     * The agent's scripts and the binary's execute bit are refreshed on every
+     * start. The payload is copied once per install rather than once per
+     * launch, so an edit made on the device stands until the next one. The
+     * timestamp comes off the installed APK, which changes on every install
+     * including a reinstall of the same version.
      *
      * A missing launcher also brings the copy forward, whatever the stamp says,
      * because deleting a staged file is how a device asks for the shipped one

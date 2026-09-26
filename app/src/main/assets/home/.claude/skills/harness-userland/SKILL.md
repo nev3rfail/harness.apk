@@ -98,7 +98,7 @@ rm -rf "$HARNESS_ROOTFS"
 | Is there a package index? | Yes, `termux.net`, live and complete |
 | Why is this install slow? | every `.deb` is re-rooted on the way in |
 | `/usr/bin/env` shebang? | resolves to `$PREFIX/bin/env` |
-| A downloaded binary says `Permission denied`? | it is static; nothing can run it here |
+| A downloaded binary says `Permission denied`? | it is static or built for glibc; nothing can run it here. A dynamic musl or bionic binary runs |
 | `sudo`, a service manager, a port below 1024? | none of them exist |
 
 ## Common mistakes
