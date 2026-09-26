@@ -24,10 +24,11 @@
 /* An interpreter from a shebang line, after /usr/bin is rewritten under the
  * prefix. */
 #define HX_INTERP_PATH 512
-/* Room for the new argument and environment arrays and the entries the router
- * writes, inside struct hx_exec. More than this takes a mapping. */
+/* Room inside struct hx_exec for the new argument and environment arrays, one
+ * pointer per argument and per environment entry, and the entries the router
+ * writes. More than this takes a mapping. */
 #ifndef HX_INLINE
-#define HX_INLINE 2048
+#define HX_INLINE 8192
 #endif
 
 /* The working state of one decision. */
@@ -47,12 +48,12 @@ struct hx_scratch {
  * not fit inline. hx_release unmaps that once the exec has failed or the spawn
  * has returned.
  *
- * It lives on the caller's stack, 13688 bytes on LP64, because a vfork child
+ * It lives on the caller's stack, 19832 bytes on LP64, because a vfork child
  * shares the parent's address space: a mapping made there and followed by a
  * successful exec stays in the parent for good. Only arrays larger than
- * HX_INLINE, an argument list in the hundreds, still take one. The unit tests
- * measure the deepest stack a routing vfork child reaches, a PATH search
- * included, at 18528 bytes on x86_64. */
+ * HX_INLINE still take one: around a thousand arguments and environment
+ * entries together. The unit tests measure the deepest stack a routing vfork
+ * child reaches, a PATH search included, at 24672 bytes on x86_64. */
 struct hx_exec {
 	const char *path;
 	char **argv;

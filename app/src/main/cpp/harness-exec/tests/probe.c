@@ -29,6 +29,15 @@ int main(int argc, char **argv) {
 	pid_t pid;
 	int e;
 
+	/* Run as a script's interpreter: every argument, and what it sees of itself. */
+	if (mode[0] == '/') {
+		const char *pse = getenv("TERMUX_EXEC__PROC_SELF_EXE");
+		printf("args=");
+		for (int i = 0; i < argc; i++)
+			printf("%s%s", i ? " " : "", argv[i]);
+		printf(" pse=%s\n", pse ? pse : "");
+		return 0;
+	}
 	if (!strcmp(mode, "exe")) {
 		char link[PATH_MAX] = "", real[PATH_MAX] = "";
 		ssize_t n = readlink("/proc/self/exe", link, sizeof link - 1);

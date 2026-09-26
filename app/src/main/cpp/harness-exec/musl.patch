@@ -194,7 +194,30 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
  };
  
  static int __sys_dup2(int old, int new)
-@@ -148,11 +156,18 @@
+@@ -29,6 +37,22 @@
+ #endif
+ }
+ 
++/* Routes the call from the child, which by now stands in the directory the
++ * file actions left it in, and issues it. A function of its own so that the
++ * router's state is on the stack only while this runs: child() keeps the small
++ * frame that the stack of a call routed in the parent is sized for. */
++static __attribute__((__noinline__)) int route_in_child(const struct args *args)
++{
++	struct hx_exec hx;
++	int e = args->search
++		? hx_route_search(args->path, args->search, args->argv, args->envp, 0, &hx)
++		: hx_route(args->path, args->argv, args->envp, 0, &hx);
++	if (e) return -e;
++	e = __syscall(SYS_execve, hx.path, hx.argv, hx.envp);
++	hx_release(&hx);
++	return e;
++}
++
+ static int child(void *args_vp)
+ {
+ 	int i, ret;
+@@ -148,11 +172,9 @@
  	pthread_sigmask(SIG_SETMASK, (attr->__flags & POSIX_SPAWN_SETSIGMASK)
  		? &attr->__mask : &args->oldmask, 0);
  
@@ -203,22 +226,13 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
 -
 -	exec(args->path, args->argv, args->envp);
 -	ret = -errno;
-+	if (args->route) {
-+		struct hx_exec hx;
-+		ret = -(args->search
-+			? hx_route_search(args->path, args->search, args->argv, args->envp, 0, &hx)
-+			: hx_route(args->path, args->argv, args->envp, 0, &hx));
-+		if (ret) goto fail;
-+		ret = __syscall(SYS_execve, hx.path, hx.argv, hx.envp);
-+		hx_release(&hx);
-+	} else {
-+		/* The parent searched PATH and routed the call. */
-+		ret = __syscall(SYS_execve, args->path, args->argv, args->envp);
-+	}
++	/* Unless the parent searched PATH and routed the call already. */
++	ret = args->route ? route_in_child(args)
++		: __syscall(SYS_execve, args->path, args->argv, args->envp);
  
  fail:
  	/* Since sizeof errno < PIPE_BUF, the write is atomic. */
-@@ -166,23 +181,85 @@
+@@ -166,23 +188,85 @@
  }
  
  
@@ -311,7 +325,7 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
  	pthread_sigmask(SIG_BLOCK, SIGALL_SET, &args.oldmask);
  
  	/* The lock guards both against seeing a SIGABRT disposition change
-@@ -195,7 +272,7 @@
+@@ -195,7 +279,7 @@
  		goto fail;
  	}
  
@@ -320,7 +334,7 @@ diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
  		CLONE_VM|CLONE_VFORK|SIGCHLD, &args);
  	close(args.p[1]);
  	UNLOCK(__abort_lock);
-@@ -214,6 +291,7 @@
+@@ -214,6 +298,7 @@
  fail:
  	pthread_sigmask(SIG_SETMASK, &args.oldmask, 0);
  	pthread_setcancelstate(cs, 0);

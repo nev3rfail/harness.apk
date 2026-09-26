@@ -28,6 +28,10 @@ gcc -O1 -Wall -Werror -U_FORTIFY_SOURCE -fno-stack-protector -nostdinc \
 gcc -nostdlib -pie -Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1 \
   "$build/lib/Scrt1.o" "$build/lib/crti.o" "$E/probe.o" "$build/lib/libc.so" "$build/lib/crtn.o" \
   -o "$E/data/probe"
+# Two shebang levels in front of the probe.
+printf '#!%s/data/s2 x\n' "$E" > "$E/data/s1"
+printf '#!%s/data/probe\n' "$E" > "$E/data/s2"
+chmod 755 "$E/data/s1" "$E/data/s2"
 printf '127.0.0.9 hxhost\n' > "$E/etc/hosts"
 printf 'nameserver 127.0.0.1\n' > "$E/etc/resolv.conf"
 
@@ -62,6 +66,13 @@ check "posix_spawn, addfchdir"     "$seen" "$LD" "$P" spawnfd "$E/data" ./probe 
 check "posix_spawn, addopen+fchdir" "$seen" "$LD" "$P" spawnopen "$E/data" ./probe rg exe
 # A relative open the parent cannot place: the child routes the call itself.
 check "posix_spawn, routed in child" "$seen" "$LD" "$P" spawnrelopen "$E" data ./probe rg exe
+# The routed path and every argument arrive intact through both levels.
+scripted="args=$P $E/data/s2 x $E/data/s1 q pse=$P"
+check "posix_spawn, two shebangs"  "$scripted" "$LD" "$P" spawn "$E/data/s1" s1 q
+check "posix_spawnp, two shebangs" "$scripted" "$LD" "$P" spawnp s1 s1 q
+check "posix_spawn, two shebangs, routed in child" "args=$P $E/data/s2 x ./s1 q pse=$P" \
+  "$LD" "$P" spawnrelopen "$E" data ./s1 s1 q
+check "execv, two shebangs"        "$scripted" "$LD" "$P" exec "$E/data/s1" s1 q
 check "readlink of a null path"    "EFAULT EFAULT" "$LD" "$P" nullreadlink
 check "execv"                      "$seen" "$LD" "$P" exec "$P" rg exe
 check "execvp"                     "$seen" "$LD" "$P" execvp probe rg exe

@@ -744,7 +744,7 @@ static void test_vfork_stack(void) {
 	used = (size_t)(region + page + size - low);
 	printf("struct hx_exec: %zu bytes; deepest stack use in the vfork child: %zu of %zu bytes\n",
 	       sizeof(struct hx_exec), used, size);
-	CHECK(sizeof(struct hx_exec) < 16384);
+	CHECK(sizeof(struct hx_exec) < 20480);
 	munmap(region, page + span);
 }
 
@@ -763,33 +763,44 @@ static unsigned long status_kb(const char *key) {
 static void test_vfork_exec_leak(void) {
 	char *copy = S("%s/system/bin/true", SR);
 	char *argv[] = {"true", "a", "b", NULL};
+	/* A long environment, as a shell with many exports hands on. */
+	char **big = calloc(301, sizeof *big);
 	int null = open("/dev/null", O_WRONLY);
+	for (int i = 0; ENV[i]; i++)
+		big[i] = ENV[i];
+	for (int i = 6; i < 300; i++)
+		big[i] = S("HX_VARIABLE_%03d=/data/data/com.termux/files/usr/share/%d", i, i);
 	configure(1);
 	t_self = "/system/bin/sh";
 	if (system(S("cp /bin/true '%s'", copy))) abort();
-	for (const char *const *p = V("/bin/true", copy); *p; p++) {
-		unsigned long rss = 0, vm = 0;
-		int bad = 0;
-		for (int i = 0; i < 1050; i++) {
-			int status;
-			pid_t pid;
-			/* The first runs settle the allocator and the libraries. */
-			if (i == 50) {
-				rss = status_kb("RssAnon");
-				vm = status_kb("VmSize");
+	for (char **envp = ENV;; envp = big) {
+		for (const char *const *p = V("/bin/true", copy); *p; p++) {
+			unsigned long rss = 0, vm = 0;
+			int bad = 0, envc = 0;
+			while (envp[envc])
+				envc++;
+			for (int i = 0; i < 1050; i++) {
+				int status;
+				pid_t pid;
+				/* The first runs settle the allocator and the libraries. */
+				if (i == 50) {
+					rss = status_kb("RssAnon");
+					vm = status_kb("VmSize");
+				}
+				pid = vfork();
+				if (!pid) {
+					dup2(null, 2);
+					_exit(100 - hx_execve(*p, argv, envp));
+				}
+				if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status)) bad++;
 			}
-			pid = vfork();
-			if (!pid) {
-				dup2(null, 2);
-				_exit(100 - hx_execve(*p, argv, ENV));
-			}
-			if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status)) bad++;
+			printf("vfork+exec %s with %d environment entries x1000: RssAnon %lu -> %lu kB, VmSize %lu -> %lu kB\n",
+			       *p, envc, rss, status_kb("RssAnon"), vm, status_kb("VmSize"));
+			CHECK(!bad);
+			CHECK(status_kb("RssAnon") <= rss + 256);
+			CHECK(status_kb("VmSize") <= vm + 256);
 		}
-		printf("vfork+exec %s x1000: RssAnon %lu -> %lu kB, VmSize %lu -> %lu kB\n", *p, rss, status_kb("RssAnon"),
-		       vm, status_kb("VmSize"));
-		CHECK(!bad);
-		CHECK(status_kb("RssAnon") <= rss + 256);
-		CHECK(status_kb("VmSize") <= vm + 256);
+		if (envp == big) break;
 	}
 	close(null);
 }
