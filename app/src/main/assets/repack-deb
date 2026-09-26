@@ -168,4 +168,7 @@ while [ $i -lt $n ]; do
   i=$((i + 1))
 done
 
-exec "$real" "$@"
+# Run rather than exec, so the EXIT trap removes the work directory. It lives in
+# the app's cache directory, which the platform trims under storage pressure,
+# directory apt is waiting on included.
+"$real" "$@"
