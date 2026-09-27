@@ -73,12 +73,24 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Harness">
-        <!-- One instance, whatever raises it. Without this the activity is
-             `standard`, and a second one runs onCreate again: a second Tools, a
-             second PanelServer binding a second socket, and a second set of
-             terminals over the ones already running. On the activity rather than
-             on one intent's flags, because every way into this app wants the same
-             protection and the ongoing service notification is one of them. -->
+        <!-- One instance, whatever raises it. A second one would run onCreate
+             again: a second Tools, a second PanelServer binding a second socket,
+             and a second set of terminals resuming the conversations the first
+             one is in. singleTask puts every start into this activity's own task
+             and delivers it to onNewIntent, including a start from another app's
+             activity that asks for no new task. On the activity rather than on
+             one intent's flags, because every way into this app wants the same
+             protection.
+
+             What it costs: an intent delivered to the task that is not the
+             launcher's own - a notification tap, an OPEN - finishes whatever the
+             app started above this activity in its task, which is the folder and
+             file pickers and the all-files settings screen, and a pick or a grant
+             in progress there is lost. -->
+        <!-- OPEN is how another app asks for an agent in a directory, with
+             apk.harness.extra.DIRECTORY and, to reopen a conversation,
+             apk.harness.extra.SESSION. A tab it opens does not mark its directory
+             trusted: an intent is not the operator's tap. -->
         <!-- Every flag the attribute defines. This activity's answer to every
              configuration is the same one, reflow the layout and resize the
              terminal to the new geometry, so there is no configuration it wants
@@ -95,12 +107,16 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density|layoutDirection|colorMode|grammaticalGender|fontScale|fontWeightAdjustment"
             android:exported="true"
             android:label="@string/app_name"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Harness"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="apk.harness.action.OPEN" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

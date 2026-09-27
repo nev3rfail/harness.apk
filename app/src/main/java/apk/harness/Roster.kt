@@ -9,6 +9,7 @@ import apk.harness.agents.RunningSession
 import apk.harness.agents.TabIdentity
 import apk.harness.agents.readRoster
 import java.io.File
+import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,12 +19,17 @@ import kotlinx.coroutines.flow.asStateFlow
  * process.
  *
  * One per process rather than one per screen, because the service that keeps
- * the app awake reads it with no activity running. The records are heard rather
- * than polled: an observer on each backend's roster directory re-reads the
- * directory on every write, move and delete in it, so nothing reads on a timer
- * and a status change reaches every reader in the time a file takes to close.
+ * the app awake reads it with no activity running. An observer on each
+ * backend's roster directory re-reads the directory on every write, move and
+ * delete in it, so a status change reaches every reader in the time a file
+ * takes to close.
  *
- * The tabs the current screen holds are published here too, so a reader with no
+ * A process that is killed leaves its record behind and makes no event, and the
+ * kernel does not report to the observer an event it dropped. So the roster is
+ * also read at the moments a death shows: a tab's terminal ending, a tab being
+ * closed, the screen coming back, and the drawer opening.
+ *
+ * The tabs the current screen holds are named here too, so a reader with no
  * reference to the screen can tell this app's tabs from anything else.
  */
 object Roster {
@@ -34,9 +40,6 @@ object Roster {
     // its terminal has started, and the screen starts it when it draws it.
     @Volatile
     private var tabSource: () -> List<TabIdentity> = { emptyList() }
-
-    /** The tabs the current screen holds, as their processes know them. */
-    fun tabs(): List<TabIdentity> = tabSource()
 
     private val proc = ProcTable()
     private val lock = Any()
@@ -51,17 +54,29 @@ object Roster {
     // device that refuses the read would otherwise follow nothing in silence.
     private val unreadable = HashSet<Int>()
 
-    /** Starts watching [agentHome]'s rosters. A second call changes nothing. */
+    private val background = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "roster").apply { isDaemon = true }
+    }
+
+    /**
+     * Starts watching [agentHome]'s rosters, and reads them once off the calling
+     * thread. A second call changes nothing.
+     */
     fun start(agentHome: File) {
         synchronized(lock) {
             if (home != null) return
             home = agentHome
-            for (backend in BACKENDS) {
-                backend.rosterDirectory(agentHome)?.let(::watch)
-            }
         }
-        refresh()
+        background.execute {
+            synchronized(lock) {
+                for (backend in BACKENDS) backend.rosterDirectory(agentHome)?.let(::watch)
+            }
+            readNow()
+        }
     }
+
+    /** The tabs the current screen holds, as their processes know them. */
+    fun tabs(): List<TabIdentity> = tabSource()
 
     /** Names where the tabs the screen holds are read from. */
     fun publishTabs(source: () -> List<TabIdentity>) {
@@ -69,35 +84,46 @@ object Roster {
     }
 
     /**
-     * Reads every roster on the calling thread and publishes what it read.
-     *
-     * For a decision that cannot act on a roster not yet published: a restore,
-     * and the check before starting a conversation.
+     * Takes back [source] when it is still the one named, so a screen that has
+     * gone is neither read nor kept.
      */
-    fun readNow(): List<RunningSession> {
-        val read = synchronized(lock) {
-            val agentHome = home ?: return emptyList()
-            BACKENDS.flatMap { backend ->
-                val directory = backend.rosterDirectory(agentHome) ?: return@flatMap emptyList()
-                readRoster(
-                    directory,
-                    backend::parseRecord,
-                    proc,
-                    lastGood.getOrPut(directory) { mutableMapOf() },
-                )
-            }.also(::reportUnreadable)
-        }
-        _roster.value = read
-        return read
+    fun withdrawTabs(source: () -> List<TabIdentity>) {
+        if (tabSource === source) tabSource = { emptyList() }
     }
 
-    /** Reads and publishes, for a caller that does not need the answer. */
+    /**
+     * Reads every roster on the calling thread, publishes what it read, and
+     * answers it.
+     *
+     * For a decision that cannot act on a roster not yet published: a restore,
+     * and the check before starting a conversation. The read and the publish
+     * are one step under the lock, so a read never lands after a newer one.
+     */
+    fun readNow(): List<RunningSession> = synchronized(lock) {
+        val agentHome = home ?: return emptyList()
+        val read = BACKENDS.flatMap { backend ->
+            val directory = backend.rosterDirectory(agentHome) ?: return@flatMap emptyList()
+            readRoster(
+                directory,
+                backend::parseRecord,
+                proc,
+                lastGood.getOrPut(directory) { mutableMapOf() },
+            )
+        }
+        reportUnreadable(read)
+        _roster.value = read
+        read
+    }
+
+    /** Reads and publishes on a thread of the roster's own. */
     fun refresh() {
-        readNow()
+        background.execute { readNow() }
     }
 
     private fun watch(directory: File) {
-        directory.mkdirs()
+        if (!directory.mkdirs() && !directory.isDirectory) {
+            Log.w(TAG, "$directory cannot be made, so its records are not heard")
+        }
         observers.remove(directory)?.stopWatching()
         val observer = object : FileObserver(directory, MASK) {
             override fun onEvent(event: Int, path: String?) {
@@ -105,7 +131,7 @@ object Roster {
                     // The directory itself went, and the watch went with it.
                     synchronized(lock) { watch(directory) }
                 }
-                refresh()
+                readNow()
             }
         }
         observers[directory] = observer
@@ -113,12 +139,10 @@ object Roster {
     }
 
     private fun reportUnreadable(sessions: List<RunningSession>) {
+        unreadable.retainAll(sessions.mapTo(HashSet()) { it.pid })
         for (session in sessions) {
-            if (session.tag != null || session.pid in unreadable) continue
-            if (!proc.environReadable(session.pid)) {
-                unreadable += session.pid
-                Log.w(TAG, "the environment of ${session.pid} cannot be read; it belongs to no tab")
-            }
+            if (!session.environUnreadable || !unreadable.add(session.pid)) continue
+            Log.w(TAG, "the environment of ${session.pid} cannot be read; it belongs to no tab")
         }
     }
 

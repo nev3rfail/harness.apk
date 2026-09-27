@@ -21,6 +21,25 @@ class TrustTest {
             .getBoolean("hasTrustDialogAccepted")
 
     @Test
+    fun `a directory under a trusted one is trusted, as the CLI has it`() {
+        val config = """{"projects":{"/data/app/files":{"hasTrustDialogAccepted":true},"/x":{}}}"""
+
+        assertTrue(isTrustedProject(config, "/data/app/files"))
+        assertTrue(isTrustedProject(config, "/data/app/files/proj/sub"))
+        assertTrue(isTrustedProject(config, "/data/app/files/"))
+    }
+
+    @Test
+    fun `a directory beside or above a trusted one is not`() {
+        val config = """{"projects":{"/data/app/files":{"hasTrustDialogAccepted":true},"/x":{}}}"""
+
+        assertEquals(false, isTrustedProject(config, "/data/app/filesystem"))
+        assertEquals(false, isTrustedProject(config, "/data/app"))
+        assertEquals(false, isTrustedProject(config, "/x/y"))
+        assertEquals(false, isTrustedProject("not json", "/data/app/files"))
+    }
+
+    @Test
     fun `a project the config has never heard of is added`() {
         val updated = withTrustedProject("""{"hasCompletedOnboarding":true}""", "/work")
 

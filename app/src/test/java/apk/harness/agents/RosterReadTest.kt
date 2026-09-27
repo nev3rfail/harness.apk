@@ -77,6 +77,58 @@ class RosterReadTest {
     }
 
     @Test
+    fun `each tab's agent is the oldest process carrying its tag, read through the kernel`() {
+        val sessions = folder.newFolder("sessions")
+        val proc = folder.newFolder("proc")
+        val outer = "11111111-1111-4111-8111-111111111111"
+        val nested = "22222222-2222-4222-8222-222222222222"
+        val other = "33333333-3333-4333-8333-333333333333"
+        fun agent(pid: Int, id: String, start: String, tag: String?) {
+            alive(proc, pid, start)
+            tag?.let { File(proc, "$pid/environ").writeBytes("A=b\u0000HARNESS_TAB=$it\u0000".toByteArray()) }
+                ?: File(proc, "$pid/environ").writeBytes("A=b\u0000".toByteArray())
+            File(sessions, "$pid.json").writeText(
+                """{"pid":$pid,"sessionId":"$id","procStart":"$start","status":"idle"}""",
+            )
+        }
+        // The nested agent claims an early start in its record; the kernel's
+        // start time is what orders them.
+        agent(9, nested, start = "500", tag = "t")
+        agent(7, outer, start = "400", tag = "t")
+        agent(5, other, start = "100", tag = null)
+
+        val roster = readRoster(sessions, ClaudeBackend::parseRecord, ProcTable(proc))
+
+        assertEquals(outer, agentOf("t", roster)?.sessionId)
+        assertEquals(null, agentOf("u", roster))
+        assertEquals(listOf(false, false, false), roster.map { it.environUnreadable })
+    }
+
+    @Test
+    fun `a process whose environment cannot be read is marked so and belongs to no tab`() {
+        val sessions = folder.newFolder("sessions")
+        val proc = folder.newFolder("proc")
+        alive(proc, 7)
+        File(sessions, "7.json").writeText(record(7, "idle"))
+
+        val roster = readRoster(sessions, ClaudeBackend::parseRecord, ProcTable(proc))
+
+        assertEquals(listOf(true), roster.map { it.environUnreadable })
+        assertEquals(listOf(null), roster.map { it.tag })
+    }
+
+    @Test
+    fun `a record whose process is gone is not running`() {
+        val sessions = folder.newFolder("sessions")
+        File(sessions, "7.json").writeText(record(7, "busy"))
+
+        assertEquals(
+            emptyList<RunningSession>(),
+            readRoster(sessions, ClaudeBackend::parseRecord, ProcTable(folder.newFolder("proc"))),
+        )
+    }
+
+    @Test
     fun `no directory is no roster`() {
         assertEquals(
             emptyList<RunningSession>(),

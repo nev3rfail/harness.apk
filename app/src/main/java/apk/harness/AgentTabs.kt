@@ -1,11 +1,11 @@
 package apk.harness
 
+import android.os.SystemClock
 import android.util.Log
 import apk.harness.agents.AgentBackend
 import apk.harness.agents.BACKENDS
 import apk.harness.agents.FollowState
 import apk.harness.agents.PROVISIONAL_MS
-import apk.harness.agents.RunningSession
 import apk.harness.agents.TabIdentity
 import apk.harness.agents.agentOf
 import apk.harness.agents.followDecision
@@ -14,6 +14,11 @@ import apk.harness.agents.isSessionId
 import apk.harness.chats.Chat
 import apk.harness.chats.oneSpelling
 import apk.harness.ide.IdeServer
+import apk.harness.tabs.RestorePlan
+import apk.harness.tabs.SavedTab
+import apk.harness.tabs.SavedTabs
+import apk.harness.tabs.TabsWriter
+import apk.harness.tabs.readSaved
 import com.ghostty.android.terminal.TerminalSession
 import java.io.File
 import java.util.UUID
@@ -25,6 +30,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -36,7 +43,7 @@ import kotlinx.coroutines.launch
  */
 data class AgentTab(
     val key: Long,
-    /** The conversation this agent is in, settled before it starts. */
+    /** The conversation this agent is in, as its record last said. */
     val sessionId: String,
     /** The working directory, which decides which project the conversation is filed under. */
     val directory: File,
@@ -72,10 +79,16 @@ data class AgentTab(
  *
  * A tab follows its agent. The CLI moves to another conversation on its own --
  * `/new`, `/clear`, a `/resume` typed into it -- and rewrites the record it
- * keeps about itself, so the tab takes its conversation from its agent's record
- * rather than keeping the one it was opened on. Every change to the list of tabs
- * is made under one lock, because the roster arrives on the thread that heard
- * it while taps arrive on the main thread and tabs are built on another.
+ * keeps about itself, and the tab takes its conversation from that record.
+ *
+ * The open tabs are kept in [savedFile] and come back with the next screen. A
+ * tab can be dormant -- what `spec/088` calls parked: a conversation with a row
+ * in the drawer and no agent yet, which starts when it is opened. A start brings
+ * the tab that was in front back running and the rest back dormant.
+ *
+ * Every change to the tabs is made under one lock, because the roster arrives on
+ * the thread that heard it while taps arrive on the main thread and tabs are
+ * built on another.
  */
 class AgentTabs(
     private val agent: Agent,
@@ -103,8 +116,12 @@ class AgentTabs(
      * can close it.
      */
     private val forgetParked: (Long) -> Unit,
-    /** The time, which a test replaces. */
-    private val now: () -> Long = System::currentTimeMillis,
+    /** Where the open tabs are kept across the process. */
+    private val savedFile: File,
+    /** Tells the operator why a conversation did not open, on any thread. */
+    private val refuse: (String) -> Unit,
+    /** The time on a clock that does not step, which a test replaces. */
+    private val now: () -> Long = SystemClock::elapsedRealtime,
 ) {
     private var nextKey = 1L
 
@@ -119,27 +136,44 @@ class AgentTabs(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // One screen writes the file after another, and a screen whose end was
+    // never reported writes nothing over the one that replaced it.
+    private val writer = TabsWriter(
+        savedFile,
+        generation = (readSaved(savedFile)?.generation ?: 0L) + 1,
+    ) { Log.w(TAG, "the open tabs were not written", it) }
+
     private val _tabs = MutableStateFlow<List<AgentTab>>(emptyList())
     val tabs: StateFlow<List<AgentTab>> = _tabs.asStateFlow()
+
+    private val _dormant = MutableStateFlow<List<SavedTab>>(emptyList())
+
+    /** The tabs that have a row and no agent yet. */
+    val dormant: StateFlow<List<SavedTab>> = _dormant.asStateFlow()
 
     private val _activeKey = MutableStateFlow(0L)
     val activeKey: StateFlow<Long> = _activeKey.asStateFlow()
 
     val active: AgentTab? get() = _tabs.value.firstOrNull { it.key == _activeKey.value }
 
-    // After every field it reads: the roster may arrive at once.
-    init {
-        Roster.publishTabs(::identities)
-        scope.launch { Roster.roster.collect(::follow) }
+    // Held so stopAll can take back exactly the source it gave.
+    private val identities: () -> List<TabIdentity> = {
+        _tabs.value.map { TabIdentity(it.tag, it.session.pid) }
     }
 
-    /** The tabs as their processes know them, for a reader outside the screen. */
-    private fun identities(): List<TabIdentity> =
-        _tabs.value.map { TabIdentity(it.tag, it.session.pid) }
+    // After every field it reads: the roster may arrive at once.
+    init {
+        Roster.publishTabs(identities)
+        scope.launch { Roster.roster.collect { follow() } }
+    }
 
-    /** The tab a conversation is in, whether or not it is showing. */
+    /** The running tab a conversation is in, whether or not it is showing. */
     fun tabFor(sessionId: String): AgentTab? =
         _tabs.value.firstOrNull { it.sessionId == sessionId }
+
+    /** True when [sessionId] has a tab, running or dormant. */
+    fun hasTab(sessionId: String): Boolean =
+        tabFor(sessionId) != null || _dormant.value.any { it.sessionId == sessionId }
 
     /**
      * Puts the tab holding [sessionId] on screen, and says whether one does.
@@ -149,10 +183,28 @@ class AgentTabs(
      * follows `activeKey` -- the visible terminal, the parked document band, and
      * the surface the panel draws.
      */
-    fun show(sessionId: String): Boolean {
+    fun show(sessionId: String): Boolean = synchronized(lock) {
         val tab = tabFor(sessionId) ?: return false
         _activeKey.value = tab.key
-        return true
+        persist()
+        true
+    }
+
+    /**
+     * Brings the saved tabs back as [plan] says: its tab to start, running, and
+     * the rest dormant. Answers whether a tab runs afterwards.
+     */
+    fun restore(plan: RestorePlan): Boolean {
+        synchronized(lock) {
+            if (stopped) return false
+            // The tab to start is dormant until it starts, so a start that is
+            // refused leaves it where the others are rather than losing it.
+            _dormant.value = plan.parked + listOfNotNull(plan.start)
+            persist()
+        }
+        for (tab in plan.dropped) Log.i(TAG, "dropped the tab of ${tab.sessionId} in ${tab.directory}")
+        val start = plan.start ?: return false
+        return openDormant(start.sessionId) != null
     }
 
     /**
@@ -169,7 +221,7 @@ class AgentTabs(
      */
     fun openDefault(): AgentTab? {
         val backend = BACKENDS.first()
-        val taken = backend.running(agent.home).mapTo(HashSet()) { it.sessionId }
+        val taken = Roster.readNow().mapTo(HashSet()) { it.sessionId }
         val mostRecent = backend.mostRecent(agent.home, agent.home)
         val sessionId = freshSession(mostRecent, taken) { UUID.randomUUID().toString() }
         return add(
@@ -180,6 +232,7 @@ class AgentTabs(
             arguments =
                 if (sessionId == mostRecent) backend.resume(sessionId)
                 else backend.start(sessionId),
+            trusted = true,
         )
     }
 
@@ -188,21 +241,44 @@ class AgentTabs(
      *
      * A conversation that already has a tab is brought forward rather than
      * started twice: two agents appending to one transcript is a conversation
-     * with two authors and no way to read it back.
+     * with two authors and no way to read it back. A dormant tab of it starts.
      */
-    fun resume(chat: Chat, directory: File): AgentTab? {
+    fun resume(chat: Chat, directory: File, trusted: Boolean = true): AgentTab? {
         tabFor(chat.sessionId)?.let { existing ->
-            _activeKey.value = existing.key
+            show(existing.sessionId)
             return existing
         }
-        val backend = backendFor(chat.backendId)
-        return add(
-            directory = directory,
-            sessionId = chat.sessionId,
-            label = chat.label,
-            backend = backend,
-            arguments = backend.resume(chat.sessionId),
-        )
+        if (_dormant.value.any { it.sessionId == chat.sessionId }) {
+            return openDormant(chat.sessionId, trusted)
+        }
+        return openConversation(directory, chat.sessionId, chat.backendId, chat.label, trusted)
+    }
+
+    /**
+     * Opens [sessionId] in [directory] in a tab of its own, resuming it when the
+     * history holds its transcript and starting it under that id when it does
+     * not -- a conversation opened and never spoken in has nothing to resume.
+     *
+     * Refused, with the reason told, while the roster names the conversation as
+     * live in another agent.
+     */
+    fun openConversation(
+        directory: File,
+        sessionId: String,
+        backendId: String,
+        label: String,
+        trusted: Boolean,
+    ): AgentTab? {
+        tabFor(sessionId)?.let { existing ->
+            show(existing.sessionId)
+            return existing
+        }
+        if (liveElsewhere(sessionId)) return null
+        val backend = backendFor(backendId)
+        val arguments =
+            if (backend.hasTranscript(agent.home, sessionId)) backend.resume(sessionId)
+            else backend.start(sessionId)
+        return add(directory, sessionId, label, backend, arguments, trusted)
     }
 
     /**
@@ -211,7 +287,7 @@ class AgentTabs(
      * The id is the app's rather than the agent's, so the tab and the drawer
      * name the same conversation before a transcript exists.
      */
-    fun start(directory: File, label: String): AgentTab? {
+    fun start(directory: File, label: String, trusted: Boolean = true): AgentTab? {
         val sessionId = UUID.randomUUID().toString()
         val backend = BACKENDS.first()
         return add(
@@ -220,7 +296,35 @@ class AgentTabs(
             label = label,
             backend = backend,
             arguments = backend.start(sessionId),
+            trusted = trusted,
         )
+    }
+
+    /**
+     * The running tab in [directory] whose conversation has no transcript yet,
+     * which is a tab nobody has spoken in.
+     */
+    fun untouchedIn(directory: File): AgentTab? {
+        val path = oneSpelling(directory.absolutePath)
+        return _tabs.value.firstOrNull {
+            oneSpelling(it.directory.absolutePath) == path &&
+                !it.backend.hasTranscript(agent.home, it.sessionId)
+        }
+    }
+
+    /**
+     * Starts the dormant tab of [sessionId] as a running one, in its own
+     * directory. It is not trusted by being started: a restart is not a tap.
+     */
+    fun openDormant(sessionId: String, trusted: Boolean = false): AgentTab? {
+        val saved = _dormant.value.firstOrNull { it.sessionId == sessionId } ?: return null
+        val opened = openConversation(File(saved.directory), saved.sessionId, saved.backend, saved.label, trusted)
+            ?: return null
+        synchronized(lock) {
+            _dormant.value = _dormant.value.filter { it.sessionId != sessionId }
+            persist()
+        }
+        return opened
     }
 
     /**
@@ -242,12 +346,15 @@ class AgentTabs(
      * a control of its own rather than what a tap does. Whatever is typed and
      * not sent is lost with it, so the caller reads the prompt first.
      *
+     * A conversation live in another agent is refused before anything is typed.
+     *
      * Starting an agent binds a socket and may stage the agent's home, so this
      * does not belong on the thread a tap arrives on.
      */
     fun continueHere(chat: Chat, directory: File) {
         val tab = active ?: return
         if (tab.sessionId == chat.sessionId) return
+        if (liveElsewhere(chat.sessionId)) return
         val backend = backendFor(chat.backendId)
 
         val line = backend.switch(chat.sessionId)?.takeIf {
@@ -258,26 +365,23 @@ class AgentTabs(
         if (line == null) {
             // The new tab first: the last tab does not close, and this is what
             // stands behind the one going away.
-            add(
-                directory = directory,
-                sessionId = chat.sessionId,
-                label = chat.label,
-                backend = backend,
-                arguments = backend.resume(chat.sessionId),
-            )
+            openConversation(directory, chat.sessionId, chat.backendId, chat.label, trusted = true)
+                ?: return
+            synchronized(lock) {
+                _dormant.value = _dormant.value.filter { it.sessionId != chat.sessionId }
+            }
             close(tab.key)
             return
         }
 
-        // Enter, as a terminal receives it.
-        tab.session.write(line + "\r")
-        // The tab takes the id at once, so the drawer does not show the chat it
-        // left as current while the agent rewrites its record. Until the record
-        // agrees the id is provisional: a line that went into an overlay, or an
-        // id the CLI refused, leaves the record where it was, and a switch the
-        // record never confirms gives way to it. Those make no event, so the
-        // decision is run again once the wait is over.
+        // The tab takes the id before the line is typed, so the drawer does not
+        // show the chat it left as current while the agent rewrites its record.
+        // Until the record agrees the id is provisional: a line that went into an
+        // overlay, or an id the CLI refused, leaves the record where it was, and a
+        // switch the record never confirms gives way to it. Those make no event,
+        // so the decision is run again once the wait is over.
         synchronized(lock) {
+            if (_tabs.value.none { it.key == tab.key }) return
             val state = following[tab.key] ?: FollowState(tab.sessionId)
             following[tab.key] = state.copy(
                 sessionId = chat.sessionId,
@@ -287,30 +391,40 @@ class AgentTabs(
             _tabs.value = _tabs.value.map {
                 if (it.key == tab.key) it.copy(sessionId = chat.sessionId, label = chat.label) else it
             }
+            persist()
         }
+        // Enter, as a terminal receives it.
+        tab.session.write(line + "\r")
         scope.launch {
-            delay(PROVISIONAL_MS)
-            follow(Roster.roster.value)
+            delay(PROVISIONAL_MS + PROVISIONAL_SLACK_MS)
+            follow()
         }
         Log.i(TAG, "tab ${tab.key} carries session ${chat.sessionId}")
     }
 
     /**
-     * Moves every tab onto the conversation its agent is in, as [roster] has it.
+     * Moves every tab onto the conversation its agent is in, as the newest
+     * roster has it.
      *
-     * A tab moved to a conversation it was not in takes its directory's name as
-     * its label, which the drawer draws until the new conversation's transcript
-     * names it; the old label named the conversation it left.
+     * Read under the lock rather than taken as an argument, so two runs never
+     * decide on two rosters in the wrong order. A tab moved to a conversation it
+     * was not in takes its directory's name as its label, which the drawer draws
+     * until the new conversation's transcript names it. A dormant tab of the
+     * conversation a running tab now holds is dropped, once the agent's record
+     * confirms it.
      */
-    private fun follow(roster: List<RunningSession>) {
+    private fun follow() {
         synchronized(lock) {
             if (stopped) return
+            val roster = Roster.roster.value
             val time = now()
             var changed = false
+            val confirmed = HashSet<String>()
             val next = _tabs.value.map { tab ->
                 val state = following[tab.key] ?: FollowState(tab.sessionId)
                 val outcome = followDecision(state, agentOf(tab.tag, roster), time)
                 following[tab.key] = outcome.state
+                if (outcome.confirmed) confirmed += outcome.state.sessionId
                 val sessionId = outcome.state.sessionId
                 if (sessionId == tab.sessionId) return@map tab
                 changed = true
@@ -321,7 +435,27 @@ class AgentTabs(
                 )
             }
             if (changed) _tabs.value = next
+            val dormant = _dormant.value.filter { it.sessionId !in confirmed }
+            if (dormant.size != _dormant.value.size) {
+                _dormant.value = dormant
+                changed = true
+            }
+            if (changed) persist()
         }
+    }
+
+    /**
+     * True when the roster names [sessionId] as live in an agent, and the
+     * operator has been told so. A conversation with two writers is never the
+     * answer, and a leftover agent that will not exit ends with the app.
+     */
+    private fun liveElsewhere(sessionId: String): Boolean {
+        if (Roster.readNow().none { it.sessionId == sessionId }) return false
+        refuse(
+            "That conversation is still open in an earlier agent. " +
+                "Force-stopping the app from Android's settings ends it.",
+        )
+        return true
     }
 
     /** What a tab in [directory] is called until a transcript names its chat. */
@@ -332,9 +466,9 @@ class AgentTabs(
     /**
      * Closes a tab and the agent in it.
      *
-     * The last tab does not close. There is no screen behind it: the terminal is
-     * what the app is, and a switcher over nothing is not a state worth being
-     * able to reach.
+     * The last running tab does not close. There is no screen behind it: the
+     * terminal is what the app is, and a switcher over nothing is not a state
+     * worth being able to reach.
      */
     fun close(key: Long) {
         val closing = synchronized(lock) {
@@ -345,25 +479,35 @@ class AgentTabs(
             _tabs.value = remaining
             following.remove(key)
             if (_activeKey.value == key) _activeKey.value = remaining.last().key
+            persist()
             closing
         }
         release(closing)
     }
 
     /**
-     * Closes the tab holding [sessionId], if one does.
+     * Closes the tab holding [sessionId], running or dormant, if one does.
      *
-     * Goes through [close], which does not close the last tab.
+     * A running one goes through [close], which does not close the last one.
      */
     fun closeSession(sessionId: String) {
-        tabFor(sessionId)?.let { close(it.key) }
+        tabFor(sessionId)?.let {
+            close(it.key)
+            return
+        }
+        synchronized(lock) {
+            _dormant.value = _dormant.value.filter { it.sessionId != sessionId }
+            persist()
+        }
     }
 
     /**
      * Every agent, on the way out.
      *
      * Following stops first, so a roster heard after this cannot bring the
-     * released tabs back.
+     * released tabs back. What is kept is what the tabs were before this: the
+     * writer writes what waits and takes nothing more, so the tabs come back on
+     * the next start however the app went away.
      */
     fun stopAll() {
         val closing = synchronized(lock) {
@@ -372,7 +516,21 @@ class AgentTabs(
             following.clear()
             _tabs.value.also { _tabs.value = emptyList() }
         }
+        Roster.withdrawTabs(identities)
+        writer.close()
         closing.forEach(::release)
+    }
+
+    /** Hands the writer the tabs as they are now. Called under the lock. */
+    private fun persist() {
+        if (stopped) return
+        val running = _tabs.value.map { SavedTab(it.directory.absolutePath, it.sessionId, it.backend.id, it.label) }
+        val saved = SavedTabs(
+            generation = 0L,
+            front = active?.sessionId,
+            tabs = running + _dormant.value.filter { dormant -> running.none { it.sessionId == dormant.sessionId } },
+        )
+        writer.offer(saved)
     }
 
     /** The backend [id] names, or the first for a chat that names none of them. */
@@ -385,6 +543,7 @@ class AgentTabs(
         label: String,
         backend: AgentBackend,
         arguments: List<String>,
+        trusted: Boolean,
     ): AgentTab? {
         // Refused where it would reach the CLI's command line. Every place an id
         // enters the app checks it; this is the one after all of them.
@@ -413,19 +572,29 @@ class AgentTabs(
             arguments = configured,
             script = backend.script,
             tag = tag,
+            trusted = trusted,
         )
 
         val tab = AgentTab(key, sessionId, directory, label, backend, session, editor, tag)
         val added = synchronized(lock) {
             if (stopped) return@synchronized false
             _tabs.value = _tabs.value + tab
+            // A conversation with a running tab has no dormant one.
+            _dormant.value = _dormant.value.filter { it.sessionId != sessionId }
             following[key] = FollowState(sessionId)
             _activeKey.value = key
+            persist()
             true
         }
         if (!added) {
             release(tab)
             return null
+        }
+        // A terminal whose process ends may leave its agent's record behind, and
+        // a death writes nothing the roster would hear.
+        scope.launch {
+            session.isRunning.dropWhile { !it }.first { !it }
+            Roster.refresh()
         }
         Log.i(TAG, "tab $key on $directory, session $sessionId, ide $port")
         return tab
@@ -439,6 +608,7 @@ class AgentTabs(
         // owns.
         runCatching { releasePanelConfig(tab.key) }
         runCatching { forgetParked(tab.key) }
+        Roster.refresh()
     }
 
     private companion object {
@@ -446,5 +616,8 @@ class AgentTabs(
 
         /** What the app's own tab is called until a transcript names it. */
         const val HOME_LABEL = "home"
+
+        /** Past the provisional wait, so the run after it finds the wait over. */
+        const val PROVISIONAL_SLACK_MS = 100L
     }
 }

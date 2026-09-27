@@ -43,12 +43,14 @@ fun readRoster(
         if (entry.claimedStart != null && entry.claimedStart != stat.procStart.toString()) {
             return@mapNotNull null
         }
+        val tag = proc.environTag(entry.pid)
         RunningSession(
             pid = entry.pid,
             sessionId = entry.sessionId,
             status = entry.status,
             procStart = stat.procStart,
-            tag = proc.environTag(entry.pid),
+            tag = (tag as? TagRead.Tag)?.value,
+            environUnreadable = tag == TagRead.Unreadable,
         )
     }
 }

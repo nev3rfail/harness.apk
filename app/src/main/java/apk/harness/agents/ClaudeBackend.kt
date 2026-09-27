@@ -65,6 +65,26 @@ object ClaudeBackend : AgentBackend {
             ?.removeSuffix(TRANSCRIPT_SUFFIX)
     }
 
+    override fun hasTranscript(home: File, sessionId: String): Boolean =
+        transcript(home, sessionId) != null
+
+    override fun transcriptModified(home: File, sessionId: String): Long =
+        transcript(home, sessionId)?.lastModified() ?: 0L
+
+    /**
+     * The transcript of [sessionId] in any project directory, or null.
+     *
+     * Every project, because a chat whose transcript names no directory opens in
+     * the home while its transcript is filed elsewhere.
+     */
+    private fun transcript(home: File, sessionId: String): File? {
+        if (!isSessionId(sessionId)) return null
+        val projects = File(config(home), "projects").listFiles().orEmpty()
+        return projects.asSequence()
+            .map { File(it, sessionId + TRANSCRIPT_SUFFIX) }
+            .firstOrNull { it.isFile }
+    }
+
     /** The CLI's own directory inside an agent home. */
     private fun config(home: File) = File(home, ".claude")
 
@@ -85,28 +105,6 @@ fun rosterEntry(record: JSONObject): RunningSession? {
 }
 
 /**
- * True when [pid] names a process that started at [procStart].
- *
- * The start time is field 22 of `<procDirectory>/<pid>/stat`, and it is what
- * separates the process the record was written about from a later one that
- * happens to hold the same pid. The `comm` field before it is parenthesised and
- * may itself hold spaces and brackets, so the fields are counted from after the
- * last `)` in the line.
- *
- * A record carrying no start time is true whenever the directory is there,
- * since there is nothing to disagree with.
- */
-fun stillRunning(procDirectory: File, pid: Int, procStart: String?): Boolean {
-    val directory = File(procDirectory, pid.toString())
-    if (!directory.isDirectory) return false
-    if (procStart == null) return true
-
-    val line = runCatching { File(directory, "stat").readText() }.getOrNull() ?: return false
-    val fields = line.substringAfterLast(')', "").trim().split(' ')
-    return fields.getOrNull(START_TIME) == procStart
-}
-
-/**
  * A string field, or null when it is absent, empty, or not a string.
  *
  * Read with [JSONObject.opt] rather than `optString` for the reason
@@ -116,9 +114,6 @@ fun stillRunning(procDirectory: File, pid: Int, procStart: String?): Boolean {
  */
 private fun JSONObject.string(key: String): String? =
     (opt(key) as? String)?.takeIf { it.isNotEmpty() }
-
-/** Field 22 of `stat`, counted from the field after the `comm` field. */
-private const val START_TIME = 19
 
 /**
  * What the prompt on [viewport] holds, or null when the viewport carries no
