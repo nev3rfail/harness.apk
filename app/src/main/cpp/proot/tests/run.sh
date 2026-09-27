@@ -95,6 +95,14 @@ check "PT_LOADs sharing a page with equal flags" "rc=0" "$(run "$P" "$w/probe" e
 check "PT_LOAD off the page size" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/misaligned")"
 check "PT_LOADs sharing a page with other flags" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/shared")"
 
+# P7
+check "execve from a thread other than the leader" "tag=probe exe=$w/probe [probe] [a] rc=0" \
+  "$(run "$P" "$w/probe" thread-exec "$w/probe" probe a)"
+check "execve from a thread other than the leader, without seccomp" "tag=probe exe=$w/probe [probe] [a] rc=0" \
+  "$(run env PROOT_NO_SECCOMP=1 "$P" "$w/probe" thread-exec "$w/probe" probe a)"
+check "execve from a thread other than the leader, of a static program" "tag=guest exe=$w/rootfs/bin/hx-probe [x] rc=0" \
+  "$(run "$P" "$w/probe" thread-exec "$w/rootfs/bin/hx-probe" x)"
+
 # P6. The fake linker64 is a probe tagged "linker", bound at each spelling.
 for l in /system/bin/linker64 /apex/com.android.runtime/bin/linker64; do
   check "linker64 unwrapped, $l" "tag=probe exe=$w/probe [$w/probe] [a] rc=0" \

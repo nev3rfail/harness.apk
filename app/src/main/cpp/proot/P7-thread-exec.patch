@@ -1,0 +1,78 @@
+P7. execve from a thread other than the leader.
+
+The kernel reports that exec with the leader's pid, which the thread takes,
+and the thread's former pid disappears without an exit report. At that
+PTRACE_EVENT_EXEC stop, the tracee of the former pid, which holds the
+translation of the execve, takes the leader's pid and place in the process
+tree, and the leader's tracee is freed.
+
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index e6afb58..c0a3a61 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -150,6 +150,56 @@ int launch_process(Tracee *tracee, char *const argv[])
+ 
+ static int last_exit_status = -1;
+ 
++/**
++ * When a thread other than the leader calls execve(2), the kernel
++ * reports its PTRACE_EVENT_EXEC stop with the leader's pid, which the
++ * thread takes, and the thread's former pid disappears without an
++ * exit report.  At that stop of @leader, give the thread's tracee,
++ * which holds the translation of its execve(2), the leader's pid and
++ * place in the process tree, and free the leader's tracee.  This
++ * function returns the tracee the stop reported by @tracee_status
++ * belongs to.
++ */
++static Tracee *adopt_exec_thread(Tracee *leader, int tracee_status)
++{
++	unsigned long former_pid;
++	Tracee *relative;
++	Tracee *thread;
++	long status;
++
++	if (!WIFSTOPPED(tracee_status)
++	    || ((tracee_status & 0xfff00) >> 8) != (SIGTRAP | PTRACE_EVENT_EXEC << 8))
++		return leader;
++
++	status = ptrace(PTRACE_GETEVENTMSG, leader->pid, NULL, &former_pid);
++	if (status < 0 || (pid_t) former_pid == leader->pid)
++		return leader;
++
++	thread = get_tracee(leader, (pid_t) former_pid, false);
++	if (thread == NULL)
++		return leader;
++
++	VERBOSE(leader, 1, "vpid %" PRIu64 ": thread %lu called execve(2)",
++		leader->vpid, former_pid);
++
++	LIST_FOREACH(relative, get_tracees_list_head(), link) {
++		if (relative->parent == leader)
++			relative->parent = thread;
++	}
++
++	thread->parent          = leader->parent;
++	thread->clone           = leader->clone;
++	thread->vpid            = leader->vpid;
++	thread->killall_on_exit = leader->killall_on_exit;
++	thread->pid             = leader->pid;
++
++	leader->killall_on_exit = false;
++	leader->pid = (pid_t) former_pid;
++	terminate_tracee(leader);
++
++	return thread;
++}
++
+ /**
+  * Check if this instance of PRoot can *technically* handle @tracee.
+  */
+@@ -233,6 +283,8 @@ int event_loop()
+ 		tracee = get_tracee(NULL, pid, true);
+ 		assert(tracee != NULL);
+ 
++		tracee = adopt_exec_thread(tracee, tracee_status);
++
+ 		tracee->running = false;
+ 
+ 		/* The first stop of a fork(2) child whose parent is

@@ -15,7 +15,8 @@ modifications of PRoot under the same license:
 - P3-exit-status.patch: the caller waits for the program's exit status, and
   signals reach it;
 - P4-legacy-calls.patch: answers for the system calls Android's policy traps;
-- P6-linker64.patch: a program linker64 runs under proot is exec'd itself.
+- P6-linker64.patch: a program linker64 runs under proot is exec'd itself;
+- P7-thread-exec.patch: execve from a thread other than the leader.
 
 libproot.so includes libandroid-shmem 0.7
 (https://github.com/termux/libandroid-shmem), licensed under the BSD 3-Clause

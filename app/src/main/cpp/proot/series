@@ -4,3 +4,4 @@ P5-page-size.patch
 P3-exit-status.patch
 P4-legacy-calls.patch
 P6-linker64.patch
+P7-thread-exec.patch
