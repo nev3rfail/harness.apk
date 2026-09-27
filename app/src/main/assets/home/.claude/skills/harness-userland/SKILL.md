@@ -84,7 +84,7 @@ Inside that proot:
 - the program's `/proc/self/exe` is its own path, and every program it starts
   runs under the same proot, bionic and musl ones included;
 - `/bin/x` and `/usr/bin/x` become `$PREFIX/bin/x` when that file exists;
-- each file in `$HARNESS_ETC` (`resolv.conf`, `hosts`) is at `/etc/<name>`,
+- each file in `$HARNESS_ETC`, `resolv.conf` among them, is at `/etc/<name>`,
   `$PREFIX/etc/tls/cert.pem` at `/etc/ssl/certs/ca-certificates.crt`, the musl
   loader at `/lib/ld-musl-<arch>.so.1`, and, once glibc is installed, its `ld.so`
   at `/lib/ld-linux-aarch64.so.1` (x86_64: `/lib64/ld-linux-x86-64.so.2`). DNS,
@@ -101,9 +101,9 @@ What to expect:
 - **The caller waits for the program only.** A daemon the program starts keeps
   running after the caller returns, under a second `libproot.so` process, the
   tracer, which exits with the last process it traces.
-- **Status.** The caller gets the program's exit status or its death signal. A
-  program that dumped core leaves its core, and the status carries no
-  core-dumped flag.
+- **Status.** The caller gets the program's exit status or its death signal.
+  Any core is the program's own, written under its own `RLIMIT_CORE`, and the
+  status carries no core-dumped flag.
 - **Signals.** `kill <pid>` of the proot the caller started reaches the program.
   `kill -STOP <pid>` stops only that proot process, and `kill -CHLD <pid>` ends at
   the tracer; Ctrl-Z and `kill -STOP -<pgid>` stop the program. A signal sent to
@@ -184,7 +184,7 @@ rm -rf "$HARNESS_ROOTFS"
 | Why is this install slow? | every `.deb` is re-rooted on the way in |
 | `/usr/bin/env` shebang? | resolves to `$PREFIX/bin/env` |
 | A static or glibc download? | runs under proot, which the router starts for it |
-| A file says `Permission denied`? | it is no native program: another machine's ELF, an object file, or no ELF at all |
+| A file says `Permission denied`? | its exec bit is off (`chmod +x` it), or it is no native program: another machine's ELF, an object file, or no ELF at all |
 | A program is slow to start? | under proot, 0.25 s per start and about 105 ms per bionic exec inside it |
 | `sudo`, a service manager, a port below 1024? | none of them exist |
 

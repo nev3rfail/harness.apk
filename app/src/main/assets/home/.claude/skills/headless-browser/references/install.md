@@ -2,8 +2,8 @@
 
 One-time, and large: 84 packages, 791 MB installed, pulling in gtk3 and the X11
 stack. Data is unmetered here, but it is still a long download, so say what you
-are about to do before starting it. Everything ends up usable by the app's own uid; nothing needs
-root.
+are about to do before starting it. Everything ends up usable by the app's own
+uid; nothing needs root.
 
 ## 1. Repositories
 

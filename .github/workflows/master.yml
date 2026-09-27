@@ -44,6 +44,17 @@ jobs:
       - name: The packaged proot is termux.net's version
         run: scripts/build-proot.sh --check-termux
 
+      # The host tests that build their own code with the runner's gcc. The proot
+      # and musl end-to-end tests need the builds pr.yml runs, so they stay there.
+      - name: Router host tests
+        run: sh app/src/main/cpp/harness-exec/tests/run.sh
+
+      - name: librelocate and repack-deb host tests
+        run: sh app/src/main/cpp/relocate-tests/run.sh
+
+      - name: Syscall shim host tests
+        run: sh vendor/ghostty-android/android/terminal-library/src/main/cpp/tests/run.sh
+
       # Unit tests run on the JVM, so no native code is built.
       - name: Unit tests
         run: |

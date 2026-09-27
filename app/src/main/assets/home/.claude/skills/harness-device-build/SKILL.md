@@ -96,31 +96,52 @@ Both builds need static programs, which the exec router runs under proot (the
 harness-userland skill has how):
 
 - **zig 0.16.0**, the version `android/renderer/build.zig.zon` asks for, as a
-  static Linux build. `termux.net` carries no `zig`; ziglang.org's
-  `zig-aarch64-linux-0.16.0.tar.xz` is one.
-- **The termux-ndk NDK**, `android-ndk-r29-aarch64.tar.xz` from
-  `lzhiyong/termux-ndk`, whose `clang-21` and `lld` are static. Unpacked to
+  static Linux build. `termux.net` carries no `zig`.
+- **The termux-ndk NDK**, `lzhiyong/termux-ndk`'s arm64 build of NDK r29, whose
+  `clang-21` and `lld` are static. Unpacked to
   `$HOME/android-sdk/ndk/29.0.14206865`, it reports the revision this project
   pins.
 - `pkg install patchelf`.
 
-**The renderer:**
+Both downloads are pinned by sha256; a different hash means a different file, so
+stop there:
+
+```sh
+cd $HOME
+curl -fL --max-time 600 -o zig.tar.xz \
+  https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz
+echo "ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17  zig.tar.xz" | sha256sum -c -
+tar -xf zig.tar.xz && rm zig.tar.xz      # $HOME/zig-aarch64-linux-0.16.0/zig
+curl -fL --max-time 1800 -o ndk.tar.xz \
+  https://github.com/lzhiyong/termux-ndk/releases/download/android-ndk/android-ndk-r29-aarch64.tar.xz
+echo "02e10e4ddfe8deaeb0bd0cf29d04c981ed5bc8a5d6b560ebb9e7661f472d684b  ndk.tar.xz" | sha256sum -c -
+mkdir -p $HOME/android-sdk/ndk
+tar -xf ndk.tar.xz -C $HOME/android-sdk/ndk && rm ndk.tar.xz
+mv $HOME/android-sdk/ndk/android-ndk-r29 $HOME/android-sdk/ndk/29.0.14206865
+```
+
+The NDK archive is 361 MB and unpacks to several GB; ask the operator first.
+
+**The renderer,** under one proot for the whole build:
 
 ```sh
 cd $HOME/harness.apk/vendor/ghostty-android
-ZIG=$HOME/zig-aarch64-linux-0.16.0/zig \
-ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/29.0.14206865 \
-ZIG_CACHE_ROOT=$HOME/.cache/ghostty-android \
+proot --exec-bin "$PREFIX/bin" \
+  --bind="$HARNESS_ETC/resolv.conf:/etc/resolv.conf" \
+  --bind="$PREFIX/etc/tls/cert.pem:/etc/ssl/certs/ca-certificates.crt" \
+  env ZIG=$HOME/zig-aarch64-linux-0.16.0/zig \
+      ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/29.0.14206865 \
+      ZIG_CACHE_ROOT=$HOME/.cache/ghostty-android \
   bash scripts/build-android-nonix.sh arm64-v8a
 ```
 
-Each `zig build` runs under a proot of its own, which binds `resolv.conf` and
-the certificates, so zig fetches its dependencies itself. The script writes a
-libc file naming the NDK's sysroot and targets `aarch64-linux-android.24`, which
-is what `zig cc` for Android needs. `ZIG_CACHE_ROOT` must be set: its default is
-`/tmp`. It holds the fetched dependencies, so keep it. A cold build takes about
-19 minutes, and the two libraries land in
-`android/terminal-library/src/main/jniLibs/arm64-v8a/`.
+A `proot` typed by name binds nothing, so the build names the bindings the router
+gives a static program: `resolv.conf` and the certificates are what let zig fetch
+its dependencies itself. The script writes a libc file naming the NDK's sysroot
+and targets `aarch64-linux-android.24`, which is what `zig cc` for Android needs.
+`ZIG_CACHE_ROOT` must be set: its default is `/tmp`. It holds the fetched
+dependencies, so keep it. A cold build takes about 19 minutes, and the two
+libraries land in `android/terminal-library/src/main/jniLibs/arm64-v8a/`.
 
 **The loader,** under one proot for the whole build:
 
@@ -129,15 +150,18 @@ cd $HOME/harness.apk
 NDK=$HOME/android-sdk/ndk/29.0.14206865
 out=$PWD/build/loader/arm64-v8a
 proot --exec-bin "$PREFIX/bin" env \
-  CC="$NDK/toolchains/llvm/prebuilt/linux-aarch64/bin/clang --target=aarch64-linux-android21" \
+  CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-linux-android21" \
   bash scripts/stage-claude.sh --loader-only --abi arm64-v8a --out "$out"
 cp "$out"/ld-musl-aarch64.so.1 app/src/main/jniLibs/arm64-v8a/libmuslloader.so
 ```
 
 About a minute, musl's own download included; with no outer proot, each compile
-starts one of its own and the build takes about half as long again.
+starts one of its own and the build takes about half as long again. The download
+is bionic `curl`, which resolves names without `/etc`, so this proot needs no
+bindings.
 `--exec-bin` points `#!/bin/sh` in musl's `configure` at the userland's shell.
-The script's `verify_loader` gate is what says it worked. Use the NDK's clang,
+The termux-ndk keeps Google's directory name `linux-x86_64` for its arm64
+toolchain. The script's `verify_loader` gate is what says it worked. Use the NDK's clang,
 not `zig cc`, which is itself a musl toolchain and shadows musl's own `memcpy`.
 
 **Packaging them.** `-PprebuiltNative` takes every native library from one
@@ -183,7 +207,7 @@ reboot.
 | Mistake | What is true |
 |---|---|
 | Fetching Google's NDK to build native code | It is x86_64. The termux-ndk NDK is arm64 and runs under proot |
-| Wrapping the renderer build in `proot` yourself | A bare `proot` binds no `resolv.conf`, so zig cannot fetch. Run the script directly |
+| Running the renderer build under a bare `proot` | It binds no `resolv.conf`, so zig cannot fetch. Pass the two `--bind`s above |
 | Typing the native library directory | It changes on every update. `dirname "$HARNESS_TERMUX_EXEC"` |
 | Hunting third-party `aapt2` prebuilts | Termux packages the arm64 build; install it and override the Maven one |
 | Unzipping Google's `build-tools_r*-linux.zip` | Those binaries are x86_64 and will not exec |
