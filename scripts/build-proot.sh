@@ -14,7 +14,8 @@
 # builds it with at TERMUX_PACKAGES_COMMIT (-DARG_MAX=131072,
 # PROOT_WITH_LIBANDROID_SHMEM, include-string.patch), then the patches that
 # app/src/main/cpp/proot/series lists, in order. talloc and libandroid-shmem
-# come from pinned tarballs. Every download is checked against its sha256 and
+# come from pinned tarballs; libandroid-shmem takes shmem-tmp-dir.patch from
+# the same directory. Every download is checked against its sha256 and
 # kept in build/proot/dl, so a tree holding those files builds offline.
 #
 # Usage: build-proot.sh [ABI ...]        defaults to both
@@ -95,7 +96,7 @@ source_files() {
     build/proot/dl/include-string.patch \
     "build/proot/dl/talloc-$TALLOC_VERSION.tar.gz" \
     "build/proot/dl/libandroid-shmem-$SHMEM_VERSION.tar.gz"
-  (cd "$ROOT" && find app/src/main/cpp/proot -type f | sort)
+  (cd "$ROOT" && find app/src/main/cpp/proot app/src/main/assets/notices/proot -type f | sort)
 }
 
 # --- modes that build nothing ---
@@ -234,10 +235,9 @@ build_shmem() {
   rm -rf "$src"
   mkdir -p "$src" "$work/lib" "$work/include/sys"
   tar -xzf "$DL/libandroid-shmem-$SHMEM_VERSION.tar.gz" -C "$src" --strip-components=1
-  # A keyed segment is published as a symlink under _PATH_TMP. Bionic's
-  # <paths.h> has none; this is the value termux-packages' sysroot gives it.
-  $cc -O2 -fPIC -std=c11 -Wall -Wextra '-D_PATH_TMP="/data/data/com.termux/files/usr/tmp/"' \
-    -c "$src/shmem.c" -o "$src/shmem.o"
+  patch -d "$src" -p1 --fuzz=0 --no-backup-if-mismatch --quiet < "$PATCHES/shmem-tmp-dir.patch" \
+    || { echo "shmem-tmp-dir.patch does not apply to libandroid-shmem $SHMEM_VERSION" >&2; exit 1; }
+  $cc -O2 -fPIC -std=c11 -Wall -Wextra -c "$src/shmem.c" -o "$src/shmem.o"
   rm -f "$work/lib/libandroid-shmem.a"
   $ar rcs "$work/lib/libandroid-shmem.a" "$src/shmem.o"
   cp "$src/shm.h" "$work/include/sys/shm.h"

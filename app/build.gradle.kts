@@ -7,6 +7,8 @@ plugins {
 val prebuiltNative = (findProperty("prebuiltNative") as String?)?.let { file(it) }
 val prebuiltAbi = (findProperty("prebuiltAbi") as String?) ?: "arm64-v8a"
 val prebuiltJni = layout.buildDirectory.dir("prebuilt-jni").get().asFile
+val harnessVersionName = (findProperty("versionName") as String?) ?: "0.1.0"
+val generatedNotices = layout.buildDirectory.dir("generated/notices").get().asFile
 
 android {
     namespace = "apk.harness"
@@ -31,7 +33,7 @@ android {
         // A release's identity is its tag, passed in by the workflow that
         // builds it. A build given neither property keeps these values.
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+        versionName = harnessVersionName
 
         ndk {
             // An ABI with no renderer dies loading its native library, and the
@@ -97,6 +99,9 @@ android {
         ignoreAssetsPattern =
             "!.svn:!.git:!.ds_store:!*.scc:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"
     }
+
+    // assets/notices/proot/SOURCE, written by writeProotSource.
+    sourceSets.getByName("main").assets.srcDir(generatedNotices)
 
     packaging {
         resources {
@@ -213,7 +218,23 @@ tasks.register<Exec>("buildProot") {
     )
 }
 
+// The address of this version's proot source, the release asset build-proot.sh
+// --source makes, beside the licence texts in assets/notices/proot.
+val writeProotSource = tasks.register("writeProotSource") {
+    description = "Write the address of proot's corresponding source into the notices"
+    val out = generatedNotices.resolve("notices/proot/SOURCE")
+    val url = "https://github.com/nev3rfail/harness.apk/releases/download/" +
+        "v$harnessVersionName/proot-source.tar.gz"
+    inputs.property("url", url)
+    outputs.file(out)
+    doLast {
+        out.parentFile.mkdirs()
+        out.writeText("$url\n")
+    }
+}
+
 tasks.named("preBuild") {
+    dependsOn(writeProotSource)
     if (!project.hasProperty("skipLoaderBuild") && prebuiltNative == null) dependsOn("buildMuslLoader")
     if (!project.hasProperty("skipProotBuild") && prebuiltNative == null) dependsOn("buildProot")
 }

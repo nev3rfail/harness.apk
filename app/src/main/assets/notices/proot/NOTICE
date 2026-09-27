@@ -5,9 +5,9 @@ publishes it, tag v5.1.107.80 (https://github.com/termux/proot), licensed under
 the GNU General Public License, version 2 or later (COPYING.proot). The build
 applies include-string.patch from termux-play-store/termux-packages, commit
 57401119f9988f79fa095398a9b33b03380222b3, which that repository licenses under
-proot's own license (COPYING.termux-packages), and then the patches in this
-directory in the order `series` lists. Those patches are modifications of
-PRoot under the same license:
+proot's own license (COPYING.termux-packages), and then the patches in
+app/src/main/cpp/proot in the order its `series` lists. Those patches are
+modifications of PRoot under the same license:
 
 - P1-loader.patch: the loader is the file beside proot, found through dladdr;
 - P2-exec-bin.patch: the --exec-bin option;
@@ -15,14 +15,15 @@ PRoot under the same license:
 
 libproot.so includes libandroid-shmem 0.7
 (https://github.com/termux/libandroid-shmem), licensed under the BSD 3-Clause
-license (COPYING.libandroid-shmem).
+license (COPYING.libandroid-shmem), with shmem-tmp-dir.patch from the same
+directory: the directory a keyed segment is published in is PROOT_TMP_DIR.
 
 libproot-talloc.so is talloc 2.4.3 (https://talloc.samba.org), licensed under
 the GNU Lesser General Public License, version 3 or later (COPYING.talloc, which
 incorporates COPYING.GPL-3.0). It is a separate library that libproot.so links
-dynamically by its soname, and a rebuilt libproot-talloc.so replaces it; BUILD.md
-gives the steps.
+dynamically by its soname, and a rebuilt libproot-talloc.so replaces it;
+BUILD.md in the source gives the steps.
 
-The corresponding source of these files is the asset proot-source.tar.gz of the
-app's release that carries them. The rest of the APK is a separate work
-aggregated with them.
+The corresponding source of these files is proot-source.tar.gz, an asset of the
+app's release; SOURCE in this directory gives its address for this version.
+The rest of the APK is a separate work aggregated with them.

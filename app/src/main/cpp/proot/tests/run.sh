@@ -24,6 +24,18 @@ for m in good misaligned shared same class32; do
   "$w/mkelf" "$m" "$w/$m"
   chmod 755 "$w/$m"
 done
+# libandroid-shmem with its patch. Android's two headers it names are stubbed:
+# the log call prints nothing, and the ashmem requests are never reached.
+# Bionic declares open(2) and ioctl(2) through headers glibc keeps apart.
+mkdir -p "$w/shmem/include/android" "$w/shmem/include/linux" "$w/tmp"
+tar -xzf "$root/build/proot/dl/libandroid-shmem-0.7.tar.gz" -C "$w/shmem" --strip-components=1
+patch -d "$w/shmem" -p1 --fuzz=0 --quiet < "$here/../shmem-tmp-dir.patch"
+printf '#define ANDROID_LOG_INFO 4\n#define __android_log_print(...) 0\n' \
+  > "$w/shmem/include/android/log.h"
+printf '#include <linux/ioctl.h>\n#define ASHMEM_NAME_LEN 256\n#define ASHMEM_SET_NAME _IOW(0x77, 1, char[256])\n#define ASHMEM_SET_SIZE _IOW(0x77, 3, size_t)\n#define ASHMEM_GET_SIZE _IO(0x77, 4)\n' \
+  > "$w/shmem/include/linux/ashmem.h"
+"$cc" -O1 -D_GNU_SOURCE -include fcntl.h -include sys/ioctl.h -I"$w/shmem/include" "$w/shmem/shmem.c" "$here/shm-key.c" \
+  -o "$w/shm-key" -lpthread
 printf '#!/usr/bin/hx-probe -x\n' > "$w/script"
 chmod 755 "$w/script"
 cp "$P" "$w/proot/libproot-talloc.so" "$w/alone/"
@@ -75,6 +87,16 @@ check "aligned PT_LOAD" "rc=0" "$(run "$P" "$w/probe" exec "$w/good")"
 check "PT_LOADs sharing a page with equal flags" "rc=0" "$(run "$P" "$w/probe" exec "$w/same")"
 check "PT_LOAD off the page size" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/misaligned")"
 check "PT_LOADs sharing a page with other flags" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/shared")"
+
+# libandroid-shmem's key directory. timeout catches the retry loop the patch
+# removes.
+check "shmem key, PROOT_TMP_DIR unset" "ret=-1 errno=ENOENT rc=0" \
+  "$(run env -u PROOT_TMP_DIR timeout 10 "$w/shm-key")"
+check "shmem key, PROOT_TMP_DIR missing" "ret=-1 errno=ENOENT rc=0" \
+  "$(run env PROOT_TMP_DIR="$w/none" timeout 10 "$w/shm-key")"
+env PROOT_TMP_DIR="$w/tmp" timeout 10 "$w/shm-key" >/dev/null 2>&1 || true
+check "shmem key, published in PROOT_TMP_DIR" "link" \
+  "$( [ -L "$w/tmp/ashv_key_4660" ] && echo link || echo none)"
 
 if [ "$failed" -gt 0 ]; then
   echo "$failed failed"

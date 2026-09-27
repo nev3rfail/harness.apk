@@ -1,0 +1,65 @@
+libandroid-shmem: the key directory from PROOT_TMP_DIR.
+
+shmget publishes a keyed segment as a symlink in the directory PROOT_TMP_DIR
+names at run time. With that variable unset or empty, a keyed shmget fails
+with ENOENT, and a symlink(2) failure other than EEXIST fails it with that
+errno, where the call would otherwise retry forever. IPC_PRIVATE segments
+need no directory.
+
+diff --git a/shmem.c b/shmem.c
+index f95fc07..4bb050b 100644
+--- a/shmem.c
++++ b/shmem.c
+@@ -23,7 +23,26 @@
+ #include "shm.h"
+ 
+ #define DBG(...) __android_log_print(ANDROID_LOG_INFO, "shmem", __VA_ARGS__)
+-#define ASHV_KEY_SYMLINK_PATH _PATH_TMP "ashv_key_%d"
++/*
++ * The symlink that publishes a keyed segment, in the directory
++ * PROOT_TMP_DIR names. Returns -1 with errno set when that variable is
++ * unset or empty, or the path does not fit in `size' bytes.
++ */
++static int ashv_key_symlink_path(char* path, size_t size, key_t key)
++{
++	const char* dir = getenv("PROOT_TMP_DIR");
++	int n;
++	if (dir == NULL || dir[0] == '\0') {
++		errno = ENOENT;
++		return -1;
++	}
++	n = snprintf(path, size, "%s/ashv_key_%d", dir, key);
++	if (n < 0 || (size_t) n >= size) {
++		errno = ENAMETOOLONG;
++		return -1;
++	}
++	return 0;
++}
+ #define ANDROID_SHMEM_SOCKNAME "/dev/shm/%08x"
+ #define ROUND_UP(N, S) ((((N) + (S) - 1) / (S)) * (S))
+ 
+@@ -349,7 +368,10 @@ int shmget(key_t key, size_t size, int flags)
+ 		// (3) If connected and opened, done. If connection refused
+ 		//     take ownership of the key and create the symlink.
+ 		// (4) If no symlink, create it.
+-		sprintf(symlink_path, ASHV_KEY_SYMLINK_PATH, key);
++		if (ashv_key_symlink_path(symlink_path, sizeof(symlink_path), key) != 0) {
++			pthread_mutex_unlock(&mutex);
++			return -1;
++		}
+ 		char path_buffer[256];
+ 		char num_buffer[64];
+ 		while (true) {
+@@ -382,6 +404,12 @@ int shmget(key_t key, size_t size, int flags)
+ 				sprintf(num_buffer, "%d", shmid);
+ 			}
+ 			if (symlink(num_buffer, symlink_path) == 0) break;
++			// Another process published the key first: read its link.
++			// Any other failure is the caller's.
++			if (errno != EEXIST) {
++				pthread_mutex_unlock(&mutex);
++				return -1;
++			}
+ 		}
+ 	}
+ 
