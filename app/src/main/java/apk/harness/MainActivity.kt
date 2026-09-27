@@ -206,6 +206,9 @@ class MainActivity : ComponentActivity() {
                 var attempt by remember { mutableStateOf(0) }
                 LaunchedEffect(attempt) {
                     if (progress != BootstrapProgress.Done) bootstrap.install { progress = it }
+                    // Off the main thread and behind the gate, so a session opens
+                    // while the userland is brought up to date.
+                    bootstrap.start()
                 }
                 if (progress == BootstrapProgress.Done) {
                     // Built here rather than in onCreate: session() probes for a

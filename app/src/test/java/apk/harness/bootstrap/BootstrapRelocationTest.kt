@@ -13,8 +13,8 @@ class BootstrapRelocationTest {
     val folder = TemporaryFolder()
 
     @Test
-    fun `both pairs are the same length as what they replace`() {
-        for (pair in relocationPairs("apk.harness")) {
+    fun `the tree and cache pairs are the same length as what they replace`() {
+        for (pair in relocationPairs("apk.harness").take(2)) {
             assertEquals(pair.old.length, pair.new.length)
         }
     }
@@ -25,18 +25,19 @@ class BootstrapRelocationTest {
         // one byte more than `com.termux` on itself and wins it back on the
         // directory below. Asserted as a number so a pair that stops fitting fails
         // here rather than in a stripped binary.
-        for (pair in relocationPairs("apk.harness")) {
+        for (pair in relocationPairs("apk.harness").take(2)) {
             assertEquals(27, pair.old.length)
             assertEquals(27, pair.new.length)
         }
     }
 
     @Test
-    fun `the pairs name the tree and the cache`() {
+    fun `the pairs name the tree, the cache and the bare data directory`() {
         assertEquals(
             listOf(
                 RelocationPair("/data/data/com.termux/files", "/data/data/apk.harness/root"),
                 RelocationPair("/data/data/com.termux/cache", "/data/data/apk.harness/cach"),
+                RelocationPair("/data/data/com.termux", "/data/data/apk.harness"),
             ),
             relocationPairs("apk.harness"),
         )

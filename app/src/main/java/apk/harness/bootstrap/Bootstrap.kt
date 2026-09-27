@@ -4,7 +4,12 @@ import android.content.Context
 import android.os.Build
 import android.system.Os
 import android.system.OsConstants
+import android.util.Log
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.PosixFilePermissions
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +62,8 @@ class Bootstrap(private val context: Context) {
     private val rootfs = agent.rootfs
     private val prefix = agent.prefix
 
+    private val libraries = File(context.applicationInfo.nativeLibraryDir)
+
     fun isInstalled(): Boolean = hasUserland() && agent.isStaged()
 
     private fun hasUserland(): Boolean = File(prefix, BASH_PATH).canExecute()
@@ -107,10 +114,18 @@ class Bootstrap(private val context: Context) {
         // file -- so the links have to exist before it runs. `SYMLINKS.txt`
         // names them relative to the prefix, and names some of their targets
         // absolutely under `com.termux`, apt's keyring among them.
-        pairs.forEachIndexed { index, pair ->
-            onProgress(BootstrapProgress.Relocating(index + 1, pairs.size))
-            relocate(rootfs, pair)
-        }
+        //
+        // The tree given is the rootfs rather than the app's data directory: the
+        // pass reads every file it walks whole, and the directories beside the
+        // rootfs hold a staged agent binary and the archive still in the cache --
+        // some ninety megabytes with nothing in them to rewrite.
+        onProgress(BootstrapProgress.Relocating(1, 1))
+        val (status, output) = runRelocator(
+            listOf("--content", "--links", "--tls", rootfs.absolutePath) + pairArguments(pairs)
+        )
+        // A non-zero status is a file the relocator could not rewrite, which is a
+        // half-moved tree. Reported rather than installed.
+        check(status == 0) { "relocate exited $status: $output" }
         rewriteManifests(File(prefix, DPKG_INFO), context.packageName)
 
         onProgress(BootstrapProgress.Configuring)
@@ -133,58 +148,153 @@ class Bootstrap(private val context: Context) {
     }
 
     /**
-     * Runs one substitution over [tree].
-     *
-     * The tree given is the rootfs rather than the app's data directory: the pass
-     * reads every file it walks whole, and the directories beside the rootfs hold
-     * a staged agent binary and the archive still in the cache -- some ninety
-     * megabytes with nothing in them to rewrite.
+     * Runs the relocator from the native library directory with [arguments], and
+     * returns its exit status and output.
      */
-    private fun relocate(tree: File, pair: RelocationPair) {
-        val binary = File(context.applicationInfo.nativeLibraryDir, RELOCATE_NAME)
+    private fun runRelocator(arguments: List<String>): Pair<Int, String> {
+        val binary = File(libraries, RELOCATE_NAME)
         check(binary.canExecute()) { "$RELOCATE_NAME is not executable" }
-        val process = ProcessBuilder(binary.absolutePath, tree.absolutePath, pair.old, pair.new)
+        val process = ProcessBuilder(listOf(binary.absolutePath) + arguments)
             .redirectErrorStream(true)
             .start()
         val output = process.inputStream.bufferedReader().readText().trim()
-        val status = process.waitFor()
-        // A non-zero status is a file the relocator could not rewrite, which is a
-        // half-moved tree. Reported rather than installed.
-        check(status == 0) { "relocate exited $status: $output" }
+        return process.waitFor() to output
+    }
+
+    private fun pairArguments(pairs: List<RelocationPair>) = pairs.flatMap { listOf(it.old, it.new) }
+
+    /**
+     * Brings an installed userland up to what this build expects, once per
+     * process: the files [configure] writes, then the one-time correction.
+     */
+    suspend fun start() = withContext(Dispatchers.IO) {
+        if (!hasUserland() || !started.compareAndSet(false, true)) return@withContext
+        try {
+            configure()
+            correctOnce()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Log.w(TAG, "the userland was not brought up to date", e)
+        }
     }
 
     /**
-     * The parts apt needs that are not files in the archive: a cache directory
-     * outside the prefix under the name the tree was rewritten to expect, a
-     * temporary directory, a rootfs home pointing at the app's own, and the
-     * repack shim installed as apt's dpkg.
+     * The parts apt needs that are not files in the archive, written at every
+     * start: apt's cache directory under the name the tree was rewritten to
+     * expect, a temporary directory, a rootfs home pointing at the app's own,
+     * the rootfs's link to the native library directory, `bin/proot`, and the
+     * repack shim installed as apt's dpkg. Entries a dead proot left in the
+     * temporary directory are removed.
      *
      * Without the shim a Termux `.deb` unpacks into `/data/data/com.termux/...`
      * and fails on a permission error, because its payload is rooted at an
      * absolute path rather than at the prefix.
      */
     private fun configure() {
-        // apt keeps its archives under a name the byte budget affords, pointed at
-        // the app cache so the system can reclaim the packages it downloaded.
-        stageAptCache(File(data, "cach"), agent.tmp)
-        File(data, "cach/apt/archives/partial").mkdirs()
+        stageAptCache(File(data, "cach"))
         for (path in listOf("var/lib/apt/lists/partial", "tmp")) File(prefix, path).mkdirs()
         stageRootfsHome(File(rootfs, "home"), agent.home)
+        // Ahead of the shim, which runs the relocator through it.
+        stageAppLib(File(rootfs, APPLIB_NAME))
+        stageProot()
 
         // Under `libexec` because no package owns that directory, so an upgrade
         // of dpkg cannot overwrite the shim. The shim reads its own prefix from
-        // the path it was invoked by, so it belongs one directory below it.
+        // the path it was invoked by, so it belongs one directory below it. It is
+        // app-owned and replaced whole through a rename, so a run in progress
+        // keeps the copy it started with.
         val libexec = File(prefix, "libexec").apply { mkdirs() }
         val shim = File(libexec, SHIM_NAME)
+        val staged = File(libexec, "$SHIM_NAME.tmp")
         context.assets.open(SHIM_NAME).use { input ->
-            shim.outputStream().use { output -> input.copyTo(output) }
+            staged.outputStream().use { output -> input.copyTo(output) }
         }
-        shim.setExecutable(true, false)
+        staged.setExecutable(true, false)
+        Os.rename(staged.path, shim.path)
 
         // Absolute, which apt executes as written rather than resolving under
         // `Dir` the way it would a bare name.
         val confd = File(prefix, "etc/apt/apt.conf.d").apply { mkdirs() }
         File(confd, "99-repack").writeText("Dir::Bin::dpkg \"${shim.absolutePath}\";\n")
+        // The cache is in the data directory, so an installed archive is removed
+        // rather than kept.
+        File(confd, "99-cache").writeText("APT::Keep-Downloaded-Packages \"false\";\n")
+
+        removeProotLeftovers(File(prefix, "tmp"))
+    }
+
+    /**
+     * Corrects a userland installed by an earlier build: the symlink targets
+     * that still name `com.termux` and the x86_64 TLS alignment. The relocator
+     * takes the lock `repack-deb` takes and checks the stamp again under it, and
+     * gives up with [LOCK_BUSY] while an `apt` in another tab holds it, so the
+     * pass runs again at the next start.
+     */
+    private fun correctOnce() {
+        val stamp = File(prefix, STAMP_PATH)
+        if (stamp.isFile && stamp.readText().trim() == CORRECTION_VERSION) return
+        stamp.parentFile?.mkdirs()
+
+        // Work directories of the shim, from when it worked in the cache directory.
+        agent.tmp.listFiles()?.filter { it.name.startsWith("repack-deb.") }?.forEach(::removeTree)
+
+        val started = System.nanoTime()
+        val (status, output) = runRelocator(
+            listOf(
+                "--lock", File(prefix, LOCK_PATH).path,
+                "--stamp", stamp.path, CORRECTION_VERSION,
+                "--links", "--tls",
+                "--md5sums", File(prefix, DPKG_INFO).path,
+                prefix.path,
+            ) + pairArguments(relocationPairs(context.packageName))
+        )
+        val elapsed = (System.nanoTime() - started) / 1_000_000
+        when (status) {
+            0 -> Log.i(TAG, "the userland correction took $elapsed ms: $output")
+            LOCK_BUSY -> Log.w(TAG, "the userland correction waits for the next start: $output")
+            else -> Log.w(TAG, "the userland correction exited $status after $elapsed ms: $output")
+        }
+    }
+
+    /**
+     * Points [link] at the native library directory, so that a path under the
+     * rootfs reaches the packaged programs: `repack-deb` runs the relocator
+     * through it, and termux.net's `proot` finds the packaged loader by it.
+     * A directory in its place is renamed aside rather than removed.
+     */
+    private fun stageAppLib(link: File) {
+        val mode = runCatching { Os.lstat(link.path).st_mode }.getOrNull()
+        if (mode != null && OsConstants.S_ISDIR(mode)) {
+            val aside = File(link.parentFile, "${link.name}.${System.currentTimeMillis()}")
+            Os.rename(link.path, aside.path)
+            Log.w(TAG, "${link.path} was a directory, and is now ${aside.path}")
+        }
+        replaceLink(link, libraries.absolutePath)
+    }
+
+    /**
+     * Points `bin/proot` at the packaged proot, unless the `proot` package owns
+     * that path.
+     */
+    private fun stageProot() {
+        val proot = File(prefix, "bin/proot")
+        val list = File(prefix, "$DPKG_INFO/proot.list")
+        if (list.isFile && list.readLines().any { it == proot.path }) return
+        proot.parentFile?.mkdirs()
+        replaceLink(proot, File(rootfs, "$APPLIB_NAME/$PROOT_NAME").path)
+    }
+
+    /**
+     * Makes [link] a symlink to [target] through a temporary link renamed over
+     * it, so no reader finds it missing.
+     */
+    private fun replaceLink(link: File, target: String) {
+        if (runCatching { Os.readlink(link.path) }.getOrNull() == target) return
+        val staged = File(link.parentFile, "${link.name}.tmp")
+        staged.delete()
+        Os.symlink(target, staged.path)
+        Os.rename(staged.path, link.path)
     }
 
     /**
@@ -213,31 +323,86 @@ class Bootstrap(private val context: Context) {
     }
 
     /**
-     * Points [link] at [cache], so that apt's archives land in the directory the
-     * system is free to empty.
-     *
-     * A directory found in the way is discarded rather than reported, which is
-     * where this parts from [stageRootfsHome]: what is in there is downloaded
-     * packages, and a download is what replacing them costs.
+     * Makes [dir] apt's cache: a directory in the data directory, which the
+     * system does not empty under a download. A link found in its place is
+     * replaced by an empty directory.
      */
-    private fun stageAptCache(link: File, cache: File) {
-        val mode = runCatching { Os.lstat(link.path).st_mode }.getOrNull()
-        if (mode != null && OsConstants.S_ISLNK(mode)) return
-        if (mode != null) link.deleteRecursively()
-        cache.mkdirs()
-        Os.symlink(cache.absolutePath, link.path)
+    private fun stageAptCache(dir: File) {
+        val mode = runCatching { Os.lstat(dir.path).st_mode }.getOrNull()
+        if (mode != null && OsConstants.S_ISLNK(mode)) dir.delete()
+        File(dir, "apt/archives/partial").mkdirs()
     }
 
     private companion object {
+        const val TAG = "Bootstrap"
         const val BASH_PATH = "bin/bash"
         const val DPKG_INFO = "var/lib/dpkg/info"
         const val SHIM_NAME = "repack-deb"
+        const val APPLIB_NAME = "applib"
+        const val PROOT_NAME = "libproot.so"
 
-        // A program, shipped as a library because that directory stays executable
+        // Programs, shipped as libraries because that directory stays executable
         // whatever the app targets.
         const val RELOCATE_NAME = "librelocate.so"
+
+        // The lock `repack-deb` takes, which its cleanup of `repack-deb.*` does
+        // not match.
+        const val LOCK_PATH = "tmp/.repack-deb-lock"
+
+        // What the relocator exits with when the lock stays busy for 30 s.
+        const val LOCK_BUSY = 75
+
+        // Raised when the correction changes, so a userland stamped with an
+        // earlier one is corrected again.
+        const val STAMP_PATH = "var/lib/harness/corrected"
+        const val CORRECTION_VERSION = "1"
+
+        // Once per process, whichever activity asks.
+        val started = AtomicBoolean(false)
     }
 }
+
+/**
+ * The pid in the name of an entry proot leaves in its temporary directory, or
+ * null for a name proot does not make.
+ */
+fun prootEntryPid(name: String): Int? = PROOT_ENTRY_PREFIXES.firstNotNullOfOrNull { prefix ->
+    if (!name.startsWith(prefix)) return@firstNotNullOfOrNull null
+    val rest = name.substring(prefix.length)
+    val digits = rest.substringBefore('-', missingDelimiterValue = "")
+    if (digits.isEmpty() || !digits.all(Char::isDigit)) null else digits.toIntOrNull()
+}
+
+private val PROOT_ENTRY_PREFIXES =
+    listOf("proot-", "proot-tmpfs--", "mountinfo-", "auxv-", "prootseq-", "prootshm-")
+
+/**
+ * Removes each entry in [tmp] that proot made for a pid no process has. A pid
+ * reused since keeps its entry until that process ends.
+ */
+fun removeProotLeftovers(tmp: File) {
+    for (entry in tmp.listFiles().orEmpty()) {
+        val pid = prootEntryPid(entry.name) ?: continue
+        if (File("/proc/$pid").exists()) continue
+        removeTree(entry)
+    }
+}
+
+/**
+ * Deletes [file] and everything under it without following links. Each
+ * directory is made `0700` before it is read, since glue can carry modes that
+ * forbid listing it or deleting from it.
+ */
+fun removeTree(file: File) {
+    val path = file.toPath()
+    if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+        runCatching { Files.setPosixFilePermissions(path, OWNER_ONLY) }
+        file.listFiles()?.forEach(::removeTree)
+    }
+    file.delete()
+}
+
+private val OWNER_ONLY = PosixFilePermissions.fromString("rwx------")
 
 /** What staging should do with the rootfs home it finds. */
 enum class HomeAction { LINK, REPLACE, KEEP, REPORT }

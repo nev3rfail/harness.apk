@@ -2,17 +2,21 @@ package apk.harness.bootstrap
 
 import java.io.File
 
-/** A substitution the relocator can make: the two sides are the same length. */
+/** A substitution the relocator makes. */
 data class RelocationPair(val old: String, val new: String)
 
 /**
  * The substitutions that move a Termux tree under [applicationId].
  *
- * The replacement is written into stripped binaries, so it cannot change length.
+ * A replacement written into stripped binaries cannot change length.
  * `/data/data/com.termux/files` is 27 bytes, which an eleven-character id affords
  * by naming the directory below it in four -- `root` for the tree, `cach` for the
  * cache apt keeps outside it. One pair per subtree rather than per directory,
  * because `files/usr`, `files/home` and `files/usr/tmp` all sit under `files`.
+ *
+ * The third pair, the bare data directory, is one byte longer than what it
+ * replaces. The relocator leaves it out of file contents and applies it to
+ * symlink targets, which take any length.
  */
 fun relocationPairs(applicationId: String): List<RelocationPair> {
     require(applicationId.length == ID_LENGTH) {
@@ -23,6 +27,7 @@ fun relocationPairs(applicationId: String): List<RelocationPair> {
     return listOf(
         RelocationPair("$TERMUX_DATA/files", "$data/root"),
         RelocationPair("$TERMUX_DATA/cache", "$data/cach"),
+        RelocationPair(TERMUX_DATA, data),
     )
 }
 
