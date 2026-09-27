@@ -131,9 +131,9 @@ android {
 
 // -PprebuiltNative=<dir> packages the lib*.so files of <dir> -- one ABI's, as an
 // installed app's nativeLibraryDir holds them -- instead of building any. The
-// ABI is -PprebuiltAbi, arm64-v8a by default. No CMake target and no loader
-// build runs, here or in terminal-library, so a Kotlin change builds where
-// neither toolchain does.
+// ABI is -PprebuiltAbi, arm64-v8a by default. No CMake target, no loader build
+// and no proot build runs, here or in terminal-library, so a Kotlin change
+// builds where none of the toolchains does.
 if (prebuiltNative != null) {
     val sync = tasks.register<Sync>("syncPrebuiltNative") {
         description = "Copy the prebuilt native libraries into a jniLibs tree"
@@ -187,8 +187,35 @@ tasks.register<Exec>("buildMuslLoader") {
     )
 }
 
+// proot, its talloc and its loader, one set per ABI, built from pinned sources
+// by the NDK. Like the musl loader it goes through WSL on Windows.
+// -PskipProotBuild consumes whatever is already in jniLibs.
+tasks.register<Exec>("buildProot") {
+    description = "Build the proot files the APK packages, one set per ABI"
+    group = "build"
+
+    workingDir = rootProject.projectDir
+    inputs.file(rootProject.file("scripts/build-proot.sh"))
+    inputs.dir("src/main/cpp/proot")
+    for (abi in listOf("arm64-v8a", "x86_64")) {
+        for (name in listOf("libproot.so", "libproot-talloc.so", "libproot-loader.so")) {
+            outputs.file("src/main/jniLibs/$abi/$name")
+        }
+    }
+
+    val script = "scripts/build-proot.sh"
+    commandLine(
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            listOf("wsl", "bash", script)
+        } else {
+            listOf("bash", script)
+        }
+    )
+}
+
 tasks.named("preBuild") {
     if (!project.hasProperty("skipLoaderBuild") && prebuiltNative == null) dependsOn("buildMuslLoader")
+    if (!project.hasProperty("skipProotBuild") && prebuiltNative == null) dependsOn("buildProot")
 }
 
 dependencies {

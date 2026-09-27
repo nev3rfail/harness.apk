@@ -1,0 +1,135 @@
+P1. The loader beside proot.
+
+proot takes the realpath of dladdr(main).dli_fname, the file that holds its
+own code, at start, and runs every tracee through the file PROOT_UNBUNDLE_LOADER
+names in that directory. The path is the same whether the kernel ran proot
+directly or through linker64. PROOT_LOADER and PROOT_LOADER_32 are not read.
+A 32-bit tracee gets ENOEXEC, since only the native loader is built.
+
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index bbc6400..9434854 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -44,6 +44,7 @@
+ #include "path/binding.h"
+ #include "path/canon.h"
+ #include "path/path.h"
++#include "execve/execve.h"
+ #include <extension/extension.h>
+ #include <extension/sysvipc/sysvipc.h>
+ 
+@@ -467,6 +468,14 @@ int main(int argc, char *const argv[])
+ 		goto error;
+ 	tracee->pid = getpid();
+ 
++#if defined(PROOT_UNBUNDLE_LOADER)
++	status = initialize_loader_path();
++	if (status < 0) {
++		note(tracee, ERROR, SYSTEM, "can't locate the loader");
++		goto error;
++	}
++#endif
++
+ 	/* Set verboseness from env variable, may be overriden by option */
+ 	{
+ 		const char *verbose_env = getenv("PROOT_VERBOSE");
+diff --git a/src/execve/enter.c b/src/execve/enter.c
+index c562d14..edb3a27 100644
+--- a/src/execve/enter.c
++++ b/src/execve/enter.c
+@@ -29,8 +29,9 @@
+ #include <sys/mman.h>   /* PROT_*, */
+ #include <string.h>     /* strlen(3), strcpy(3), */
+ #include <stdlib.h>     /* getenv(3), */
+-#include <stdio.h>      /* fwrite(3), */
++#include <stdio.h>      /* fwrite(3), snprintf(3), */
+ #include <assert.h>     /* assert(3), */
++#include <dlfcn.h>      /* dladdr(3), */
+ 
+ #include "execve/execve.h"
+ #include "execve/shebang.h"
+@@ -555,6 +556,42 @@ end:
+ }
+ #endif
+ 
++#if defined(PROOT_UNBUNDLE_LOADER)
++static char unbundled_loader_path[PATH_MAX];
++
++extern int main(int argc, char *const argv[]);
++
++/**
++ * Set the loader path to the file PROOT_UNBUNDLE_LOADER names in the
++ * directory of the file that holds this code.  dladdr(3) names that
++ * file whether the kernel ran it directly or a dynamic linker such as
++ * linker64 loaded it.  This function returns -1 if an error occurred,
++ * otherwise 0.
++ */
++int initialize_loader_path(void)
++{
++	char self[PATH_MAX];
++	Dl_info info;
++	int status;
++
++	status = dladdr((void *) main, &info);
++	if (status == 0 || info.dli_fname == NULL)
++		return -1;
++
++	if (realpath(info.dli_fname, self) == NULL)
++		return -1;
++
++	/* realpath(3) returns an absolute path.  */
++	*strrchr(self, '/') = '\0';
++
++	status = snprintf(unbundled_loader_path, PATH_MAX, "%s/%s", self, PROOT_UNBUNDLE_LOADER);
++	if (status < 0 || status >= PATH_MAX)
++		return -1;
++
++	return 0;
++}
++#endif
++
+ /**
+  * Get the path to the loader for the given @tracee.  This function
+  * returns NULL if an error occurred.
+@@ -562,12 +599,8 @@ end:
+ static inline const char *get_loader_path(const Tracee *tracee)
+ {
+ #if defined(PROOT_UNBUNDLE_LOADER)
+-#if defined(HAS_LOADER_32BIT)
+-	if (IS_CLASS32(tracee->load_info->elf_header)) {
+-		return getenv("PROOT_LOADER_32") ?: PROOT_UNBUNDLE_LOADER "/loader32";
+-	}
+-#endif
+-	return getenv("PROOT_LOADER") ?: PROOT_UNBUNDLE_LOADER "/loader";
++	(void) tracee;
++	return unbundled_loader_path;
+ #else
+ 	static char *loader_path = NULL;
+ 
+@@ -690,6 +723,12 @@ int translate_execve_enter(Tracee *tracee)
+ 	if (status < 0)
+ 		return status;
+ 
++#if defined(PROOT_UNBUNDLE_LOADER)
++	/* Only the loader for the native class is shipped.  */
++	if (IS_CLASS32(tracee->load_info->elf_header))
++		return -ENOEXEC;
++#endif
++
+ 	if (tracee->load_info->interp != NULL) {
+ 		status = extract_load_info(tracee, tracee->load_info->interp);
+ 		if (status < 0)
+diff --git a/src/execve/execve.h b/src/execve/execve.h
+index 4a1a409..39984f8 100644
+--- a/src/execve/execve.h
++++ b/src/execve/execve.h
+@@ -32,6 +32,9 @@
+ extern int translate_execve_enter(Tracee *tracee);
+ extern void translate_execve_exit(Tracee *tracee);
+ extern int translate_and_check_exec(Tracee *tracee, char host_path[PATH_MAX], const char *user_path);
++#if defined(PROOT_UNBUNDLE_LOADER)
++extern int initialize_loader_path(void);
++#endif
+ 
+ typedef struct mapping {
+ 	word_t addr;

@@ -7,9 +7,9 @@ local.properties
 # AGP's native build directory, per ABI and per variant.
 .cxx/
 
-# Native libraries are build outputs, produced by scripts/build-loaders.sh and by
-# the renderer's Zig build, and consumed from here with -PskipLoaderBuild and
-# -PskipNativeBuild.
+# Native libraries are build outputs, produced by scripts/build-loaders.sh,
+# scripts/build-proot.sh and the renderer's Zig build, and consumed from here
+# with -PskipLoaderBuild, -PskipProotBuild and -PskipNativeBuild.
 /app/src/main/jniLibs/
 
 # Signing material must never reach a repo that becomes public.

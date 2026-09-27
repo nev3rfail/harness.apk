@@ -1,0 +1,186 @@
+P2. --exec-bin DIR.
+
+/bin/x and /usr/bin/x become DIR/x when that file exists, for the program
+proot starts, every program a tracee executes, and the interpreter of a
+script. Nothing is bound over /bin or /usr/bin, so a program keeps the path
+it was run from. The option has no effect when the guest rootfs is not /.
+
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index 9434854..efad6f2 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -45,6 +45,7 @@
+ #include "path/canon.h"
+ #include "path/path.h"
+ #include "execve/execve.h"
++#include "execve/shebang.h"
+ #include <extension/extension.h>
+ #include <extension/sysvipc/sysvipc.h>
+ 
+@@ -274,10 +275,18 @@ static int initialize_cwd(Tracee *tracee)
+  */
+ static int initialize_exe(Tracee *tracee, const char *exe)
+ {
++	char command[PATH_MAX];
+ 	char path[PATH_MAX];
+ 	int status;
+ 
+-	status = which(tracee, tracee->reconf.paths, path, exe ?: "/bin/sh");
++	exe = exe ?: "/bin/sh";
++	if (strlen(exe) < PATH_MAX) {
++		strcpy(command, exe);
++		rewrite_exec_bin(tracee, command);
++		exe = command;
++	}
++
++	status = which(tracee, tracee->reconf.paths, path, exe);
+ 	if (status < 0)
+ 		return -1;
+ 
+diff --git a/src/cli/proot.c b/src/cli/proot.c
+index 29365e8..7ce26bf 100644
+--- a/src/cli/proot.c
++++ b/src/cli/proot.c
+@@ -27,6 +27,7 @@
+ 
+ #include "cli/cli.h"
+ #include "cli/note.h"
++#include "execve/shebang.h"
+ #include "extension/extension.h"
+ #include "extension/sysvipc/sysvipc.h"
+ #include "path/binding.h"
+@@ -198,6 +199,12 @@ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli UNUSED, con
+ 	return 0;
+ }
+ 
++static int handle_option_exec_bin(Tracee *tracee UNUSED, const Cli *cli UNUSED, const char *value)
++{
++	exec_bin = value;
++	return 0;
++}
++
+ static int handle_option_v(Tracee *tracee, const Cli *cli UNUSED, const char *value)
+ {
+ 	int status;
+diff --git a/src/cli/proot.h b/src/cli/proot.h
+index 3f61931..ba7688f 100644
+--- a/src/cli/proot.h
++++ b/src/cli/proot.h
+@@ -64,6 +64,7 @@ static int handle_option_link2symlink(Tracee *tracee, const Cli *cli, const char
+ static int handle_option_ashmem_memfd(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_sysvipc(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli, const char *value);
++static int handle_option_exec_bin(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_L(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_H(Tracee *tracee, const Cli *cli, const char *value);
+ static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
+@@ -159,6 +160,16 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
+ 	  .detail = "\tWhen the executed command leaves orphean or detached processes\n\
+ \taround, proot waits until all processes possibly terminate. This option forces\n\
+ \tthe immediate termination of all tracee processes when the main command exits.",
++	},
++	{ .class = "Regular options",
++	  .arguments = {
++		{ .name = "--exec-bin", .separator = ' ', .value = "path" },
++		{ .name = NULL, .separator = '\0', .value = NULL } },
++	  .handler = handle_option_exec_bin,
++	  .description = "Execute /bin/x and /usr/bin/x as *path*/x when that file exists.",
++	  .detail = "\tThis applies to every program executed, and to the interpreter\n\
++\tof a script.  Nothing is bound over /bin or /usr/bin.  It has\n\
++\tno effect when the guest rootfs is not /.",
+ 	},
+ 	{ .class = "Regular options",
+ 	  .arguments = {
+diff --git a/src/execve/shebang.c b/src/execve/shebang.c
+index 83ceeda..9f5a82c 100644
+--- a/src/execve/shebang.c
++++ b/src/execve/shebang.c
+@@ -30,10 +30,14 @@
+ #include <sys/param.h>     /* MAXSYMLINKS, */
+ #include <stdbool.h>       /* bool, */
+ #include <assert.h>        /* assert(3), */
++#include <string.h>        /* strncmp(3), strcpy(3), */
++#include <stdio.h>         /* snprintf(3), */
+ 
+ #include "execve/shebang.h"
+ #include "execve/execve.h"
+ #include "execve/aoxp.h"
++#include "path/binding.h"
++#include "path/path.h"
+ #include "tracee/tracee.h"
+ #include "attribute.h"
+ 
+@@ -197,6 +201,42 @@ end:
+ 	return 1;
+ }
+ 
++const char *exec_bin = NULL;
++
++/**
++ * Replace @user_path, when it is /bin/x or /usr/bin/x, with
++ * @exec_bin/x if that file exists.  Nothing is replaced when
++ * @exec_bin is not set or the guest rootfs is not the host's /.
++ */
++void rewrite_exec_bin(const Tracee *tracee, char user_path[PATH_MAX])
++{
++	char path[PATH_MAX];
++	const char *root;
++	const char *rest;
++	int status;
++
++	if (exec_bin == NULL)
++		return;
++
++	root = get_root(tracee);
++	if (root == NULL || compare_paths(root, "/") != PATHS_ARE_EQUAL)
++		return;
++
++	if (strncmp(user_path, "/bin/", 5) == 0)
++		rest = user_path + 5;
++	else if (strncmp(user_path, "/usr/bin/", 9) == 0)
++		rest = user_path + 9;
++	else
++		return;
++
++	status = snprintf(path, PATH_MAX, "%s/%s", exec_bin, rest);
++	if (status < 0 || status >= PATH_MAX)
++		return;
++
++	if (access(path, F_OK) == 0)
++		strcpy(user_path, path);
++}
++
+ /**
+  * Expand in argv[] the shebang of @user_path, if any.  This function
+  * returns -errno if an error occurred, 1 if a shebang was found and
+@@ -231,6 +271,8 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
+ 	for (i = 0; i < MAXSYMLINKS; i++) {
+ 		char *old_user_path;
+ 
++		rewrite_exec_bin(tracee, user_path);
++
+ 		/* Translate this path (user -> host), then check it is executable.  */
+ 		status = translate_and_check_exec(tracee, host_path, user_path);
+ 		if (status < 0)
+@@ -251,6 +293,8 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
+ 			break;
+ 		has_shebang = true;
+ 
++		rewrite_exec_bin(tracee, user_path);
++
+ 		/* Translate new path (user -> host), then check it is executable.  */
+ 		status = translate_and_check_exec(tracee, host_path, user_path);
+ 		if (status < 0)
+diff --git a/src/execve/shebang.h b/src/execve/shebang.h
+index 1ae63be..3c70423 100644
+--- a/src/execve/shebang.h
++++ b/src/execve/shebang.h
+@@ -29,4 +29,8 @@
+ 
+ extern int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH_MAX]);
+ 
++/* The directory --exec-bin names, or NULL.  */
++extern const char *exec_bin;
++extern void rewrite_exec_bin(const Tracee *tracee, char user_path[PATH_MAX]);
++
+ #endif /* SHEBANG_H */

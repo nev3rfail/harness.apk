@@ -1,0 +1,88 @@
+P5. Page size.
+
+extract_load_info returns ENOEXEC for a PT_LOAD whose p_vaddr - p_offset is
+not a multiple of the kernel page size, and for two consecutive PT_LOADs
+that share a kernel page with different flags. A program linked for 4 KB
+pages fails its exec on a 16 KB kernel instead of being mapped wrongly.
+
+diff --git a/src/execve/enter.c b/src/execve/enter.c
+index edb3a27..979a3a3 100644
+--- a/src/execve/enter.c
++++ b/src/execve/enter.c
+@@ -227,8 +227,57 @@ struct add_load_info_data {
+ 	LoadInfo *load_info;
+ 	Tracee *tracee;
+ 	int fd;
++
++	/* The previous PT_LOAD: its last page and its flags.  */
++	bool has_previous_load;
++	word_t previous_last_page;
++	word_t previous_flags;
+ };
+ 
++/**
++ * Check that @program_header (type PT_LOAD) can be mapped with the
++ * kernel's page size: its file offset and address are congruent
++ * modulo that size, and it shares no page with the previous PT_LOAD
++ * unless their flags are equal.  This function returns -ENOEXEC if
++ * the check fails, otherwise 0.
++ */
++static int check_load_alignment(const ElfHeader *elf_header,
++			const ProgramHeader *program_header, struct add_load_info_data *data)
++{
++	static word_t page_size = 0;
++	word_t vaddr;
++	word_t offset;
++	word_t memsz;
++	word_t flags;
++
++	if (page_size == 0) {
++		page_size = sysconf(_SC_PAGE_SIZE);
++		if ((int) page_size <= 0)
++			page_size = 0x1000;
++	}
++
++	vaddr  = PROGRAM_FIELD(*elf_header, *program_header, vaddr);
++	offset = PROGRAM_FIELD(*elf_header, *program_header, offset);
++	memsz  = PROGRAM_FIELD(*elf_header, *program_header, memsz);
++	flags  = PROGRAM_FIELD(*elf_header, *program_header, flags);
++
++	if ((vaddr - offset) % page_size != 0)
++		return -ENOEXEC;
++
++	if (data->has_previous_load
++	    && data->previous_last_page >= vaddr / page_size
++	    && data->previous_flags != flags)
++		return -ENOEXEC;
++
++	if (memsz > 0) {
++		data->has_previous_load  = true;
++		data->previous_last_page = (vaddr + memsz - 1) / page_size;
++		data->previous_flags     = flags;
++	}
++
++	return 0;
++}
++
+ /**
+  * This function is a program header iterator.  It invokes
+  * add_mapping() or add_interp(), according to the type of
+@@ -243,6 +292,10 @@ static int add_load_info(const ElfHeader *elf_header,
+ 
+ 	switch (PROGRAM_FIELD(*elf_header, *program_header, type)) {
+ 	case PT_LOAD:
++		status = check_load_alignment(elf_header, program_header, data);
++		if (status < 0)
++			return status;
++
+ 		status = add_mapping(data->tracee, data->load_info, program_header);
+ 		if (status < 0)
+ 			return status;
+@@ -297,6 +350,7 @@ static int extract_load_info(Tracee *tracee, LoadInfo *load_info)
+ 	data.load_info = load_info;
+ 	data.tracee    = tracee;
+ 	data.fd        = fd;
++	data.has_previous_load = false;
+ 
+ 	status = iterate_program_headers(tracee, fd, &load_info->elf_header, add_load_info, &data);
+ end:
