@@ -30,12 +30,14 @@ jobs:
 
       # patchelf adds the renderer's DT_NEEDED entries; gcc-aarch64-linux-gnu is
       # the cross compiler musl's arm64 build asks for; the proot host tests
-      # hold a clone(2) with strace.
+      # hold a clone(2) with strace; the repack-deb host tests run it under dash,
+      # the userland's /bin/sh, and repack with dpkg-deb.
       - name: Install the toolchains the scripts shell out to
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends patchelf gcc-aarch64-linux-gnu strace
+          sudo apt-get install -y --no-install-recommends patchelf gcc-aarch64-linux-gnu strace \
+              dash dpkg
 
       # The NDK revision is app/build.gradle.kts's ndkVersion, and the CMake
       # revision is the one both externalNativeBuild blocks name.
@@ -73,6 +75,23 @@ jobs:
       # The patches, on a proot built for the runner with the host compiler.
       - name: proot host tests
         run: sh app/src/main/cpp/proot/tests/run.sh
+
+      # The exec router, compiled against the runner's glibc.
+      - name: Router host tests
+        run: sh app/src/main/cpp/harness-exec/tests/run.sh
+
+      # The router inside the patched musl, against the x86_64 musl tree the
+      # loader build left in its cache.
+      - name: Router end to end in musl
+        run: bash app/src/main/cpp/harness-exec/tests/musl-e2e.sh
+
+      - name: librelocate and repack-deb host tests
+        run: sh app/src/main/cpp/relocate-tests/run.sh
+
+      # The x86_64 syscall shim, from the submodule, checked against the
+      # trapped-call list beside the proot patches.
+      - name: Syscall shim host tests
+        run: sh vendor/ghostty-android/android/terminal-library/src/main/cpp/tests/run.sh
 
       # The packaged proot follows termux.net's, so a proot-distro built for
       # that version finds the options it passes.
