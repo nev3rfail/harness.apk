@@ -101,7 +101,8 @@ harness-userland skill has how):
   `clang-21` and `lld` are static. Unpacked to
   `$HOME/android-sdk/ndk/29.0.14206865`, it reports the revision this project
   pins.
-- `pkg install patchelf`.
+- `pkg install patchelf xz-utils`. The bootstrap has no `xz`, which `tar`
+  needs for both archives below.
 
 Both downloads are pinned by sha256; a different hash means a different file, so
 stop there:
