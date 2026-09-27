@@ -93,6 +93,8 @@ Inside that proot:
 `proot` typed by name is the same packaged `libproot.so`, with your arguments
 unchanged, so `proot-distro` works. `$PREFIX/bin/proot` is a link to it unless
 the `proot` package is installed, and either way the router runs the packaged one.
+The session exports `PROOT_TMP_DIR` as `$PREFIX/tmp`, so a proot started any
+other way has its temporary directory too.
 
 What to expect:
 
@@ -107,12 +109,16 @@ What to expect:
 - **Signals.** `kill <pid>` of the proot the caller started reaches the program.
   `kill -STOP <pid>` stops only that proot process, and `kill -CHLD <pid>` ends at
   the tracer; Ctrl-Z and `kill -STOP -<pgid>` stop the program. A signal sent to
-  the process group from outside it, such as `kill -INT %1`, reaches the program
-  twice, and `timeout` up to three times.
+  the process group from outside it, such as `kill -INT %1`, arrives once; a
+  real-time signal sent that way arrives twice, and from `timeout` up to three
+  times.
 - **Debuggers.** `strace -f`, `gdb` and `lldb` cannot trace a program under
   proot: proot is its tracer, a debugger that starts it makes proot's own attach
   fail, and proot reports that as an error.
 - **`/proc/<pid>/exe` read from outside proot** names `libproot-loader.so`.
+- **A Play Go program built without cgo,** run outside proot, sees `linker64`'s
+  argv in `os.Args`. Run it under proot, or build it with cgo.
+- **A node single-executable binary** segfaults at start, with or without proot.
 - **NDK r29 `-static-pie` output** crashes at start on any Linux kernel, with or
   without proot. zig and musl static-pie programs run.
 - **On x86_64** the agent's tree runs under the app's syscall shim, which
@@ -155,6 +161,10 @@ $PREFIX/glibc/bin/python3 --version
 The key goes in `keyrings`, not `trusted.gpg.d`, so it vouches for no other
 source. The `glibc-repo` package would write the same line without `signed-by`,
 so it stays uninstalled, and so does `glibc-runner`.
+
+glibc reads `$PREFIX/glibc/etc/hosts` rather than `/etc/hosts`. The app links it
+to `$HARNESS_ETC/hosts` at every start while nothing else is there, so glibc
+programs resolve `localhost`; a file of your own at that path is left alone.
 
 ## A userland from the F-Droid repository
 
