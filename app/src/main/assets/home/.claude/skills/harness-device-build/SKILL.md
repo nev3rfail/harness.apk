@@ -128,6 +128,7 @@ The NDK archive is 361 MB and unpacks to several GB; ask the operator first.
 cd $HOME/harness.apk/vendor/ghostty-android
 proot --exec-bin "$PREFIX/bin" \
   --bind="$HARNESS_ETC/resolv.conf:/etc/resolv.conf" \
+  --bind="$HARNESS_ETC/hosts:/etc/hosts" \
   --bind="$PREFIX/etc/tls/cert.pem:/etc/ssl/certs/ca-certificates.crt" \
   env ZIG=$HOME/zig-aarch64-linux-0.16.0/zig \
       ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/29.0.14206865 \
@@ -136,8 +137,8 @@ proot --exec-bin "$PREFIX/bin" \
 ```
 
 A `proot` typed by name binds nothing, so the build names the bindings the router
-gives a static program: `resolv.conf` and the certificates are what let zig fetch
-its dependencies itself. The script writes a libc file naming the NDK's sysroot
+gives a static program: `resolv.conf`, `hosts` and the certificates, which let
+zig fetch its dependencies itself. The script writes a libc file naming the NDK's sysroot
 and targets `aarch64-linux-android.24`, which is what `zig cc` for Android needs.
 `ZIG_CACHE_ROOT` must be set: its default is `/tmp`. It holds the fetched
 dependencies, so keep it. A cold build takes about 19 minutes, and the two
@@ -207,7 +208,7 @@ reboot.
 | Mistake | What is true |
 |---|---|
 | Fetching Google's NDK to build native code | It is x86_64. The termux-ndk NDK is arm64 and runs under proot |
-| Running the renderer build under a bare `proot` | It binds no `resolv.conf`, so zig cannot fetch. Pass the two `--bind`s above |
+| Running the renderer build under a bare `proot` | It binds no `resolv.conf`, so zig cannot fetch. Pass the three `--bind`s above |
 | Typing the native library directory | It changes on every update. `dirname "$HARNESS_TERMUX_EXEC"` |
 | Hunting third-party `aapt2` prebuilts | Termux packages the arm64 build; install it and override the Maven one |
 | Unzipping Google's `build-tools_r*-linux.zip` | Those binaries are x86_64 and will not exec |

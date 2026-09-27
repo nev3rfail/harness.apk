@@ -84,7 +84,7 @@ Inside that proot:
 - the program's `/proc/self/exe` is its own path, and every program it starts
   runs under the same proot, bionic and musl ones included;
 - `/bin/x` and `/usr/bin/x` become `$PREFIX/bin/x` when that file exists;
-- each file in `$HARNESS_ETC`, `resolv.conf` among them, is at `/etc/<name>`,
+- each file in `$HARNESS_ETC` (`resolv.conf`, `hosts`) is at `/etc/<name>`,
   `$PREFIX/etc/tls/cert.pem` at `/etc/ssl/certs/ca-certificates.crt`, the musl
   loader at `/lib/ld-musl-<arch>.so.1`, and, once glibc is installed, its `ld.so`
   at `/lib/ld-linux-aarch64.so.1` (x86_64: `/lib64/ld-linux-x86-64.so.2`). DNS,
