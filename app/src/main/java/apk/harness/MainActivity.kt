@@ -58,7 +58,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStateAtLeast
 import apk.harness.agents.BACKENDS
 import apk.harness.agents.OpenTab
-import apk.harness.agents.RunningSession
 import apk.harness.agents.mergedProjects
 import apk.harness.agents.withOpenTabs
 import apk.harness.bootstrap.Bootstrap
@@ -153,6 +152,8 @@ class MainActivity : ComponentActivity() {
         // the directories, which every agent of this app agrees on.
         val agent = Agent(this)
         val home = agent.home
+        // Before anything reads it: the tabs follow it and the drawer draws it.
+        Roster.start(home)
 
         tools = Tools(
             surfaces = surfaces,
@@ -873,31 +874,10 @@ private fun HarnessScreen(
                     }?.let { expandedProjects = expandedProjects + it.key }
                 }
 
-                // The replacement for this local lives in lifecycle-runtime-compose,
-                // an artifact the app does not depend on for one composition local.
-                @Suppress("DEPRECATION")
-                val owner = LocalLifecycleOwner.current
-                // Polled rather than watched: a process writes its own record
-                // and there is nothing to subscribe to. Two seconds is slow
-                // enough to cost nothing and quick enough that a dot follows
-                // what the agent is doing.
-                //
-                // The poll follows the lifecycle rather than the composition: it
-                // runs while the Activity is started, so a drawer left open
-                // behind a locked screen reads again when the screen comes back
-                // and holds the roster it last read until then.
-                var running by remember { mutableStateOf(emptyMap<String, RunningSession>()) }
-                LaunchedEffect(owner, agentHome) {
-                    owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                        while (true) {
-                            running = withContext(Dispatchers.IO) {
-                                BACKENDS.flatMap { it.running(agentHome) }
-                                    .associateBy { session -> session.sessionId }
-                            }
-                            delay(ROSTER_INTERVAL_MS)
-                        }
-                    }
-                }
+                // Heard rather than polled: the roster re-reads itself on every
+                // write to a record, so a dot follows what the agent is doing.
+                val roster by Roster.roster.collectAsState()
+                val running = remember(roster) { roster.associateBy { it.sessionId } }
 
                 // An outstanding read is drawn as a wait rather than as a
                 // tree of nothing. The panel around it is the tree's own --
@@ -1092,9 +1072,6 @@ private fun bandLabel(put: Surfaces.Parked): String {
     val label = selection.label(put.document.lineOffset) ?: return name
     return "$name  " + label
 }
-
-/** How often the drawer rereads the roster while it is open. */
-private const val ROSTER_INTERVAL_MS = 2_000L
 
 /**
  * The folder [uri] names, or a refusal saying why it names none.

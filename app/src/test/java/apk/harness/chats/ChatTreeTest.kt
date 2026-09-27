@@ -1,6 +1,8 @@
 package apk.harness.chats
 
+import apk.harness.agents.isSessionId
 import java.io.File
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,13 +16,20 @@ class ChatTreeTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    /** A transcript in a project directory, from lines given in order. */
+    /**
+     * A transcript in a project directory, from lines given in order, filed
+     * under the session id [id] makes of [session].
+     */
     private fun transcript(project: String, session: String, vararg lines: String): File {
         val directory = File(folder.root, "projects/$project").apply { mkdirs() }
-        return File(directory, "$session.jsonl").apply {
+        return File(directory, "${id(session)}.jsonl").apply {
             writeText(lines.joinToString("\n", postfix = "\n"))
         }
     }
+
+    /** A session id for a short name, and a session id left as it is. */
+    private fun id(name: String): String =
+        if (isSessionId(name)) name else UUID.nameUUIDFromBytes(name.toByteArray()).toString()
 
     private fun user(cwd: String) =
         """{"type":"user","cwd":${quote(cwd)},"message":{"content":"hi"}}"""
@@ -165,7 +174,7 @@ class ChatTreeTest {
 
     @Test
     fun `a chat that says nothing is labelled by its id`() {
-        val file = transcript("p", "0123456789abcdef", """{"type":"assistant"}""")
+        val file = transcript("p", "01234567-89ab-cdef-0123-456789abcdef", """{"type":"assistant"}""")
 
         val chat = read(file).chat
         assertNull(chat.title)
@@ -343,10 +352,8 @@ class ChatTreeTest {
 
     @Test
     fun `the group with no directory sorts behind a project with older chats`() {
-        transcript("-old", "a", user("/work"))
-        transcript("-none", "b", said)
-        File(folder.root, "projects/-old/a.jsonl").setLastModified(2_000L)
-        File(folder.root, "projects/-none/b.jsonl").setLastModified(1_000L)
+        transcript("-old", "a", user("/work")).setLastModified(2_000L)
+        transcript("-none", "b", said).setLastModified(1_000L)
 
         assertEquals(listOf("/work", null), projects(folder.root).map { it.path })
     }
@@ -359,7 +366,7 @@ class ChatTreeTest {
         val projects = projects(folder.root)
 
         assertEquals(1, projects.size)
-        assertEquals(setOf("one", "two"), projects[0].chats.map { it.sessionId }.toSet())
+        assertEquals(setOf(id("one"), id("two")), projects[0].chats.map { it.sessionId }.toSet())
     }
 
     @Test
@@ -374,7 +381,7 @@ class ChatTreeTest {
         val projects = projects(folder.root)
 
         assertEquals(listOf("/b", "/a"), projects.map { it.path })
-        assertEquals(listOf("newest", "recent"), projects[0].chats.map { it.sessionId })
+        assertEquals(listOf(id("newest"), id("recent")), projects[0].chats.map { it.sessionId })
     }
 
     @Test
@@ -428,6 +435,15 @@ class ChatTreeTest {
         transcript("b", "two", user("/data/data/dev.harness/files"))
 
         assertEquals(2, projects(folder.root).size)
+    }
+
+    @Test
+    fun `a transcript whose name is not a session id is not a chat`() {
+        val directory = File(folder.root, "projects/-work").apply { mkdirs() }
+        File(directory, "notes.jsonl").writeText(user("/work") + "\n")
+        File(directory, "x --settings evil.jsonl").writeText(user("/work") + "\n")
+
+        assertEquals(emptyList<Project>(), projects(folder.root))
     }
 
     @Test

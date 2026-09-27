@@ -1,5 +1,6 @@
 package apk.harness.chats
 
+import apk.harness.agents.isSessionId
 import java.io.File
 import java.io.RandomAccessFile
 import org.json.JSONArray
@@ -197,8 +198,10 @@ fun projects(agentHome: File): List<Project> {
     val byPath = LinkedHashMap<String?, MutableList<Chat>>()
 
     for (directory in directories) {
+        // A file whose name is not a session id is not a chat: the name goes to
+        // the CLI's command line when the chat is opened.
         val transcripts = directory.listFiles { file -> file.name.endsWith(SUFFIX) }
-            ?.filter { it.isFile }
+            ?.filter { it.isFile && isSessionId(it.name.removeSuffix(SUFFIX)) }
             .orEmpty()
         val summaries = transcripts.mapNotNull(::readTranscript)
         if (summaries.isEmpty()) continue
