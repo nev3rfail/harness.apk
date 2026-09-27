@@ -154,11 +154,14 @@ class AgentStage(private val context: Context) {
 
     /**
      * The files around the binary: a resolver for the two runtimes that look for
-     * one, and the answer to the account question.
+     * one, a hosts file, and the answer to the account question.
      */
     private fun configure() {
         etc.mkdirs()
         File(etc, "resolv.conf").writeText(RESOLV_CONF)
+        // Bound onto /etc/hosts for a program run under proot, so `localhost`
+        // resolves without a DNS query.
+        File(etc, "hosts").writeText(HOSTS)
         File(etc, SETDNS_NAME).writeText(SETDNS_JS)
 
         // The agent's first run asks which account to sign in with, and asks
@@ -221,6 +224,7 @@ class AgentStage(private val context: Context) {
         // device is affected.
         val RESOLVERS = listOf("8.8.8.8", "8.8.4.4")
         val RESOLV_CONF = RESOLVERS.joinToString("") { "nameserver $it\n" }
+        const val HOSTS = "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n"
         val SETDNS_JS = RESOLVERS.joinToString(", ") { "\"$it\"" }
             .let { "try { require(\"dns\").setServers([$it]); } catch (e) {}\n" }
     }
