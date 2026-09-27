@@ -435,8 +435,14 @@ class MainActivity : ComponentActivity() {
 
     /** Holds [request] until the storage permission is granted, and asks for it. */
     private fun awaitGrant(request: OpenRequest.Open): Boolean {
-        awaitingGrant = request
-        runOnUiThread { storageGrant.launch(STORAGE) }
+        // Held on the main thread, where the dialog's answer arrives.
+        runOnUiThread {
+            awaitingGrant = request
+            if (runCatching { storageGrant.launch(STORAGE) }.isFailure) {
+                awaitingGrant = null
+                toast(NO_STORAGE)
+            }
+        }
         return false
     }
     /** A short note to the operator. */
@@ -489,10 +495,14 @@ class MainActivity : ComponentActivity() {
             is OpenRequest.Refused -> toast(request.reason)
             is OpenRequest.Open -> {
                 val holder = tabs
+                var replaced: OpenRequest? = null
                 val queued = synchronized(openLock) {
-                    if (holder == null || !restored) pendingOpen = request
-                    holder == null || !restored
+                    val wait = holder == null || !restored
+                    if (wait) replaced = pendingOpen.also { pendingOpen = request }
+                    wait
                 }
+                // One request waits at a time; the one it replaces is not opened.
+                if (replaced is OpenRequest.Open) toast("A newer request replaced one still waiting to open.")
                 if (!queued && holder != null) {
                     // Opening binds a socket, stages the home and reads the
                     // history, none of which belongs on the main thread.

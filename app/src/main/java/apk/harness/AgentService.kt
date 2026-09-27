@@ -110,13 +110,18 @@ class AgentService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         cancelTabs(shown)
-        Work.publish(emptyList())
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /** Counts what is working and acts on it. On the main thread. */
+    /**
+     * Counts what is working and acts on it. On the main thread.
+     *
+     * ponytail: the count reads the app's own processes' `stat` files here, tens
+     * of them; move it to a worker and hop back for the lock and the
+     * notifications if it shows in a trace.
+     */
     private fun recount() {
         val working = Work.count()
         val (hold, since) = holdDecision(working.isNotEmpty(), restingSince, SystemClock.elapsedRealtime())
@@ -416,8 +421,4 @@ object Work {
         return Roster.roster.value.any { it.tag in tags }
     }
 
-    @Synchronized
-    internal fun publish(working: List<TabIdentity>) {
-        _working.value = working
-    }
 }
