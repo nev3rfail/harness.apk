@@ -5,6 +5,10 @@
 release carries them. Its paths are the repository's, and the pinned downloads
 are already under `build/proot/dl`, so it builds offline.
 
+The same release carries `app-play.aab`, the unsigned `play` bundle built at the
+release's tag. A Play upload is that bundle, signed with the upload key, and its
+`assets/notices/proot/SOURCE` names this release's `proot-source.tar.gz`.
+
 ## Requirements
 
 A Linux x86_64 host with `bash`, `curl`, `make`, `patch`, `unzip` and binutils'

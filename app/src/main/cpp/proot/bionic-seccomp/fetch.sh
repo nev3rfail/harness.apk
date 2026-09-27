@@ -43,7 +43,7 @@ fi
 
 while read -r level tag commit; do
   [ -n "$level" ] || continue
-  git -C "$bionic" fetch -q "$url" "refs/tags/$tag" 2>/dev/null || true
+  git -C "$bionic" fetch -q "$url" "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
   if [ "$(git -C "$bionic" rev-parse "$tag^{commit}")" != "$commit" ]; then
     echo "$tag is not $commit" >&2
     exit 1

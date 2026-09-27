@@ -9,9 +9,9 @@
 # So every archive is rewritten on the way past: the payload is moved to this
 # app's data directory, and librelocate applies the substitutions the bootstrap
 # was relocated with to the contents of every file, every symlink target and
-# every x86_64 TLS segment in it. File contents are substituted byte for byte, because a shorter
-# string in a stripped binary's .rodata cannot be shifted and a longer one cannot
-# be represented at all. The prefix as a whole is what has to fit, not the app
+# every x86_64 TLS segment in it. File contents are substituted byte for byte,
+# because a shorter string in a stripped binary's .rodata cannot be shifted and
+# a longer one cannot be represented at all. The prefix as a whole is what has to fit, not the app
 # data directory: a directory one byte longer than Termux's is paid for by the
 # rootfs directory below it being one byte shorter.
 #

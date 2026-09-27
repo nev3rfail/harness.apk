@@ -194,11 +194,25 @@ jobs:
               -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true \
               -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
 
+      # The Play channel ships as a bundle, and a Play upload is always this
+      # one: built at the tag, so its notices name this release's proot source.
+      # CI leaves it unsigned, as it does the APK.
+      - name: Bundle the Play channel
+        env:
+          VERSION_NAME: ${{ needs.guard.outputs.name }}
+          VERSION_CODE: ${{ needs.guard.outputs.code }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:bundlePlay \
+              -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true \
+              -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
+
       # Play refuses a native library with a LOAD segment aligned below 16 KB.
       - name: Every native library is 16 KB aligned
         run: |
           bash scripts/check-page-alignment.sh \
-              app/build/outputs/apk/release/app-release-unsigned.apk
+              app/build/outputs/apk/release/app-release-unsigned.apk \
+              app/build/outputs/bundle/play/app-play.aab
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -210,6 +224,12 @@ jobs:
         with:
           name: proot-source
           path: proot-source.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-play
+          path: app/build/outputs/bundle/play/app-play.aab
           if-no-files-found: error
 
   # The app falls back to this repository's copy of the pinned bootstrap
@@ -301,6 +321,10 @@ jobs:
         with:
           name: proot-source
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: app-play
+
       # zipalign and apksigner produce the artifact that ships, so the revision
       # they come from is pinned rather than whatever the image happens to hold.
       - name: Install the build tools
@@ -380,5 +404,6 @@ jobs:
           # A release asset stays as long as the release does.
           files: |
             harness.apk
+            app-play.aab
             proot-source.tar.gz
           fail_on_unmatched_files: true

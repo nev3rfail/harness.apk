@@ -10,8 +10,9 @@
 // kernel and the linker collapse, and a longer one is left out of this pass.
 //
 // --links repoints each symlink whose target starts with an <old> on a component
-// boundary, longest <old> first, after any run of leading slashes. A target is a string in the link's own inode
-// rather than bytes in a file, so it takes a <new> of any length, unpadded.
+// boundary, longest <old> first, after any run of leading slashes. A target is
+// a string in the link's own inode rather than bytes in a file, so it takes a
+// <new> of any length, unpadded.
 //
 // --tls lowers a PT_TLS alignment larger than the largest alignment of the TLS
 // sections back to it, in x86_64 executables (ET_EXEC or ET_DYN with a PT_INTERP)

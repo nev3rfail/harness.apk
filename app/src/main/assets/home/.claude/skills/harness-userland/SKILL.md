@@ -135,7 +135,7 @@ which apt trusts for that repository alone. Ask the operator first, then:
 ```sh
 cd $TMPDIR
 deb=$(curl -fsS --max-time 60 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages \
-  | awk '/^Package: termux-keyring$/ {p=1} p && /^Filename:/ {print $2; exit}')
+  | awk '/^Package: termux-keyring$/ {p=1} p && !f && /^Filename:/ {print $2; f=1}')
 curl -fsS --max-time 60 -o termux-keyring.deb "https://packages.termux.dev/apt/termux-main/$deb"
 dpkg-deb --fsys-tarfile termux-keyring.deb \
   | tar -xO ./data/data/com.termux/files/usr/share/termux-keyring/termux-autobuilds.gpg \
