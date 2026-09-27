@@ -72,6 +72,15 @@ interface AgentBackend {
 
     /** The conversation a fresh tab in [directory] lands in, or null. */
     fun mostRecent(home: File, directory: File): String?
+
+    /**
+     * True when the history under [home] holds a transcript for [sessionId],
+     * wherever it is filed, and a tab reopening it resumes rather than starts.
+     */
+    fun hasTranscript(home: File, sessionId: String): Boolean
+
+    /** When the transcript of [sessionId] last changed, or 0 when there is none. */
+    fun transcriptModified(home: File, sessionId: String): Long
 }
 
 /**
@@ -82,7 +91,7 @@ interface AgentBackend {
  *
  * [procStart] is the process's start time from the kernel's `stat`, never from
  * the record, and [tag] the tab its environment names, or null when it names
- * none or cannot be read.
+ * none or cannot be read; [environUnreadable] says which.
  */
 data class RunningSession(
     val pid: Int,
@@ -90,6 +99,7 @@ data class RunningSession(
     val status: String?,
     val procStart: Long? = null,
     val tag: String? = null,
+    val environUnreadable: Boolean = false,
 )
 
 /** What a record file says, before its process is checked. */

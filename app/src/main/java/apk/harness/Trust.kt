@@ -42,6 +42,27 @@ fun withTrustedProject(config: String, path: String): String? {
 }
 
 /**
+ * True when [config] records [path], or a directory above it, as trusted.
+ *
+ * The rule the CLI itself applies: a directory under one the operator trusted
+ * opens without the question.
+ */
+fun isTrustedProject(config: String, path: String): Boolean {
+    val root = runCatching { JSONObject(config) }.getOrNull() ?: return false
+    val projects = root.optJSONObject(PROJECTS) ?: return false
+    // Walked as a device path whatever the host, so a test on another system
+    // reads it the way the device does.
+    val start = path.trimEnd('/').ifEmpty { "/" }
+    return generateSequence(start) { current ->
+        if (current == "/") null else current.substringBeforeLast('/').ifEmpty { "/" }
+    }.any { projects.optJSONObject(it)?.optBoolean(ACCEPTED) == true }
+}
+
+/** True when the agent's config file records [path] as trusted. */
+fun isTrustedProject(config: File, path: String): Boolean =
+    runCatching { config.readText() }.getOrNull()?.let { isTrustedProject(it, path) } == true
+
+/**
  * Marks [path] trusted in the agent's config file.
  *
  * A failure is swallowed: the cost is the dialog being asked, which is a great

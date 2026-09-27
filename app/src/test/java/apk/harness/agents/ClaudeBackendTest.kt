@@ -93,52 +93,67 @@ class ClaudeBackendTest {
         assertNull(rosterEntry(JSONObject("""{"sessionId":"s","cwd":"/w"}""")))
     }
 
+    /** The one session id [ClaudeBackend.roster] names under [home] against [proc]. */
+    private fun running(home: File, proc: File) = ClaudeBackend.roster(home, proc).map { it.sessionId }
+
     @Test
     fun `a matching start time is a running process`() {
+        val home = folder.newFolder("home")
         val proc = folder.newFolder("proc")
         stat(proc, 22740, "6577951")
+        record(home, "22740.json", device)
 
-        assertTrue(stillRunning(proc, 22740, "6577951"))
+        assertEquals(listOf(DEVICE_SESSION), running(home, proc))
     }
 
     @Test
     fun `a reused pid started at another time is not the same process`() {
+        val home = folder.newFolder("home")
         val proc = folder.newFolder("proc")
         stat(proc, 22740, "9999999")
+        record(home, "22740.json", device)
 
-        assertFalse(stillRunning(proc, 22740, "6577951"))
+        assertEquals(emptyList<String>(), running(home, proc))
     }
 
     @Test
     fun `a pid with no directory is gone`() {
-        assertFalse(stillRunning(folder.newFolder("proc"), 22740, "6577951"))
+        val home = folder.newFolder("home")
+        record(home, "22740.json", device)
+
+        assertEquals(emptyList<String>(), running(home, folder.newFolder("proc")))
     }
 
     @Test
     fun `a comm field holding a space and a bracket keeps the fields aligned`() {
+        val home = folder.newFolder("home")
         val proc = folder.newFolder("proc")
-        stat(proc, 41, "6577951", comm = "the (odd) name")
+        stat(proc, 22740, "6577951", comm = "the (odd) name")
+        record(home, "22740.json", device)
 
-        assertTrue(stillRunning(proc, 41, "6577951"))
+        assertEquals(listOf(DEVICE_SESSION), running(home, proc))
     }
 
     @Test
-    fun `a record with no start time is running when the directory is there`() {
+    fun `a record with no start time is running while its process is there`() {
+        val home = folder.newFolder("home")
         val proc = folder.newFolder("proc")
         stat(proc, 41, "6577951")
+        record(home, "41.json", """{"pid":41,"sessionId":"$DEVICE_SESSION"}""")
+        record(home, "42.json", """{"pid":42,"sessionId":"$OLDER"}""")
 
-        assertTrue(stillRunning(proc, 41, null))
-        assertFalse(stillRunning(proc, 42, null))
+        assertEquals(listOf(DEVICE_SESSION), running(home, proc))
     }
 
     @Test
     fun `a pid directory with no stat is not a running process`() {
+        val home = folder.newFolder("home")
         val proc = folder.newFolder("proc")
-        File(proc, "41").mkdirs()
+        File(proc, "22740").mkdirs()
+        record(home, "22740.json", device)
 
-        assertFalse(stillRunning(proc, 41, "6577951"))
+        assertEquals(emptyList<String>(), running(home, proc))
     }
-
     @Test
     fun `the roster keeps the records whose processes are alive`() {
         val home = folder.newFolder("home")
@@ -234,6 +249,16 @@ class ClaudeBackendTest {
     @Test
     fun `a home with no history for the directory names nothing`() {
         assertNull(ClaudeBackend.mostRecent(folder.newFolder("home"), File(folder.root, "work")))
+    }
+
+    @Test
+    fun `a transcript filed under any project counts as the conversation's`() {
+        val home = folder.newFolder("home")
+        File(projectDirectory(home, File(folder.root, "elsewhere")), "$OLDER.jsonl").writeText("{}\n")
+
+        assertTrue(ClaudeBackend.hasTranscript(home, OLDER))
+        assertFalse(ClaudeBackend.hasTranscript(home, NEWER))
+        assertFalse(ClaudeBackend.hasTranscript(home, "../$OLDER"))
     }
 
     @Test

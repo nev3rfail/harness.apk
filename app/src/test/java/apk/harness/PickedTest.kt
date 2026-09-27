@@ -2,6 +2,7 @@ package apk.harness
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -242,6 +243,17 @@ class PickedTest {
 
         assertTrue(name.toByteArray().size <= 200)
         assertEquals(name, String(name.toByteArray(), Charsets.UTF_8))
+    }
+
+    @Test
+    fun `only a directory under none of the app's own is outside it`() {
+        val own = listOf("/data/user/0/dev.harness", "/data/data/dev.harness")
+
+        assertFalse(outsideApp("/data/data/dev.harness", own))
+        assertFalse(outsideApp("/data/user/0/dev.harness/files/home", own))
+        assertTrue(outsideApp("/storage/emulated/0/Documents/notes", own))
+        // A sibling whose name the app's own begins with is another directory.
+        assertTrue(outsideApp("/data/data/dev.harness2/files", own))
     }
 
     private fun freeName(name: String, taken: Set<String>): String =

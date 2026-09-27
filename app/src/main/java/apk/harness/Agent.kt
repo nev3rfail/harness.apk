@@ -50,6 +50,12 @@ class Agent(private val context: Context) {
      * starts, whichever backend's script runs, so a record a process writes about
      * itself can be matched to the tab it runs in. A conversation switch inside
      * the CLI keeps its process and so keeps the tag.
+     *
+     * [trusted] says the operator opened this directory with a tap of their
+     * own, which is the operator vouching for it, so the agent is told rather
+     * than asking. A tab another app asked for, or one a restart brought back, is
+     * not a tap: its directory is trusted only if the agent already records it
+     * so, and otherwise the agent asks.
      */
     fun session(
         directory: File,
@@ -57,15 +63,15 @@ class Agent(private val context: Context) {
         arguments: List<String>,
         script: String,
         tag: String,
+        trusted: Boolean,
     ): TerminalSession {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
         runCatching { stage.stageHome() }
             .onFailure { Log.w(TAG, "the home payload did not stage", it) }
 
-        // The tap that opened this is the operator trusting the directory, so
-        // the agent is told rather than asking.
-        trustProject(File(stage.home, CONFIG_NAME), directory.absolutePath)
+        val config = File(stage.home, CONFIG_NAME)
+        if (trusted) trustProject(config, directory.absolutePath)
 
         // A home that holds credentials has an account, which is what the
         // account question asks for. The config is seeded with the answer when
@@ -80,7 +86,12 @@ class Agent(private val context: Context) {
         // reads as someone else's. The agent's own home is a real filesystem
         // that needs no exception, so only what lies outside it is named. The
         // two are compared folded, the home being one directory under two names.
-        if (!folded(directory).startsWith(folded(stage.home))) {
+        //
+        // The exception follows the trust: git's ownership check is what stops a
+        // repository planted by another app from running its own hooks, so it is
+        // lifted only for a directory the operator vouched for, now or before.
+        val vouched = trusted || isTrustedProject(config, directory.absolutePath)
+        if (vouched && !folded(directory).startsWith(folded(stage.home))) {
             markSafeDirectory(File(stage.home, GIT_CONFIG_NAME), directory.absolutePath)
         }
 

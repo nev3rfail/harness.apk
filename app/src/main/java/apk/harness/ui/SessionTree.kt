@@ -48,14 +48,13 @@ import apk.harness.chats.foldHome
 /**
  * The chats an agent home holds, as rows that open and close.
  *
- * The tree draws what it is handed. Reading belongs to the caller, so the
- * drawer polls the roster while it is open and the tree draws the result.
+ * The tree draws what it is handed. Reading belongs to the caller, which hands
+ * over the roster as it last read it.
  *
  * [running] is keyed by session id, [current] is the session on screen, and
  * [openTabs] is the sessions that have a tab: between them they decide the
  * marker, the background and the trailing control of every chat row. [canClose]
- * says whether the closing control can act, which is a fact about the tabs
- * rather than about any one chat.
+ * says, per session, whether the closing control can act on its tab.
  *
  * [homes] is every spelling of the agent's home, so a project row can fold it
  * away and keep the segment that says which project it is.
@@ -73,7 +72,7 @@ fun SessionTree(
     running: Map<String, RunningSession>,
     current: String?,
     openTabs: Set<String>,
-    canClose: Boolean,
+    canClose: (String) -> Boolean,
     expanded: Set<String>,
     revealed: Set<String>,
     onToggle: (String) -> Unit,
@@ -120,7 +119,7 @@ fun SessionTree(
                             agent = running[row.chat.sessionId],
                             isCurrent = row.chat.sessionId == current,
                             hasTab = row.chat.sessionId in openTabs,
-                            canClose = canClose,
+                            canClose = canClose(row.chat.sessionId),
                             onClick = { onOpenChat(row.project, row.chat) },
                             onContinue = { onContinueHere(row.project, row.chat) },
                             onClose = { onCloseChat(row.chat) },
@@ -390,7 +389,7 @@ private fun ChatEntry(
         }
         // One control at most, and only where it has something to do.
         when {
-            // The last tab does not close, so its row carries no ×.
+            // A tab that cannot close -- the last running one -- carries no ×.
             hasTab && canClose -> Control(
                 glyph = "×",
                 colour = MaterialTheme.colorScheme.onSurfaceVariant,

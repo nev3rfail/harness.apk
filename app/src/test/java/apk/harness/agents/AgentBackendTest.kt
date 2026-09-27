@@ -32,6 +32,8 @@ class AgentBackendTest {
         override fun switch(sessionId: String) = unreached()
         override fun promptText(viewport: String) = unreached()
         override fun mostRecent(home: File, directory: File) = unreached()
+        override fun hasTranscript(home: File, sessionId: String) = unreached()
+        override fun transcriptModified(home: File, sessionId: String) = unreached()
 
         private fun unreached(): Nothing = error("the merge does not reach this")
     }

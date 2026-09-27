@@ -76,6 +76,13 @@ import apk.harness.intents.Action
 import apk.harness.intents.Handoff
 import apk.harness.intents.appFor
 import apk.harness.intents.fire
+import apk.harness.tabs.ACTION_OPEN
+import apk.harness.tabs.EXTRA_DIRECTORY
+import apk.harness.tabs.EXTRA_SESSION
+import apk.harness.tabs.OpenRequest
+import apk.harness.tabs.openRequest
+import apk.harness.tabs.readSaved
+import apk.harness.tabs.restorePlan
 import apk.harness.ui.BootstrapScreen
 import apk.harness.ui.DrawerEdgeStrip
 import apk.harness.ui.DrawerSide
@@ -115,9 +122,22 @@ class MainActivity : ComponentActivity() {
     /** Every terminal on screen, by its tab. Only one of them is visible. */
     private val views = mutableMapOf<Long, GhosttyGLSurfaceView>()
 
+    /**
+     * A request from another app that arrived before there were tabs to open it
+     * in; the tabs are built once the bootstrap is done.
+     */
+    private var pendingOpen: OpenRequest? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // An intent that created the task is the one the activity is recreated
+        // from after the process dies, from recents or from the launcher icon, so
+        // a request is acted on in a fresh start only and never replayed.
+        val fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory) pendingOpen = openRequestOf(intent)
+        if (intent.action == ACTION_OPEN) setIntent(Intent(Intent.ACTION_MAIN))
 
         // Started before anything else it protects.
         AgentService.start(this)
@@ -249,9 +269,96 @@ class MainActivity : ComponentActivity() {
         panelConfigFor = { key -> panels.configFor(key) },
         releasePanelConfig = { key -> panels.discard(key) },
         forgetParked = { key -> surfaces.forget(key) },
+        savedFile = File(noBackupFilesDir, TABS_FILE),
+        refuse = { message -> runOnUiThread { toast(message) } },
     ).also {
         tabs = it
-        it.openDefault()
+        bringBack(it, home, pendingOpen.also { pendingOpen = null })
+    }
+
+    /**
+     * Opens the tabs a start begins with: the ones that were open, with the one
+     * in front running, or the app's own tab in the home when none were.
+     *
+     * A request from another app, arriving with the start, makes every saved tab
+     * come back dormant so the tab it asks for is the one that runs. A request
+     * that opens nothing leaves the ordinary start in its place: no start ends
+     * with no tab running.
+     */
+    private fun bringBack(tabs: AgentTabs, home: File, request: OpenRequest?) {
+        val saved = readSaved(File(noBackupFilesDir, TABS_FILE))
+        val live = Roster.readNow().mapTo(HashSet()) { it.sessionId }
+        val ownData = bothSpellings(this, dataDir)
+        fun plan(parkAll: Boolean) = saved?.let {
+            restorePlan(
+                it,
+                live = live,
+                allFiles = holdsStorage(this),
+                insideApp = { path -> !outsideApp(path, ownData) },
+                exists = { path -> File(path).isDirectory },
+                recency = { id -> BACKENDS.maxOf { backend -> backend.transcriptModified(home, id) } },
+                parkAll = parkAll,
+            )
+        }
+
+        when (request) {
+            is OpenRequest.Refused -> toast(request.reason)
+            is OpenRequest.Open -> {
+                plan(parkAll = true)?.let(tabs::restore)
+                if (open(tabs, request)) return
+                val front = plan(parkAll = false)?.start
+                if (front != null && tabs.openDormant(front.sessionId) != null) return
+                tabs.openDefault()
+                return
+            }
+            null -> Unit
+        }
+        val plan = plan(parkAll = false)
+        if (plan != null && tabs.restore(plan)) return
+        tabs.openDefault()
+    }
+
+    /**
+     * Opens what [request] asks for, and answers whether a tab of it is on
+     * screen.
+     *
+     * The tab is not trusted by being opened: an intent is not the operator's
+     * tap, so the agent asks about a directory nobody has vouched for.
+     */
+    private fun open(tabs: AgentTabs, request: OpenRequest.Open): Boolean {
+        val ownData = bothSpellings(this, dataDir)
+        if (outsideApp(request.directory, ownData) && !holdsStorage(this)) {
+            toast(NO_STORAGE)
+            return false
+        }
+        val directory = runCatching { File(request.directory).canonicalFile }.getOrNull()
+        if (directory == null || !directory.isDirectory) {
+            toast("${request.directory} is not a directory.")
+            return false
+        }
+
+        val session = request.session
+        if (session != null) {
+            if (tabs.show(session)) return true
+            if (tabs.hasTab(session)) return tabs.openDormant(session) != null
+            val backend = BACKENDS.first()
+            return tabs.openConversation(directory, session, backend.id, directory.name, trusted = false) != null
+        }
+        // A caller repeating itself gets one fresh tab, not one per call.
+        tabs.untouchedIn(directory)?.let { return tabs.show(it.sessionId) }
+        return tabs.start(directory, directory.name, trusted = false) != null
+    }
+
+    /** A short note to the operator. */
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // An agent can die while the screen is away, and a death writes no
+        // record.
+        Roster.refresh()
     }
 
     override fun onPause() {
@@ -277,8 +384,17 @@ class MainActivity : ComponentActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        intent.getStringExtra(AgentService.EXTRA_SESSION)?.let { tabs?.show(it) }
+        when (val request = openRequestOf(intent)) {
+            null -> {
+                setIntent(intent)
+                intent.getStringExtra(AgentService.EXTRA_SESSION)?.let { tabs?.show(it) }
+            }
+            is OpenRequest.Refused -> toast(request.reason)
+            is OpenRequest.Open -> {
+                val holder = tabs
+                if (holder == null) pendingOpen = request else open(holder, request)
+            }
+        }
     }
 
     /** The one terminal on screen, or null before there is one. */
@@ -392,6 +508,7 @@ private fun HarnessScreen(
     }
 
     val open by tabs.tabs.collectAsState()
+    val dormant by tabs.dormant.collectAsState()
     val activeKey by tabs.activeKey.collectAsState()
     val active = open.firstOrNull { it.key == activeKey }
 
@@ -817,12 +934,16 @@ private fun HarnessScreen(
                 // with no row is one nothing can reach, switch to or close.
                 // Null carries through: there is nothing to add a tab's row to
                 // until there is a list.
-                val listed = remember(projects, open) {
+                // A dormant tab is a row as a running one is: it is how the tab
+                // is opened, and how it is closed.
+                val listed = remember(projects, open, dormant) {
                     projects?.let { read ->
                         withOpenTabs(
                             read,
                             open.map {
                                 OpenTab(it.sessionId, it.directory, it.label, it.backend.id)
+                            } + dormant.map {
+                                OpenTab(it.sessionId, File(it.directory), it.label, it.backend)
                             },
                         )
                     }
@@ -838,8 +959,10 @@ private fun HarnessScreen(
                     }?.let { expandedProjects = expandedProjects + it.key }
                 }
 
-                // Heard rather than polled: the roster re-reads itself on every
-                // write to a record, so a dot follows what the agent is doing.
+                // The roster re-reads itself on every write to a record, so a dot
+                // follows what the agent is doing. Opening the drawer reads it
+                // again, which is what drops an agent that died without writing.
+                LaunchedEffect(Unit) { Roster.refresh() }
                 val roster by Roster.roster.collectAsState()
                 val running = remember(roster) { roster.associateBy { it.sessionId } }
 
@@ -876,9 +999,14 @@ private fun HarnessScreen(
                     homes = remember(agentHome) { bothSpellings(context, agentHome) },
                     running = running,
                     current = active?.sessionId,
-                    openTabs = open.mapTo(mutableSetOf()) { it.sessionId },
-                    // The last tab does not close, so no row offers to.
-                    canClose = open.size > 1,
+                    openTabs = open.mapTo(mutableSetOf()) { it.sessionId } +
+                        dormant.map { it.sessionId },
+                    // A dormant tab always closes; the last running tab does not,
+                    // so its row offers no way to.
+                    canClose = { sessionId ->
+                        dormant.any { it.sessionId == sessionId } ||
+                            (open.any { it.sessionId == sessionId } && open.size > 1)
+                    },
                     expanded = expandedProjects,
                     revealed = revealedProjects,
                     onToggle = { path ->
@@ -1169,6 +1297,15 @@ private const val NOTHING_COPIED = "Nothing was copied."
 
 /** What the operator is told when the platform offers no picker to open. */
 private const val NO_PICKER = "This device has no file picker."
+
+/** Where the open tabs are kept, in the app's no-backup directory. */
+private const val TABS_FILE = "tabs.json"
+/** The request [intent] makes of the app, or null for an intent that makes none. */
+private fun openRequestOf(intent: Intent): OpenRequest? = openRequest(
+    intent.action,
+    intent.getStringExtra(EXTRA_DIRECTORY),
+    intent.getStringExtra(EXTRA_SESSION),
+)
 
 /**
  * What the operator is told when a folder is picked with nothing to read it.

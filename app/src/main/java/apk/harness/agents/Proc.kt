@@ -18,6 +18,17 @@ private val SESSION_ID =
 /** The variable a tab's processes carry, naming the tab they belong to. */
 const val TAB_VARIABLE = "HARNESS_TAB"
 
+/** What a process's environment says about the tab it belongs to. */
+sealed interface TagRead {
+    data class Tag(val value: String) : TagRead
+
+    /** The environment was read and names no tab. */
+    data object Absent : TagRead
+
+    /** The environment could not be read. */
+    data object Unreadable : TagRead
+}
+
 /**
  * One tab as the processes it starts know it: the [tag] they carry in
  * [TAB_VARIABLE], and the pid of its terminal's session leader once the terminal
@@ -51,19 +62,12 @@ class ProcTable(private val root: File = File("/proc")) {
     fun pids(): List<Int> =
         root.list()?.mapNotNull { it.toIntOrNull() }.orEmpty()
 
-    /**
-     * [TAB_VARIABLE] out of [pid]'s environment, or null when the process has
-     * none or its environment cannot be read.
-     */
-    fun environTag(pid: Int): String? {
+    /** [TAB_VARIABLE] as [pid]'s environment carries it, in one read. */
+    fun environTag(pid: Int): TagRead {
         val bytes = runCatching { File(root, "$pid/environ").readBytes() }.getOrNull()
-            ?: return null
-        return tagIn(bytes)
+            ?: return TagRead.Unreadable
+        return tagIn(bytes)?.let(TagRead::Tag) ?: TagRead.Absent
     }
-
-    /** True when [pid]'s environment can be read at all. */
-    fun environReadable(pid: Int): Boolean =
-        runCatching { File(root, "$pid/environ").readBytes() }.isSuccess
 
     /** [pid]'s stat line, parsed, or null when it is gone or unreadable. */
     fun stat(pid: Int): ProcStat? {

@@ -51,10 +51,17 @@ class ProcTest {
     }
 
     @Test
-    fun `an environment that cannot be read names no tab`() {
-        val proc = ProcTable(folder.newFolder("proc"))
-        assertNull(proc.environTag(41))
-        assertFalse(proc.environReadable(41))
+    fun `an environment that cannot be read is told apart from one naming no tab`() {
+        val root = folder.newFolder("proc")
+        File(root, "42").mkdirs()
+        File(root, "42/environ").writeBytes(environ("PATH=/bin"))
+        File(root, "43").mkdirs()
+        File(root, "43/environ").writeBytes(environ("HARNESS_TAB=t"))
+        val proc = ProcTable(root)
+
+        assertEquals(TagRead.Unreadable, proc.environTag(41))
+        assertEquals(TagRead.Absent, proc.environTag(42))
+        assertEquals(TagRead.Tag("t"), proc.environTag(43))
     }
 
     @Test
