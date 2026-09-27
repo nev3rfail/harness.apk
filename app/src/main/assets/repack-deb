@@ -7,12 +7,13 @@
 # another app it writes nothing and resolves nothing.
 #
 # So every archive is rewritten on the way past: the payload is moved to this
-# app's data directory and the same substitution the bootstrap was relocated
-# with is applied to every file in it. The substitution is byte-for-byte,
-# because a shorter string in a stripped binary's .rodata cannot be shifted and
-# a longer one cannot be represented at all. The prefix as a whole is what has
-# to fit, not the app data directory: a directory one byte longer than Termux's
-# is paid for by the rootfs directory below it being one byte shorter.
+# app's data directory, and librelocate applies the substitutions the bootstrap
+# was relocated with to every file contents, symlink target and x86_64 TLS
+# segment in it. File contents are substituted byte for byte, because a shorter
+# string in a stripped binary's .rodata cannot be shifted and a longer one cannot
+# be represented at all. The prefix as a whole is what has to fit, not the app
+# data directory: a directory one byte longer than Termux's is paid for by the
+# rootfs directory below it being one byte shorter.
 #
 # Install it as apt's dpkg, which is the single point every apt entry point
 # goes through, so nothing has to be remembered at a call site:
@@ -42,46 +43,49 @@ export LC_ALL=C
 rootfs=${PREFIX%/*}
 appdir=${rootfs%/*}
 
-# Every replacement is byte-for-byte, and a short one is padded with slashes,
-# which the kernel and the linker collapse. An app data directory longer than
-# Termux's still fits, because the byte comes out of the component below it:
-# the rootfs directory is named to length, and so is the cache directory. The
-# bare data directory then has nothing left to give and is passed over. It
-# appears in termux-exec's compiled defaults, which the environment overrides.
-pairs=
-add_pair() {
-  p=$2
-  while [ ${#p} -lt ${#1} ]; do p="$p/"; done
-  [ ${#p} -eq ${#1} ] || return 0
-  pairs="${pairs:+$pairs }$1=$p"
-}
+if [ ${#rootfs} -gt ${#OLD_ROOTFS} ]; then
+  echo "repack-deb: '$rootfs' is ${#rootfs} bytes; '$OLD_ROOTFS' is" \
+    "${#OLD_ROOTFS}." >&2
+  echo "repack-deb: a longer path cannot replace a shorter one in place." >&2
+  exit 1
+fi
 
 # The cache directory is this app's to name, so it is named to fit.
 cache_name=$(echo cache | cut -c1-$(( ${#OLD_CACHE} - ${#appdir} - 1 )))
 
-add_pair "$OLD_ROOTFS" "$rootfs"
-add_pair "$OLD_CACHE" "$appdir/$cache_name"
-add_pair "$OLD_APPDIR" "$appdir"
-
-case " $pairs" in
-  *" $OLD_ROOTFS="*) ;;
-  *) echo "repack-deb: '$rootfs' is ${#rootfs} bytes; '$OLD_ROOTFS' is" \
-       "${#OLD_ROOTFS}." >&2
-     echo "repack-deb: a longer path cannot replace a shorter one in place." >&2
-     exit 1 ;;
-esac
-
-script=
-for pair in $pairs; do
-  script="${script:+$script;}s|${pair%%=*}|${pair#*=}|g"
-done
+# The packaged relocator, reached through the rootfs's link to the native
+# library directory, so no PATH decides which one runs.
+relocate=$rootfs/applib/librelocate.so
 
 real=$PREFIX/bin/dpkg.real
 [ -x "$real" ] || real=$PREFIX/bin/dpkg
 
-work=${TMPDIR:-$PREFIX/tmp}/repack-deb.$$
+lock=$PREFIX/tmp/.repack-deb-lock
+lock_fd=
+work=
 trap 'rm -rf "$work"' EXIT INT TERM
-mkdir -p "$work"
+
+# Runs in this shell, before the first archive is repacked, and holds the lock
+# until the script exits. The descriptor is the highest of 9 down to 3 that is
+# not already open: apt passes its own, such as --status-fd, and a redirection
+# in this shell takes one digit.
+take_lock() {
+  [ -z "$lock_fd" ] || return 0
+  fd=9
+  while [ $fd -ge 3 ] && [ -L /proc/$$/fd/$fd ]; do fd=$((fd - 1)); done
+  if [ $fd -lt 3 ]; then
+    echo "repack-deb: no descriptor from 3 to 9 is free for the lock" >&2
+    exit 1
+  fi
+  mkdir -p "$PREFIX/tmp"
+  eval "exec $fd>>\"\$lock\""
+  "$relocate" --flock $fd
+  lock_fd=$fd
+
+  # Under the lock, every other work directory belongs to a run that ended.
+  rm -rf "$PREFIX"/tmp/repack-deb.*
+  work=$(mktemp -d "$PREFIX/tmp/repack-deb.XXXXXX")
+}
 
 repack() {
   in=$1
@@ -96,7 +100,10 @@ repack() {
     rmdir -p "$(dirname "$d$OLD_ROOTFS")" 2>/dev/null || true
   fi
 
-  find "$d" -type f -print0 | xargs -0 -r sed -i "$script"
+  "$relocate" --content --links --tls "$d" \
+    "$OLD_ROOTFS" "$rootfs" \
+    "$OLD_CACHE" "$appdir/$cache_name" \
+    "$OLD_APPDIR" "$appdir" > /dev/null
 
   # Maintainer scripts arrive 0700 and dpkg-deb refuses anything outside
   # 0555..0775.
@@ -128,10 +135,10 @@ repack() {
         | sed 's|^\./||' | sort | xargs -r md5sum ) > "$d/DEBIAN/md5sums"
   fi
 
-  # Uncompressed: the archive is unpacked again seconds later by the dpkg this
-  # script execs, and recompressing it with the repository's xz settings costs
-  # more than everything else here put together.
-  dpkg-deb -b -Znone "$d" "$out" >/dev/null
+  # The fastest gzip: the archive is unpacked again seconds later by the dpkg
+  # this script runs, and recompressing it with the repository's xz settings
+  # costs more than everything else here put together.
+  dpkg-deb -b -Zgzip -z1 "$d" "$out" >/dev/null
   echo "$out"
 }
 
@@ -149,26 +156,31 @@ repack_dir() {
 # `--recursive`, which is how apt actually hands dpkg a set of packages. Pass
 # everything else through untouched: most of what apt calls dpkg for --
 # `--print-foreign-architectures`, `--assert-multi-arch`, `--status-fd` --
-# names no archive at all.
+# names no archive at all, and takes no lock.
 n=$#
 i=0
 recursive=
 while [ $i -lt $n ]; do
   a=$1; shift
   if [ -n "$recursive" ] && [ -d "$a" ]; then
+    take_lock
     a=$(repack_dir "$a")
     recursive=
   else
     case $a in
       --recursive|-R) recursive=1 ;;
-      *.deb) [ -f "$a" ] && a=$(repack "$a") ;;
+      *.deb) if [ -f "$a" ]; then take_lock; a=$(repack "$a"); fi ;;
     esac
   fi
   set -- "$@" "$a"
   i=$((i + 1))
 done
 
-# Run rather than exec, so the EXIT trap removes the work directory. It lives in
-# the app's cache directory, which the platform trims under storage pressure,
-# directory apt is waiting on included.
-"$real" "$@"
+# Run rather than exec, so the EXIT trap removes the work directory, and with the
+# lock closed, so neither dpkg nor a daemon a maintainer script starts holds it
+# past this script.
+if [ -n "$lock_fd" ]; then
+  eval '"$real" "$@"' "$lock_fd>&-"
+else
+  "$real" "$@"
+fi
