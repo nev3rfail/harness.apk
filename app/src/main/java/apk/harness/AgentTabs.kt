@@ -162,7 +162,7 @@ class AgentTabs(
 
     // Held so stopAll can take back exactly the source it gave.
     private val identities: () -> List<TabIdentity> = {
-        _tabs.value.map { TabIdentity(it.tag, it.session.pid, it.sessionId, it.label) }
+        _tabs.value.map { TabIdentity(it.tag, it.session.pid, it.sessionId, it.label, it.key) }
     }
 
     // After every field it reads: the roster may arrive at once.
@@ -404,6 +404,9 @@ class AgentTabs(
         // so the decision is run again once the wait is over.
         synchronized(lock) {
             if (_tabs.value.none { it.key == tab.key }) return
+            // Checked again where the id is claimed: a start of it may have
+            // begun since the check above.
+            if (tabFor(chat.sessionId) != null || chat.sessionId in starting) return
             val state = following[tab.key] ?: FollowState(tab.sessionId)
             following[tab.key] = state.copy(
                 sessionId = chat.sessionId,
@@ -543,9 +546,13 @@ class AgentTabs(
         closing.forEach(::release)
     }
 
-    /** Hands the writer the tabs as they are now. Called under the lock. */
+    /**
+     * Hands the writer the tabs as they are now, and says they changed. Called
+     * under the lock, on every change to the tabs.
+     */
     private fun persist() {
         if (stopped) return
+        Roster.tabsChanged()
         val running = _tabs.value.map { SavedTab(it.directory.absolutePath, it.sessionId, it.backend.id, it.label) }
         val saved = SavedTabs(
             generation = 0L,

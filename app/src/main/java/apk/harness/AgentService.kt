@@ -16,9 +16,11 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.ServiceCompat
+import apk.harness.agents.Hold
 import apk.harness.agents.ProcTable
 import apk.harness.agents.Sample
 import apk.harness.agents.TabIdentity
+import apk.harness.agents.holdDecision
 import apk.harness.agents.workingTabs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,7 +82,13 @@ class AgentService : Service() {
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_TAG).apply {
             setReferenceCounted(false)
         }
+        // Working notifications a process that died left in the shade name tabs
+        // that are gone.
+        clearTabNotifications(this)
         scope.launch { Roster.roster.collect { recount() } }
+        // A tab moved to another conversation re-posts its notification with
+        // the conversation it is in now.
+        scope.launch { Roster.tabsChanged.collect { recount() } }
         main.postDelayed(reread, REREAD_MS)
     }
 
@@ -121,23 +129,27 @@ class AgentService : Service() {
     /** Counts what is working and acts on it. On the main thread. */
     private fun recount() {
         val working = Work.count()
-        if (working.isNotEmpty()) {
-            restingSince = null
-            // Renewed on every count: the timeout guards against a release this
-            // misses while the process lives, and a turn longer than it is kept.
-            wakeLock?.acquire(WAKE_TIMEOUT_MS)
-            notifyWorking(working)
-            return
-        }
-        wakeLock?.let { if (it.isHeld) it.release() }
-        notifyWorking(emptyList())
-        val since = restingSince ?: SystemClock.elapsedRealtime().also { restingSince = it }
-        val rested = SystemClock.elapsedRealtime() - since
-        if (rested >= GRACE_MS) {
-            stopSelfResult(latestStart)
-        } else {
-            main.removeCallbacks(graceEnds)
-            main.postDelayed(graceEnds, GRACE_MS - rested)
+        val (hold, since) = holdDecision(working.isNotEmpty(), restingSince, SystemClock.elapsedRealtime())
+        restingSince = since
+        when (hold) {
+            Hold.Awake -> {
+                // Renewed on every count: the timeout guards against a release
+                // this misses while the process lives, and a turn longer than it
+                // is kept.
+                wakeLock?.acquire(WAKE_TIMEOUT_MS)
+                notifyWorking(working)
+            }
+            is Hold.Wait -> {
+                wakeLock?.let { if (it.isHeld) it.release() }
+                notifyWorking(emptyList())
+                main.removeCallbacks(graceEnds)
+                main.postDelayed(graceEnds, hold.ms)
+            }
+            Hold.Stop -> {
+                wakeLock?.let { if (it.isHeld) it.release() }
+                notifyWorking(emptyList())
+                stopSelfResult(latestStart)
+            }
         }
     }
 
@@ -331,7 +343,20 @@ class AgentService : Service() {
         private fun askId(key: Long): Int = NOTIFY_BASE + key.toInt()
 
         /** The slot of one working tab, above every ask's. */
-        private fun tabId(tab: TabIdentity): Int = TAB_BASE + (tab.tag.hashCode() and 0xFFFF)
+        private fun tabId(tab: TabIdentity): Int = TAB_BASE + tab.key.toInt()
+
+        /**
+         * Takes away every working-tab notification in the shade. For a new
+         * process, whose tabs are not the ones those name.
+         */
+        fun clearTabNotifications(context: Context) {
+            val manager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.activeNotifications
+                .map { it.id }
+                .filter { it >= TAB_BASE }
+                .forEach { manager.cancel(it) }
+        }
 
         /** The conversation a tap lands on; absent for an ask with no chat. */
         const val EXTRA_SESSION = "apk.harness.session"
@@ -345,9 +370,6 @@ class AgentService : Service() {
         private const val ASK_CHANNEL_ID = "operator"
         private const val WORKING_GROUP = "working"
         private const val WAKE_TAG = "harness:agent"
-
-        /** How long nothing works before the service stops. */
-        private const val GRACE_MS = 10_000L
 
         /** How often the roster is read again while the service runs. */
         private const val REREAD_MS = 30_000L
@@ -389,6 +411,7 @@ object Work {
         return Roster.roster.value.any { it.tag in tags }
     }
 
+    @Synchronized
     internal fun publish(working: List<TabIdentity>) {
         _working.value = working
     }

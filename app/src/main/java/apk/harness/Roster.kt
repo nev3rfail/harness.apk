@@ -13,6 +13,7 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * The running agents, as their own records describe them, for the whole
@@ -77,6 +78,20 @@ object Roster {
 
     /** The tabs the current screen holds, as their processes know them. */
     fun tabs(): List<TabIdentity> = tabSource()
+
+    private val _tabsChanged = MutableStateFlow(0L)
+
+    /**
+     * Counts every change the screen makes to its tabs -- one added, closed,
+     * moved to another conversation, relabelled -- so a reader of [tabs] hears
+     * of it without waiting for the next record.
+     */
+    val tabsChanged: StateFlow<Long> = _tabsChanged.asStateFlow()
+
+    /** Says the tabs [tabs] reads have changed. */
+    fun tabsChanged() {
+        _tabsChanged.update { it + 1 }
+    }
 
     /** Names where the tabs the screen holds are read from. */
     fun publishTabs(source: () -> List<TabIdentity>) {
