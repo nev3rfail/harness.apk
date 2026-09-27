@@ -32,9 +32,15 @@ sealed interface TagRead {
 /**
  * One tab as the processes it starts know it: the [tag] they carry in
  * [TAB_VARIABLE], and the pid of its terminal's session leader once the terminal
- * has a process.
+ * has a process. [sessionId] and [label] are what a notification about the tab
+ * names and opens.
  */
-data class TabIdentity(val tag: String, val leader: Int?)
+data class TabIdentity(
+    val tag: String,
+    val leader: Int?,
+    val sessionId: String = "",
+    val label: String = "",
+)
 
 /**
  * The fields of `/proc/<pid>/stat` the app decides by.

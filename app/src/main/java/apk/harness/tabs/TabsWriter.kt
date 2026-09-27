@@ -53,12 +53,14 @@ class TabsWriter(
         drain()
     }
 
+    // Taking a snapshot and writing it are one step under one monitor, so a
+    // snapshot taken first is written first, whichever thread takes it.
+    @Synchronized
     private fun drain() {
         val saved = synchronized(lock) { pending.also { pending = null } } ?: return
         write(saved)
     }
 
-    @Synchronized
     private fun write(saved: SavedTabs) {
         val current = readSaved(file)?.generation ?: 0L
         if (current > generation) return

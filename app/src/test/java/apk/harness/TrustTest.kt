@@ -30,6 +30,13 @@ class TrustTest {
     }
 
     @Test
+    fun `either spelling of the data directory finds the trust recorded under the other`() {
+        val config = """{"projects":{"/data/user/0/dev.harness/files":{"hasTrustDialogAccepted":true}}}"""
+
+        assertTrue(isTrustedProject(config, "/data/data/dev.harness/files/proj"))
+    }
+
+    @Test
     fun `a directory beside or above a trusted one is not`() {
         val config = """{"projects":{"/data/app/files":{"hasTrustDialogAccepted":true},"/x":{}}}"""
 

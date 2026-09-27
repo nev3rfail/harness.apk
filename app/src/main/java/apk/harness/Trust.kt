@@ -1,5 +1,6 @@
 package apk.harness
 
+import apk.harness.chats.oneSpelling
 import java.io.File
 import org.json.JSONObject
 
@@ -50,13 +51,19 @@ fun withTrustedProject(config: String, path: String): String? {
 fun isTrustedProject(config: String, path: String): Boolean {
     val root = runCatching { JSONObject(config) }.getOrNull() ?: return false
     val projects = root.optJSONObject(PROJECTS) ?: return false
+    // One spelling on both sides: the data directory has two, and the CLI
+    // records whichever one it was started in.
+    val trusted = projects.keys().asSequence()
+        .filter { projects.optJSONObject(it)?.optBoolean(ACCEPTED) == true }
+        .mapTo(HashSet()) { folded(it) }
     // Walked as a device path whatever the host, so a test on another system
     // reads it the way the device does.
-    val start = path.trimEnd('/').ifEmpty { "/" }
-    return generateSequence(start) { current ->
+    return generateSequence(folded(path)) { current ->
         if (current == "/") null else current.substringBeforeLast('/').ifEmpty { "/" }
-    }.any { projects.optJSONObject(it)?.optBoolean(ACCEPTED) == true }
+    }.any { it in trusted }
 }
+
+private fun folded(path: String): String = oneSpelling(path).trimEnd('/').ifEmpty { "/" }
 
 /** True when the agent's config file records [path] as trusted. */
 fun isTrustedProject(config: File, path: String): Boolean =

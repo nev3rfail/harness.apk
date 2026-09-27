@@ -4,26 +4,27 @@ import apk.harness.agents.isSessionId
 
 /**
  * What a start does with the tabs that were open: the one it starts, the ones
- * it brings back parked, and the ones it drops.
+ * it brings back dormant, and the ones it drops.
  */
 data class RestorePlan(
     val start: SavedTab?,
-    val parked: List<SavedTab>,
+    val dormant: List<SavedTab>,
     val dropped: List<SavedTab>,
 )
 
 /**
  * The plan for [saved], decided before anything starts.
  *
- * - A directory outside the app with no all-files access is parked without being
- *   looked at: without the grant it may read as absent.
+ * - A directory outside the app is kept dormant when it cannot be started: with
+ *   no all-files access it is not looked at, since without the grant it may read
+ *   as absent, and one that is missing may be storage that is not mounted yet.
  * - A directory inside the app that is gone is dropped. Its conversation is still
  *   in the history.
  * - A conversation [live] names -- an agent from an earlier screen may still be
- *   running or still writing -- is parked, so it never gets a second writer.
+ *   running or still writing -- is kept dormant, so it never gets a second writer.
  * - The tab in front starts. When it cannot, the one that can start whose
  *   transcript moved last, by [recency], starts instead.
- * - Everything else is parked. With [parkAll] -- a request from outside that
+ * - Everything else is dormant. With [allDormant] -- a request from outside that
  *   names the tab it wants started -- nothing starts.
  */
 fun restorePlan(
@@ -33,27 +34,28 @@ fun restorePlan(
     insideApp: (String) -> Boolean,
     exists: (String) -> Boolean,
     recency: (String) -> Long,
-    parkAll: Boolean,
+    allDormant: Boolean,
 ): RestorePlan {
     val dropped = mutableListOf<SavedTab>()
     val startable = mutableListOf<SavedTab>()
-    val parked = mutableListOf<SavedTab>()
+    val dormant = mutableListOf<SavedTab>()
 
     for (tab in saved.tabs.distinctBy { it.sessionId }) {
+        val inside = insideApp(tab.directory)
         when {
             !isSessionId(tab.sessionId) -> dropped += tab
-            !insideApp(tab.directory) && !allFiles -> parked += tab
-            !exists(tab.directory) -> dropped += tab
-            tab.sessionId in live -> parked += tab
+            !inside && !allFiles -> dormant += tab
+            !exists(tab.directory) -> if (inside) dropped += tab else dormant += tab
+            tab.sessionId in live -> dormant += tab
             else -> startable += tab
         }
     }
 
-    if (parkAll) return RestorePlan(start = null, parked = parked + startable, dropped = dropped)
+    if (allDormant) return RestorePlan(start = null, dormant = dormant + startable, dropped = dropped)
 
     val start = startable.firstOrNull { it.sessionId == saved.front }
         ?: startable.maxByOrNull { recency(it.sessionId) }
-    return RestorePlan(start = start, parked = parked + (startable - listOfNotNull(start)), dropped = dropped)
+    return RestorePlan(start = start, dormant = dormant + (startable - listOfNotNull(start)), dropped = dropped)
 }
 
 /** A request to open an agent from outside the app. */

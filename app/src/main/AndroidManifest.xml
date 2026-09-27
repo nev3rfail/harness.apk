@@ -11,7 +11,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- A cached app is frozen, and a frozen app stops reading the terminal the
-         agent is writing to. -->
+         agent is writing to. While a tab is working the service keeps the app
+         out of that state and the CPU awake; when none is, it stops. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
