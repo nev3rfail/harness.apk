@@ -33,8 +33,8 @@ flowchart TB
 
   l --> a --> s --> ld --> c
 
-  sdk["targetSdk 36 — the platform refuses execve of a data-directory file<br/>and lets a loader map one; an exec router, preloaded into every bionic<br/>process and compiled into this loader's libc, sends each program<br/>through linker64 or this loader"]
-  abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp.<br/>aarch64 — the ABI is already the allowlist, so there is no shim"]
+  sdk["targetSdk 36 — the platform refuses execve of a data-directory file<br/>and lets a loader map one; an exec router, preloaded into every bionic<br/>process and compiled into this loader's libc, sends each program<br/>through linker64, this loader, or the packaged proot for static,<br/>glibc and stock-Go programs"]
+  abi["x86_64 — the legacy calls rewritten to their *at forms,<br/>at a ptrace stop the kernel runs ahead of seccomp, and the other<br/>calls the policy traps answered with an error; a process that<br/>execs proot is released to it.<br/>aarch64 — the ABI is already the allowlist, so there is no shim"]
   dns["names — the loader's libc reads /etc files from HARNESS_ETC, so it<br/>finds a resolver file; the dns module goes through c-ares,<br/>named by a preload that BUN_OPTIONS points at"]
 
   abi -.-> s
@@ -49,7 +49,7 @@ flowchart TB
 
 - It is modern android. We can't achieve a true persistence, so claude should be instructed to be careful with background jobs and heavy tasks. Session that spawns 333 shells with `echo true` **will** be killed by the system immediately
 - minSdk=30, targetSdk=36 and compileSdk=36. Android 7–10 stays on v0.1.1, the last targetSdk 28 release
-- Programs in the data directory run only through a loader, so static binaries such as Termux's zig and the termux-ndk toolchain cannot run, and native code is not built on the device
+- Programs in the data directory run only through a loader: bionic ones through `linker64`, musl ones through the packaged musl loader, and static, glibc and stock-Go ones under the packaged proot, which costs about 0.25 s per start and 105 ms per bionic exec inside it. A program under proot cannot be traced by `strace -f`, gdb or lldb, since proot is its tracer
 - The `play` build type makes `btl.harness` ("Harness Play"), the channel for Google Play, as a bundle. It is not debuggable, so `run-as` does not reach it
 
 ## Shoulders of giants we're standing on
@@ -58,7 +58,8 @@ flowchart TB
 - [ghostty-android](https://github.com/tapthaker/ghostty-android) author [@tapthaker](https://github.com/tapthaker), who did a lot of heavy lifting running it on an alien platform with an alien renderer
 - [claude-code-android](https://github.com/ferrumclaudepilgrim/claude-code-android) for the inspiration with shimming glibc with bionic and in general showing me that it is possible
 - [termux](https://github.com/termux/termux-packages) for the userland, and its wonderful community who provides precompiled stuff like arm ndk
-- [termux-play-store](https://github.com/termux-play-store) for the Play build's userland and the termux-exec the exec router is derived from
+- [termux-play-store](https://github.com/termux-play-store) for the Play build's userland, the termux-exec the exec router is derived from, and the proot recipe the packaged proot follows
+- [proot](https://github.com/termux/proot), which runs every program the platform has no loader for
 
 ## License
 

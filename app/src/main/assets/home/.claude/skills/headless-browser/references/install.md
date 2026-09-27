@@ -1,17 +1,20 @@
 # Installing the headless browser on this device
 
-One-time, and large (~300 MB of packages, pulling in gtk3 and the X11 stack --
-about 154 packages). Data is unmetered here, but it is still a long download, so
-say what you are about to do before starting it. Everything ends up usable by the
-app's own uid; nothing needs root.
+One-time, and large: 84 packages, 791 MB installed, pulling in gtk3 and the X11
+stack. Data is unmetered here, but it is still a long download, so say what you
+are about to do before starting it. Everything ends up usable by the app's own uid; nothing needs
+root.
 
 ## 1. Repositories
 
-Chromium is **not** in Termux's main repo. It lives in TUR (the Termux User
-Repository), and TUR's chromium depends on GTK/X11 libraries that live in
-`x11-repo`. Add both, then refresh:
+Chromium is **not** in Termux's main repo. On arm64 it comes from `x11-repo`, and
+on x86_64 from TUR (the Termux User Repository), whose chromium depends on
+GTK/X11 libraries that live in `x11-repo`. Refresh the index first, since a fresh
+bootstrap has none and cannot find the two repository packages, then add both
+and refresh again:
 
 ```sh
+apt update
 apt install -y tur-repo x11-repo
 apt update
 ```
@@ -22,41 +25,45 @@ apt update
 apt install -y chromium nodejs
 ```
 
-- The chromium package is a **bionic aarch64** build, so it runs directly -- no
-  proot, no glibc shim. Its command is **`chromium-browser`** (a launcher
-  script), *not* `chromium`.
+- The chromium package is a **bionic** build, so it runs through `linker64` --
+  no proot, no glibc. Its command is **`chromium-browser`** (a launcher script),
+  *not* `chromium`. apt takes the newest version the two repositories carry:
+  138 from `x11-repo` on arm64, 133 from `tur-repo` on x86_64.
 - It links GTK/X11 even for headless use; that is why `x11-repo` is required.
 - `nodejs` is Termux's build (v26+), and it runs bionic-native too.
 
 Verify:
 
 ```sh
-chromium-browser --headless=new --no-sandbox --version   # -> Chromium 133.x
+chromium-browser --headless=new --no-sandbox --version   # -> Chromium 138.x (arm64), 133.x (x86_64)
 node -v                                                   # -> v26.x
 ```
 
 ## 3. The working tree
 
 The launcher, the CLI and the package manifest ship beside the skill. Copy the
-tree to `$HOME/browsing` and give the launcher its execute bit:
+tree's contents into `$HOME/browsing` and give the launcher its execute bit:
 
 ```sh
-cp -r $HOME/.claude/skills/headless-browser/browsing $HOME/browsing
+mkdir -p $HOME/browsing
+cp -r $HOME/.claude/skills/headless-browser/browsing/. $HOME/browsing/
 chmod +x $HOME/browsing/chromium-headless.sh
 ```
 
-The copy out of the assets carries content and not permissions, which is what the
-`chmod` is for. The launcher's shebang is `/system/bin/sh`, which needs no
-userland on `PATH`. It puts the chromium profile beside itself, so the tree is
-relocatable and no channel id is written down anywhere.
+Running it again refreshes the shipped files in place and leaves `node_modules/`
+and `profile/` alone. The copy out of the assets carries content and not
+permissions, which is what the `chmod` is for. The launcher's shebang is
+`/system/bin/sh`, which needs no userland on `PATH`. It puts the chromium profile
+beside itself, so the tree is relocatable and no channel id is written down
+anywhere.
 
 ## 4. Playwright -- core only, no browser download
 
 Install `playwright-core`, never the full `playwright`. The full package tries to
-download its own Chromium build, which is compiled for **glibc** and will not run
-on this bionic device -- a wasted download that then fails to launch. We drive the
-**native** Chromium instead, over CDP, so the bundled browser is pointless. Skip
-the download explicitly:
+download its own Chromium build, which is compiled for **glibc** -- a wasted
+download of a browser this setup never starts. We drive the **native** Chromium
+instead, over CDP, so the bundled browser is pointless. Skip the download
+explicitly:
 
 ```sh
 cd $HOME/browsing

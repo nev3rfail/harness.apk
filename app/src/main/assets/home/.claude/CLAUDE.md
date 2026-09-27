@@ -75,7 +75,8 @@ toybox, so `git`, `grep`, `sed`, `awk` and the rest behave as you expect.
   what you merely might need.
 - **Every program starts through a loader.** Android refuses to execute a file in
   the app's data directory, so an exec router sends each one through
-  `/system/bin/linker64` or the musl loader. Static binaries cannot run here. The
+  `/system/bin/linker64`, the musl loader, or proot for static, glibc and
+  stock-Go programs. A proot start costs about a quarter of a second. The
   harness-userland skill has the details.
 - **`launcher.sh`, `agent.sh` and `shell.sh` in the home belong to the app.**
   `agent.sh` and `shell.sh` are rewritten on every start, and an edited copy is

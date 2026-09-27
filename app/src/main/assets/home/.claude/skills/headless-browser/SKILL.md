@@ -15,14 +15,15 @@ open in Firefox, that is `firefox-remote-debug`.
 
 ## Why it is built this way
 
-- Chromium comes from Termux's TUR (`tur-repo` + `x11-repo`); its command is
-  **`chromium-browser`**, not `chromium`. It is a bionic aarch64 build, so no
-  proot is involved.
+- Chromium comes from `x11-repo` on arm64 (138) and from TUR's `tur-repo` on
+  x86_64 (133); its command is **`chromium-browser`**, not `chromium`. It is a
+  bionic build, so it runs through `linker64` and no proot is involved.
 - There is no root and no user namespaces, so it only starts with
   `--no-sandbox --headless=new`.
-- Playwright's own bundled Chromium is a glibc build and will not run here. So
-  `playwright-core` is installed **without** its browser download and used only
-  to *drive* the native Chromium over CDP (`connectOverCDP`).
+- Playwright's own bundled Chromium is a glibc build, and its registry refuses
+  this platform anyway. So `playwright-core` is installed **without** its
+  browser download and used only to *drive* the native Chromium over CDP
+  (`connectOverCDP`).
 - Termux's Node reports `process.platform === "android"`, which playwright-core's
   registry refuses with `Unsupported platform`. The client spoofs it to `linux`
   before importing playwright. Keep that line first in any new script.
@@ -75,8 +76,9 @@ launch/registry side is off limits, which is why you connect instead of
 ## If Chromium is not installed
 
 If `chromium-browser` is missing or `$HOME/browsing` is empty, it has not been
-set up on this device yet. It is a one-time, ~300 MB install -- TUR + x11 repos,
-the native Chromium, Termux Node, the two shipped scripts, and `playwright-core`
+set up on this device yet. It is a one-time install of 84 packages, 791 MB
+installed -- TUR + x11 repos, the native Chromium, Termux Node, the two shipped
+scripts, and `playwright-core`
 **without** its bundled (glibc) browser. The full sequence, and why each piece is
 needed, is in [references/install.md](references/install.md). Ask the operator
 before pulling it, then follow that file.

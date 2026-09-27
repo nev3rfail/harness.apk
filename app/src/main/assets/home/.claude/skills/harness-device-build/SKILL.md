@@ -1,6 +1,6 @@
 ---
 name: harness-device-build
-description: Use when building or installing this app's APK on the device itself -- Gradle, AGP, aapt2, the Android SDK, the NDK, signing, or replacing an installed channel from inside the app sandbox.
+description: Use when building or installing this app's APK on the device itself -- Gradle, AGP, aapt2, the Android SDK, the NDK, zig, the renderer or the musl loader, signing, or replacing an installed channel from inside the app sandbox.
 ---
 
 # Building the APK on the device
@@ -79,24 +79,80 @@ A debug build takes the `dev.harness` id unless `-PharnessAppId` says otherwise,
 so the default target is the channel that is safe to break.
 
 `-PprebuiltNative=<dir>` skips every CMake target, the terminal library's
-included, and the loader build, and packages every `lib*.so` in `<dir>` as the
+included, and the loader and proot builds, and packages every `lib*.so` in `<dir>` as the
 ABI `-PprebuiltAbi` names (`arm64-v8a` when it is left out). `$HARNESS_TERMUX_EXEC`
 is the exec router in the running app's native library directory, so that
-directory holds the renderer, the loader, the router and the rest, already built
-for this device. Its path changes on every update: take it from the variable,
+directory holds the renderer, the loader, the router, proot and the rest, already
+built for this device. Its path changes on every update: take it from the variable,
 never type it.
 
 **Build against the channel that is not hosting your session.** A Gradle JVM at
 `-Xmx1536m` in the same sandbox as the agent is enough for Android to reclaim the
 app, and the session dies with it.
 
-## What cannot be built here
+## The renderer and the loader, built here
 
-The renderer, the musl loader and the CMake targets cannot be built on the
-device, so only a Kotlin or resource change builds here. Android runs no
-statically linked program from the app's data directory, and each of those builds
-needs one: Termux's `zig` package and the `termux-ndk` toolchain are static, and
-`termux.net` carries no `zig`. A change to native code is built on a desktop.
+Both builds need static programs, which the exec router runs under proot (the
+harness-userland skill has how):
+
+- **zig 0.16.0**, the version `android/renderer/build.zig.zon` asks for, as a
+  static Linux build. `termux.net` carries no `zig`; ziglang.org's
+  `zig-aarch64-linux-0.16.0.tar.xz` is one.
+- **The termux-ndk NDK**, `android-ndk-r29-aarch64.tar.xz` from
+  `lzhiyong/termux-ndk`, whose `clang-21` and `lld` are static. Unpacked to
+  `$HOME/android-sdk/ndk/29.0.14206865`, it reports the revision this project
+  pins.
+- `pkg install patchelf`.
+
+**The renderer:**
+
+```sh
+cd $HOME/harness.apk/vendor/ghostty-android
+ZIG=$HOME/zig-aarch64-linux-0.16.0/zig \
+ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/29.0.14206865 \
+ZIG_CACHE_ROOT=$HOME/.cache/ghostty-android \
+  bash scripts/build-android-nonix.sh arm64-v8a
+```
+
+Each `zig build` runs under a proot of its own, which binds `resolv.conf` and
+the certificates, so zig fetches its dependencies itself. The script writes a
+libc file naming the NDK's sysroot and targets `aarch64-linux-android.24`, which
+is what `zig cc` for Android needs. `ZIG_CACHE_ROOT` must be set: its default is
+`/tmp`. It holds the fetched dependencies, so keep it. A cold build takes about
+19 minutes, and the two libraries land in
+`android/terminal-library/src/main/jniLibs/arm64-v8a/`.
+
+**The loader,** under one proot for the whole build:
+
+```sh
+cd $HOME/harness.apk
+NDK=$HOME/android-sdk/ndk/29.0.14206865
+out=$PWD/build/loader/arm64-v8a
+proot --exec-bin "$PREFIX/bin" env \
+  CC="$NDK/toolchains/llvm/prebuilt/linux-aarch64/bin/clang --target=aarch64-linux-android21" \
+  bash scripts/stage-claude.sh --loader-only --abi arm64-v8a --out "$out"
+cp "$out"/ld-musl-aarch64.so.1 app/src/main/jniLibs/arm64-v8a/libmuslloader.so
+```
+
+About a minute, musl's own download included; with no outer proot, each compile
+starts one of its own and the build takes about half as long again.
+`--exec-bin` points `#!/bin/sh` in musl's `configure` at the userland's shell.
+The script's `verify_loader` gate is what says it worked. Use the NDK's clang,
+not `zig cc`, which is itself a musl toolchain and shadows musl's own `memcpy`.
+
+**Packaging them.** `-PprebuiltNative` takes every native library from one
+directory, so give it the running app's libraries with the rebuilt ones on top:
+
+```sh
+libs=$TMPDIR/native; rm -rf "$libs"; mkdir -p "$libs"
+cp "$(dirname "$HARNESS_TERMUX_EXEC")"/lib*.so "$libs"/
+cp vendor/ghostty-android/android/terminal-library/src/main/jniLibs/arm64-v8a/lib*.so \
+   app/src/main/jniLibs/arm64-v8a/libmuslloader.so "$libs"/
+./gradlew assembleDebug --no-daemon -PprebuiltNative="$libs" -PprebuiltAbi=arm64-v8a
+```
+
+The CMake targets -- the router, `librelocate` -- and proot are built on a
+desktop.
 
 ## Install
 
@@ -126,7 +182,8 @@ reboot.
 
 | Mistake | What is true |
 |---|---|
-| Fetching the NDK or `zig` to build native code | Both are static and cannot run here. Build with `-PprebuiltNative` |
+| Fetching Google's NDK to build native code | It is x86_64. The termux-ndk NDK is arm64 and runs under proot |
+| Wrapping the renderer build in `proot` yourself | A bare `proot` binds no `resolv.conf`, so zig cannot fetch. Run the script directly |
 | Typing the native library directory | It changes on every update. `dirname "$HARNESS_TERMUX_EXEC"` |
 | Hunting third-party `aapt2` prebuilts | Termux packages the arm64 build; install it and override the Maven one |
 | Unzipping Google's `build-tools_r*-linux.zip` | Those binaries are x86_64 and will not exec |
