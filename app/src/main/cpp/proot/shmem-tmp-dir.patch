@@ -2,9 +2,9 @@ libandroid-shmem: the key directory from PROOT_TMP_DIR.
 
 shmget publishes a keyed segment as a symlink in the directory PROOT_TMP_DIR
 names at run time. With that variable unset or empty, a keyed shmget fails
-with ENOENT, and a symlink(2) failure other than EEXIST fails it with that
-errno, where the call would otherwise retry forever. IPC_PRIVATE segments
-need no directory.
+with ENOENT. A symlink(2) failure other than EEXIST fails the call with that
+errno; EEXIST retries, reading the link another process published. An
+IPC_PRIVATE segment uses no directory.
 
 diff --git a/shmem.c b/shmem.c
 index f95fc07..4bb050b 100644

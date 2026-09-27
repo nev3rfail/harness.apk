@@ -2,11 +2,10 @@ P5. Page size.
 
 extract_load_info returns ENOEXEC for a PT_LOAD whose p_vaddr - p_offset is
 not a multiple of the kernel page size, and for two consecutive PT_LOADs
-that share a kernel page with different flags. A program linked for 4 KB
-pages fails its exec on a 16 KB kernel instead of being mapped wrongly.
+that share a kernel page with different flags.
 
 diff --git a/src/execve/enter.c b/src/execve/enter.c
-index edb3a27..979a3a3 100644
+index 4656bc7..c4bac70 100644
 --- a/src/execve/enter.c
 +++ b/src/execve/enter.c
 @@ -227,8 +227,57 @@ struct add_load_info_data {

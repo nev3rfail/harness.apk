@@ -3,7 +3,8 @@ P2. --exec-bin DIR.
 /bin/x and /usr/bin/x become DIR/x when that file exists, for the program
 proot starts, every program a tracee executes, and the interpreter of a
 script. Nothing is bound over /bin or /usr/bin, so a program keeps the path
-it was run from. The option has no effect when the guest rootfs is not /.
+it was run from. DIR is absolute. The option applies only when the guest
+rootfs is /.
 
 diff --git a/src/cli/cli.c b/src/cli/cli.c
 index 9434854..efad6f2 100644
@@ -38,7 +39,7 @@ index 9434854..efad6f2 100644
  		return -1;
  
 diff --git a/src/cli/proot.c b/src/cli/proot.c
-index 29365e8..7ce26bf 100644
+index 29365e8..8d06eea 100644
 --- a/src/cli/proot.c
 +++ b/src/cli/proot.c
 @@ -27,6 +27,7 @@
@@ -49,12 +50,18 @@ index 29365e8..7ce26bf 100644
  #include "extension/extension.h"
  #include "extension/sysvipc/sysvipc.h"
  #include "path/binding.h"
-@@ -198,6 +199,12 @@ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli UNUSED, con
+@@ -198,6 +199,18 @@ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli UNUSED, con
  	return 0;
  }
  
-+static int handle_option_exec_bin(Tracee *tracee UNUSED, const Cli *cli UNUSED, const char *value)
++static int handle_option_exec_bin(Tracee *tracee, const Cli *cli UNUSED, const char *value)
 +{
++	/* A tracee resolves a relative path against its own cwd.  */
++	if (value[0] != '/') {
++		note(tracee, ERROR, USER, "option `--exec-bin` expects an absolute path.");
++		return -1;
++	}
++
 +	exec_bin = value;
 +	return 0;
 +}
@@ -92,7 +99,7 @@ index 3f61931..ba7688f 100644
  	{ .class = "Regular options",
  	  .arguments = {
 diff --git a/src/execve/shebang.c b/src/execve/shebang.c
-index 83ceeda..9f5a82c 100644
+index 83ceeda..46562bd 100644
 --- a/src/execve/shebang.c
 +++ b/src/execve/shebang.c
 @@ -30,10 +30,14 @@
@@ -153,15 +160,15 @@ index 83ceeda..9f5a82c 100644
  /**
   * Expand in argv[] the shebang of @user_path, if any.  This function
   * returns -errno if an error occurred, 1 if a shebang was found and
-@@ -231,6 +271,8 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
+@@ -228,6 +268,8 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
+ 	 *      ELF interpreter; ie. a script can use a script as
+ 	 *      interpreter.
+ 	 */
++	rewrite_exec_bin(tracee, user_path);
++
  	for (i = 0; i < MAXSYMLINKS; i++) {
  		char *old_user_path;
  
-+		rewrite_exec_bin(tracee, user_path);
-+
- 		/* Translate this path (user -> host), then check it is executable.  */
- 		status = translate_and_check_exec(tracee, host_path, user_path);
- 		if (status < 0)
 @@ -251,6 +293,8 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
  			break;
  		has_shebang = true;

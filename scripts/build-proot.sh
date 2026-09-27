@@ -50,7 +50,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PATCHES=$ROOT/app/src/main/cpp/proot
 DL=$ROOT/build/proot/dl
 # Extracted and built on a local filesystem. Under WSL the repository lives on
-# a 9p mount where thousands of small files are punishingly slow.
+# a 9p mount, where thousands of small files are slow to write.
 CACHE=${PROOT_CACHE:-${TMPDIR:-/tmp}/harness-proot}
 
 info() { printf '\033[36m==\033[0m %s\n' "$*"; }
@@ -104,11 +104,13 @@ case ${1:-} in
   --check-termux)
     for arch in aarch64 x86_64; do
       # Read whole before awk stops early, which would fail curl's write.
-      packages=$(curl -fsSL "https://termux.net/dists/stable/main/binary-$arch/Packages")
+      packages=$(curl -fsSL --retry 3 "https://termux.net/dists/stable/main/binary-$arch/Packages")
       version=$(awk '$0 == "Package: proot" { p = 1 } p && /^Version:/ { print $2; exit }' \
         <<<"$packages")
-      # A Debian revision after the dash is Termux's own rebuild of that tag.
-      if [ "v${version%%-*}" != "$PROOT_TAG" ]; then
+      # An epoch before the colon and a revision after the dash are Termux's
+      # own numbering around that tag.
+      upstream=${version#*:}
+      if [ "v${upstream%%-*}" != "$PROOT_TAG" ]; then
         echo "termux.net ships proot '$version' for $arch; the packaged proot is $PROOT_TAG" >&2
         exit 1
       fi
@@ -139,7 +141,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$HOST_OUT" ] || [ ${#ABIS[@]} -gt 0 ] || ABIS=(arm64-v8a x86_64)
 
-for tool in curl make patch python3 unzip readelf; do
+for tool in curl make patch unzip readelf; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
 done
 
@@ -174,57 +176,17 @@ find_ndk() {
 }
 
 # --- talloc ---
-# build_talloc WORK CC AR [cross]: WORK/lib/libtalloc.so, whose soname is
-# libproot-talloc.so, and WORK/talloc/talloc.h. talloc's own configure writes
-# config.h; the library is linked here so it carries that soname and the page
-# size. It is made of the three files talloc's build links into it.
+# build_talloc WORK CC: WORK/lib/libtalloc.so, whose soname is
+# libproot-talloc.so, and WORK/talloc/talloc.h. talloc.c is the whole library;
+# app/src/main/cpp/proot/talloc/config.h is its configuration.
 build_talloc() {
-  local work=$1 cc=$2 ar=$3 cross=${4:-} src=$1/talloc
+  local work=$1 cc=$2 src=$1/talloc
   rm -rf "$src"
   mkdir -p "$src" "$work/lib"
   tar -xzf "$DL/talloc-$TALLOC_VERSION.tar.gz" -C "$src" --strip-components=1
-  local args=(--disable-rpath --disable-python)
-  if [ -n "$cross" ]; then
-    # The answers termux-packages' libtalloc recipe gives.
-    cat > "$src/cross-answers.txt" <<'EOF'
-Checking uname sysname type: "Linux"
-Checking uname machine type: "dontcare"
-Checking uname release type: "dontcare"
-Checking uname version type: "dontcare"
-Checking simple C program: OK
-building library support: OK
-Checking for large file support: OK
-Checking for -D_FILE_OFFSET_BITS=64: OK
-Checking for WORDS_BIGENDIAN: OK
-Checking for C99 vsnprintf: OK
-Checking for HAVE_SECURE_MKSTEMP: OK
-rpath library support: OK
--Wl,--version-script support: FAIL
-Checking correct behavior of strtoll: OK
-Checking correct behavior of strptime: OK
-Checking for HAVE_IFACE_GETIFADDRS: OK
-Checking for HAVE_IFACE_IFCONF: OK
-Checking for HAVE_IFACE_IFREQ: OK
-Checking getconf LFS_CFLAGS: OK
-Checking for large file support without additional flags: OK
-Checking for working strptime: OK
-Checking for HAVE_SHARED_MMAP: OK
-Checking for HAVE_MREMAP: OK
-Checking for HAVE_INCOHERENT_MMAP: OK
-Checking getconf large file support flags work: OK
-EOF
-    args+=(--cross-compile --cross-answers=cross-answers.txt)
-  fi
-  (cd "$src" && CC=$cc AR=$ar ./configure "${args[@]}" >configure.log 2>&1) \
-    || { echo "talloc configure failed; see $src/configure.log" >&2; exit 1; }
-
-  local flags=(-O2 -fPIC -fvisibility=hidden -D_GNU_SOURCE=1 -D_XOPEN_SOURCE_EXTENDED=1
-               -D__STDC_WANT_LIB_EXT1__=1
-               -I"$src/bin/default" -I"$src/lib/replace" -I"$src")
-  $cc "${flags[@]}" -D_PUBLIC_=_PRIVATE_ -c "$src/lib/replace/replace.c" -o "$src/replace.o"
-  $cc "${flags[@]}" -D_PUBLIC_=_PRIVATE_ -c "$src/lib/replace/closefrom.c" -o "$src/closefrom.o"
-  $cc "${flags[@]}" -c "$src/talloc.c" -o "$src/talloc.o"
-  $cc -shared -o "$work/lib/libtalloc.so" "$src/talloc.o" "$src/replace.o" "$src/closefrom.o" \
+  $cc -O2 -fPIC -fvisibility=hidden -shared \
+    -I"$PATCHES/talloc" -I"$src/lib/replace" -I"$src" "$src/talloc.c" \
+    -o "$work/lib/libtalloc.so" \
     -Wl,-soname,libproot-talloc.so -Wl,-z,max-page-size=16384 -Wl,--no-undefined
 }
 
@@ -319,7 +281,7 @@ if [ -n "$HOST_OUT" ]; then
 #define ASHMEM_SET_SIZE _IOW(0x77, 3, size_t)
 #define ASHMEM_GET_SIZE _IO(0x77, 4)
 EOF
-  build_talloc "$work" "$cc" "${AR:-ar}"
+  build_talloc "$work" "$cc"
   build_proot "$work" "$cc" "$(dirname "$(command -v objcopy)")"
   stage "$work" "$HOST_OUT" strip
   verify "$HOST_OUT" readelf
@@ -342,7 +304,7 @@ for abi in "${ABIS[@]}"; do
   mkdir -p "$bin"
   for t in objcopy objdump strip; do ln -sf "$TOOLCHAIN/bin/llvm-$t" "$bin/$t"; done
   cc=$TOOLCHAIN/bin/$triple$API-clang
-  build_talloc "$work" "$cc" "$TOOLCHAIN/bin/llvm-ar" cross
+  build_talloc "$work" "$cc"
   build_shmem "$work" "$cc" "$TOOLCHAIN/bin/llvm-ar"
   build_proot "$work" "$cc" "$bin" android
 

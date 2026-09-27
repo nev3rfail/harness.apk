@@ -28,7 +28,8 @@ done
 # the log call prints nothing, and the ashmem requests are never reached.
 # Bionic declares open(2) and ioctl(2) through headers glibc keeps apart.
 mkdir -p "$w/shmem/include/android" "$w/shmem/include/linux" "$w/tmp"
-tar -xzf "$root/build/proot/dl/libandroid-shmem-0.7.tar.gz" -C "$w/shmem" --strip-components=1
+shmem_version=$(sed -n 's/^SHMEM_VERSION=//p' "$root/scripts/build-proot.sh")
+tar -xzf "$root/build/proot/dl/libandroid-shmem-$shmem_version.tar.gz" -C "$w/shmem" --strip-components=1
 patch -d "$w/shmem" -p1 --fuzz=0 --quiet < "$here/../shmem-tmp-dir.patch"
 printf '#define ANDROID_LOG_INFO 4\n#define __android_log_print(...) 0\n' \
   > "$w/shmem/include/android/log.h"
@@ -75,6 +76,8 @@ check "--exec-bin, a shebang" "tag=xbin exe=$w/xbin/hx-probe [$w/xbin/hx-probe] 
   "$(run "$P" --exec-bin "$w/xbin" "$w/probe" exec "$w/script" script)"
 check "--exec-bin, a file DIR lacks" "from-bin rc=0" \
   "$(run "$P" --exec-bin "$w/xbin" "$w/probe" exec /bin/sh sh -c 'echo from-bin')"
+check "--exec-bin, a relative DIR" "expects an absolute path" \
+  "$(cd "$w" && run "$P" --exec-bin xbin /usr/bin/hx-probe)"
 check "no --exec-bin" "ENOENT rc=1" \
   "$(run "$P" "$w/probe" exec /bin/hx-probe hx-probe)"
 check "--exec-bin under -r, the command" "tag=guest exe=/bin/hx-probe" \
@@ -88,8 +91,7 @@ check "PT_LOADs sharing a page with equal flags" "rc=0" "$(run "$P" "$w/probe" e
 check "PT_LOAD off the page size" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/misaligned")"
 check "PT_LOADs sharing a page with other flags" "ENOEXEC rc=1" "$(run "$P" "$w/probe" exec "$w/shared")"
 
-# libandroid-shmem's key directory. timeout catches the retry loop the patch
-# removes.
+# libandroid-shmem's key directory. timeout bounds each call.
 check "shmem key, PROOT_TMP_DIR unset" "ret=-1 errno=ENOENT rc=0" \
   "$(run env -u PROOT_TMP_DIR timeout 10 "$w/shm-key")"
 check "shmem key, PROOT_TMP_DIR missing" "ret=-1 errno=ENOENT rc=0" \

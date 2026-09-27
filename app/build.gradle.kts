@@ -180,7 +180,7 @@ tasks.register<Exec>("buildMuslLoader") {
     inputs.file(rootProject.file("scripts/stage-claude.sh"))
     // The router and the musl patch are compiled into the loader.
     inputs.dir("src/main/cpp/harness-exec")
-    outputs.dir("src/main/jniLibs")
+    for (abi in listOf("arm64-v8a", "x86_64")) outputs.file("src/main/jniLibs/$abi/libmuslloader.so")
 
     val script = "scripts/build-loaders.sh"
     commandLine(
@@ -201,7 +201,7 @@ tasks.register<Exec>("buildProot") {
 
     workingDir = rootProject.projectDir
     inputs.file(rootProject.file("scripts/build-proot.sh"))
-    inputs.dir("src/main/cpp/proot")
+    inputs.files(fileTree("src/main/cpp/proot") { exclude("tests/**") })
     for (abi in listOf("arm64-v8a", "x86_64")) {
         for (name in listOf("libproot.so", "libproot-talloc.so", "libproot-loader.so")) {
             outputs.file("src/main/jniLibs/$abi/$name")
@@ -218,18 +218,29 @@ tasks.register<Exec>("buildProot") {
     )
 }
 
-// The address of this version's proot source, the release asset build-proot.sh
-// --source makes, beside the licence texts in assets/notices/proot.
+// The address of this build's proot source, beside the licence texts in
+// assets/notices/proot. A build given -PversionName is a release, and its
+// source is the release asset build-proot.sh --source makes. Any other build
+// names the commit it was built from, whose tree holds the same inputs.
+val prootSourceUrl = if (findProperty("versionName") != null) {
+    providers.provider {
+        "https://github.com/nev3rfail/harness.apk/releases/download/" +
+            "v$harnessVersionName/proot-source.tar.gz"
+    }
+} else {
+    providers.exec {
+        commandLine("git", "rev-parse", "HEAD")
+        workingDir = rootProject.projectDir
+    }.standardOutput.asText.map { "https://github.com/nev3rfail/harness.apk/tree/${it.trim()}" }
+}
 val writeProotSource = tasks.register("writeProotSource") {
     description = "Write the address of proot's corresponding source into the notices"
     val out = generatedNotices.resolve("notices/proot/SOURCE")
-    val url = "https://github.com/nev3rfail/harness.apk/releases/download/" +
-        "v$harnessVersionName/proot-source.tar.gz"
-    inputs.property("url", url)
+    inputs.property("url", prootSourceUrl)
     outputs.file(out)
     doLast {
         out.parentFile.mkdirs()
-        out.writeText("$url\n")
+        out.writeText("${prootSourceUrl.get()}\n")
     }
 }
 
