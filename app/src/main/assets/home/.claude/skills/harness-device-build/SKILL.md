@@ -154,6 +154,7 @@ out=$PWD/build/loader/arm64-v8a
 proot --exec-bin "$PREFIX/bin" env \
   CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-linux-android21" \
   bash scripts/stage-claude.sh --loader-only --abi arm64-v8a --out "$out"
+mkdir -p app/src/main/jniLibs/arm64-v8a
 cp "$out"/ld-musl-aarch64.so.1 app/src/main/jniLibs/arm64-v8a/libmuslloader.so
 ```
 
