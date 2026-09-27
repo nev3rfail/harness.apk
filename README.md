@@ -64,7 +64,10 @@ flowchart TB
 
 MIT, in [LICENSE](LICENSE). Vendored components keep their own: the terminal
 under `vendor/ghostty-android` is MIT as well, the exec router under
-`app/src/main/cpp/harness-exec` is Apache-2.0, and the Termux bootstrap the app
+`app/src/main/cpp/harness-exec` is Apache-2.0, proot and its loader are
+GPL-2.0-or-later with libandroid-shmem (BSD-3-Clause) compiled in, and its talloc
+is LGPL-3.0-or-later, as `app/src/main/cpp/proot/NOTICE` details; each release
+carries their source as `proot-source.tar.gz`. The Termux bootstrap the app
 downloads at runtime carries the licences of the packages in it.
 
 ## Roadmap

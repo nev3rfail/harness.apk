@@ -1,0 +1,28 @@
+proot
+
+libproot.so and libproot-loader.so are built from PRoot as termux/proot
+publishes it, tag v5.1.107.80 (https://github.com/termux/proot), licensed under
+the GNU General Public License, version 2 or later (COPYING.proot). The build
+applies include-string.patch from termux-play-store/termux-packages, commit
+57401119f9988f79fa095398a9b33b03380222b3, which that repository licenses under
+proot's own license (COPYING.termux-packages), and then the patches in this
+directory in the order `series` lists. Those patches are modifications of
+PRoot under the same license:
+
+- P1-loader.patch: the loader is the file beside proot, found through dladdr;
+- P2-exec-bin.patch: the --exec-bin option;
+- P5-page-size.patch: ENOEXEC for a program the kernel's page size cannot map.
+
+libproot.so includes libandroid-shmem 0.7
+(https://github.com/termux/libandroid-shmem), licensed under the BSD 3-Clause
+license (COPYING.libandroid-shmem).
+
+libproot-talloc.so is talloc 2.4.3 (https://talloc.samba.org), licensed under
+the GNU Lesser General Public License, version 3 or later (COPYING.talloc, which
+incorporates COPYING.GPL-3.0). It is a separate library that libproot.so links
+dynamically by its soname, and a rebuilt libproot-talloc.so replaces it; BUILD.md
+gives the steps.
+
+The corresponding source of these files is the asset proot-source.tar.gz of the
+app's release that carries them. The rest of the APK is a separate work
+aggregated with them.

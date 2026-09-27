@@ -66,18 +66,26 @@ jobs:
       - name: Build the musl loaders
         run: scripts/build-loaders.sh
 
+      - name: Build proot
+        run: scripts/build-proot.sh
+
+      # The packaged proot follows termux.net's, so a proot-distro built for
+      # that version finds the options it passes.
+      - name: The packaged proot is termux.net's version
+        run: scripts/build-proot.sh --check-termux
+
       - name: Assemble and test
         run: |
           set -euo pipefail
           ./gradlew :app:assembleRelease :app:testDebugUnitTest \
-              -PskipNativeBuild=true -PskipLoaderBuild=true
+              -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true
 
       # The Play channel ships as a bundle, so the bundle is what gets built.
       - name: Bundle the Play channel
         run: |
           set -euo pipefail
           ./gradlew :app:bundlePlay \
-              -PskipNativeBuild=true -PskipLoaderBuild=true
+              -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true
 
       # Play refuses a native library with a LOAD segment aligned below 16 KB.
       - name: Every native library is 16 KB aligned

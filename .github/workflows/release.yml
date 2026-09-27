@@ -173,8 +173,17 @@ jobs:
       - name: Build the musl loaders
         run: scripts/build-loaders.sh
 
-      # This job runs the whole Gradle graph, two Zig cross-compiles and
-      # build-loaders.sh, and holds no secret.
+      - name: Build proot
+        run: scripts/build-proot.sh
+
+      # The APK carries GPL and LGPL programs, so their corresponding source
+      # travels with it as a release asset: the pinned tarballs, every patch,
+      # the build script and the NDK revision.
+      - name: Collect proot's corresponding source
+        run: scripts/build-proot.sh --source proot-source.tar.gz
+
+      # This job runs the whole Gradle graph, two Zig cross-compiles,
+      # build-loaders.sh and build-proot.sh, and holds no secret.
       - name: Assemble the unsigned release
         env:
           VERSION_NAME: ${{ needs.guard.outputs.name }}
@@ -182,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew :app:assembleRelease :app:testDebugUnitTest \
-              -PskipNativeBuild=true -PskipLoaderBuild=true \
+              -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true \
               -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
 
       # Play refuses a native library with a LOAD segment aligned below 16 KB.
@@ -195,6 +204,12 @@ jobs:
         with:
           name: app-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: proot-source
+          path: proot-source.tar.gz
           if-no-files-found: error
 
   # The app falls back to this repository's copy of the pinned bootstrap
@@ -282,6 +297,10 @@ jobs:
         with:
           name: app-release-unsigned
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: proot-source
+
       # zipalign and apksigner produce the artifact that ships, so the revision
       # they come from is pinned rather than whatever the image happens to hold.
       - name: Install the build tools
@@ -358,5 +377,8 @@ jobs:
         with:
           tag_name: ${{ needs.guard.outputs.tag }}
           body_path: ${{ runner.temp }}/body.md
-          files: harness.apk
+          # A release asset stays as long as the release does.
+          files: |
+            harness.apk
+            proot-source.tar.gz
           fail_on_unmatched_files: true

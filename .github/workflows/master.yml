@@ -39,9 +39,14 @@ jobs:
           echo y | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
               "ndk;29.0.14206865" "cmake;3.22.1"
 
-      # Unit tests run on the JVM, so neither the renderer nor the loader is built.
+      # The packaged proot follows termux.net's, so a proot-distro built for
+      # that version finds the options it passes.
+      - name: The packaged proot is termux.net's version
+        run: scripts/build-proot.sh --check-termux
+
+      # Unit tests run on the JVM, so no native code is built.
       - name: Unit tests
         run: |
           set -euo pipefail
           ./gradlew :app:testDebugUnitTest \
-              -PskipNativeBuild=true -PskipLoaderBuild=true
+              -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true
