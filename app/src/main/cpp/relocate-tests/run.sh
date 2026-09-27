@@ -136,6 +136,28 @@ ok "md5sums: entry for a TLS change rewritten" \
 ok "md5sums: other entries kept" \
   '[ "$(tail -1 "$m/info/p.md5sums")" = "0123456789abcdef0123456789abcdef  other/file" ]'
 
+# An entry that still names the file by its Termux path, as the bootstrap's do.
+m=$W/md5-termux
+mkdir -p "$m/usr/bin" "$m/info"
+cp "$W/tls" "$m/usr/bin/tls"
+old=$(md5sum < "$m/usr/bin/tls" | cut -c1-32)
+printf '%s  %s\n' "$old" "${TF#/}/usr/bin/tls" > "$m/info/p.md5sums"
+"$R" --tls --md5sums "$m/info" "$m/usr" "$TF" "$(realpath "$m")" > /dev/null
+ok "md5sums: an entry under the Termux path rewritten" \
+  '[ "$(cat "$m/info/p.md5sums")" = "$(md5sum < "$m/usr/bin/tls" | cut -c1-32)  ${TF#/}/usr/bin/tls" ]'
+
+# A run that realigned a file and failed before its md5sums rewrite is
+# completed by the next.
+m=$W/md5-rerun
+mkdir -p "$m/usr/bin" "$m/info"
+cp "$W/tls" "$m/usr/bin/tls"
+key=$(realpath "$m/usr/bin/tls" | cut -c2-)
+printf '%s  %s\n' "$(md5sum < "$m/usr/bin/tls" | cut -c1-32)" "$key" > "$m/info/p.md5sums"
+"$R" --tls --md5sums "$W/missing" "$m/usr" > /dev/null 2>&1
+"$R" --tls --md5sums "$m/info" "$m/usr" > /dev/null
+ok "md5sums: rewritten by the run after a failed one" \
+  '[ "$(cat "$m/info/p.md5sums")" = "$(md5sum < "$m/usr/bin/tls" | cut -c1-32)  $key" ]'
+
 # --- librelocate: stamp ----------------------------------------------------
 
 t=$W/stamped
@@ -152,6 +174,19 @@ rm "$W/stamp"
 cp "$W/tls" "$t/exe"
 "$R" --stamp "$W/stamp" v1 --tls --md5sums "$W/missing" "$t" > /dev/null 2>&1
 ok "stamp: a failed run writes none" '[ $? -eq 1 ] && [ ! -e "$W/stamp" ]'
+
+# An entry the pass cannot read is logged and passed over, so it does not hold
+# the stamp back at every start.
+t=$W/unreadable
+mkdir -p "$t/closed" "$t/open"
+ln -s "$TF/a" "$t/open/l"
+cp "$W/tls" "$t/noread" && chmod 000 "$t/noread"
+chmod 000 "$t/closed"
+"$R" --stamp "$W/stamp2" v1 --links --tls "$t" $PAIRS > /dev/null 2> "$W/err"
+ok "unreadable: skipped, the rest done, stamp written" \
+  '[ $? -eq 0 ] && [ "$(readlink "$t/open/l")" = "$N/root/a" ] && [ "$(cat "$W/stamp2")" = v1 ]'
+ok "unreadable: each one logged" 'grep -q closed "$W/err" && grep -q noread "$W/err"'
+chmod 755 "$t/closed"
 
 # --- librelocate: locks and usage ------------------------------------------
 

@@ -121,12 +121,23 @@ class Bootstrap(private val context: Context) {
         // some ninety megabytes with nothing in them to rewrite.
         onProgress(BootstrapProgress.Relocating(1, 1))
         val (status, output) = runRelocator(
-            listOf("--content", "--links", "--tls", rootfs.absolutePath) + pairArguments(pairs)
+            listOf(
+                "--content", "--links", "--tls",
+                "--md5sums", File(prefix, DPKG_INFO).path,
+                rootfs.absolutePath,
+            ) + pairArguments(pairs)
         )
         // A non-zero status is a file the relocator could not rewrite, which is a
         // half-moved tree. Reported rather than installed.
         check(status == 0) { "relocate exited $status: $output" }
         rewriteManifests(File(prefix, DPKG_INFO), context.packageName)
+        // This relocation covers what [correctOnce] does, so its stamp is written
+        // here. Written by Kotlin rather than passed as `--stamp`, which would
+        // skip the relocation of a tree extracted again over a stamped one.
+        File(prefix, STAMP_PATH).let {
+            it.parentFile?.mkdirs()
+            writeReplacing(it, "$CORRECTION_VERSION\n")
+        }
 
         onProgress(BootstrapProgress.Configuring)
         configure()
@@ -167,7 +178,7 @@ class Bootstrap(private val context: Context) {
      * Brings an installed userland up to what this build expects, once per
      * process: the files [configure] writes, then the one-time correction.
      */
-    suspend fun start() = withContext(Dispatchers.IO) {
+    suspend fun start(): Unit = withContext(Dispatchers.IO) {
         if (!hasUserland() || !started.compareAndSet(false, true)) return@withContext
         try {
             configure()
@@ -216,17 +227,19 @@ class Bootstrap(private val context: Context) {
         // Absolute, which apt executes as written rather than resolving under
         // `Dir` the way it would a bare name.
         val confd = File(prefix, "etc/apt/apt.conf.d").apply { mkdirs() }
-        File(confd, "99-repack").writeText("Dir::Bin::dpkg \"${shim.absolutePath}\";\n")
+        // Replaced through a rename, since an apt in an open session may read them.
+        writeReplacing(File(confd, "99-repack"), "Dir::Bin::dpkg \"${shim.absolutePath}\";\n")
         // The cache is in the data directory, so an installed archive is removed
         // rather than kept.
-        File(confd, "99-cache").writeText("APT::Keep-Downloaded-Packages \"false\";\n")
+        writeReplacing(File(confd, "99-cache"), "APT::Keep-Downloaded-Packages \"false\";\n")
 
         removeProotLeftovers(File(prefix, "tmp"))
     }
 
     /**
-     * Corrects a userland installed by an earlier build: the symlink targets
-     * that still name `com.termux` and the x86_64 TLS alignment. The relocator
+     * Corrects a userland whose stamp does not hold [CORRECTION_VERSION]: the
+     * symlink targets that name `com.termux`, the x86_64 TLS alignment, and the
+     * `md5sums` entries of the files that pass selects. The relocator
      * takes the lock `repack-deb` takes and checks the stamp again under it, and
      * gives up with [LOCK_BUSY] while an `apt` in another tab holds it, so the
      * pass runs again at the next start.
@@ -236,7 +249,7 @@ class Bootstrap(private val context: Context) {
         if (stamp.isFile && stamp.readText().trim() == CORRECTION_VERSION) return
         stamp.parentFile?.mkdirs()
 
-        // Work directories of the shim, from when it worked in the cache directory.
+        // Work directories a shim left in the cache directory.
         agent.tmp.listFiles()?.filter { it.name.startsWith("repack-deb.") }?.forEach(::removeTree)
 
         val started = System.nanoTime()
@@ -292,9 +305,16 @@ class Bootstrap(private val context: Context) {
     private fun replaceLink(link: File, target: String) {
         if (runCatching { Os.readlink(link.path) }.getOrNull() == target) return
         val staged = File(link.parentFile, "${link.name}.tmp")
-        staged.delete()
+        removeTree(staged)
         Os.symlink(target, staged.path)
         Os.rename(staged.path, link.path)
+    }
+
+    /** Writes [text] to [file] through a temporary file renamed over it. */
+    private fun writeReplacing(file: File, text: String) {
+        val staged = File(file.parentFile, "${file.name}.tmp")
+        staged.writeText(text)
+        Os.rename(staged.path, file.path)
     }
 
     /**
@@ -303,8 +323,8 @@ class Bootstrap(private val context: Context) {
      *
      * `Os.symlink` because `java.io` cannot make a link. Whether one is already
      * there is read with `lstat`, since `exists` follows a link and answers about
-     * its target -- which for a link made on an earlier run is the app home, and
-     * would report a directory rather than the link.
+     * its target -- which for a link already in place is the app home, and would
+     * report a directory rather than the link.
      */
     private fun stageRootfsHome(link: File, home: File) {
         val mode = runCatching { Os.lstat(link.path).st_mode }.getOrNull()
@@ -352,8 +372,7 @@ class Bootstrap(private val context: Context) {
         // What the relocator exits with when the lock stays busy for 30 s.
         const val LOCK_BUSY = 75
 
-        // Raised when the correction changes, so a userland stamped with an
-        // earlier one is corrected again.
+        // A userland whose stamp holds any other value is corrected at start.
         const val STAMP_PATH = "var/lib/harness/corrected"
         const val CORRECTION_VERSION = "1"
 
@@ -419,8 +438,8 @@ enum class HomeAction { LINK, REPLACE, KEEP, REPORT }
  *
  * The archive carries no `home` entry, which is why this has to be made at all, so
  * a first install answers [LINK]. [REPLACE] is for a repeat: `installUserland` runs
- * again whenever the prefix has no executable `bash`, and an earlier build left a
- * directory here. A directory holding anything answers [REPORT] instead -- its
+ * again whenever the prefix has no executable `bash`, and finds an empty directory
+ * here. A directory holding anything answers [REPORT] instead -- its
  * contents were written by a binary reading the stamped-in path, and where they
  * belong is not a choice staging can make on its own.
  */

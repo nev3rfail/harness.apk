@@ -20,8 +20,13 @@
 // the thread pointer at an offset rounded to that alignment, so the program reads
 // zeroed memory where its initial TLS belongs. bionic on arm64 requires 64.
 //
-// --md5sums rewrites the entries in <dir>/*.md5sums for the files --tls changed.
-// An entry names a file by its absolute path without the leading slash.
+// --md5sums rewrites the entries in <dir>/*.md5sums for the x86_64 files --tls
+// selects, realigned in this run or an earlier one, so a run that stopped before
+// this step is completed by the next. An entry names a file by its path without
+// the leading slash, either as it is or under an <old> the pairs map to it.
+//
+// An entry the walk cannot read, or one that is gone by the time it is reached,
+// is logged and passed over rather than counted as a failure.
 //
 // --lock takes flock(2) on <file>, polling for 30 s before it gives up with
 // status 75. --stamp skips the run when <file> holds <version>, and writes
@@ -59,11 +64,23 @@ struct pair {
 
 static struct pair pairs[MAX_PAIRS];
 static int npairs;
-static int do_content, do_links, do_tls;
-static long touched, hits, links, realigned, failed;
+static int do_content, do_links, do_tls, do_md5sums;
+static long touched, hits, links, realigned, skipped, failed;
 
-// The files --tls changed, by the name their md5sums entries use, with the new
-// checksum of each.
+// Counts an entry that could not be opened: a skip when it is unreadable or
+// gone, a failure otherwise.
+static void unopened(const char *path) {
+    if (errno == EACCES || errno == ENOENT) {
+        fprintf(stderr, "%s: %s, skipped\n", path, strerror(errno));
+        skipped++;
+    } else {
+        fprintf(stderr, "%s: %s\n", path, strerror(errno));
+        failed++;
+    }
+}
+
+// The files --tls selected, by their real path without the leading slash, with
+// the checksum of each.
 struct changed { char *key; char md5[33]; };
 static struct changed *changes;
 static size_t nchanges;
@@ -292,7 +309,7 @@ fail:
 static void tls_file(const char *path, const struct stat *st) {
     if (st->st_size < (off_t)sizeof(Elf64_Ehdr)) return;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) { failed++; return; }
+    if (fd < 0) { unopened(path); return; }
     Elf64_Ehdr eh;
     Elf64_Phdr *ph = NULL;
     Elf64_Shdr *sh = NULL;
@@ -324,14 +341,16 @@ static void tls_file(const char *path, const struct stat *st) {
     Elf64_Xword align = 0;
     for (int i = 0; i < eh.e_shnum; i++)
         if ((sh[i].sh_flags & SHF_TLS) && sh[i].sh_addralign > align) align = sh[i].sh_addralign;
-    if (align == 0 || ph[tls].p_align <= align) goto done;
+    if (align == 0) goto done;
 
-    Elf64_Phdr fixed = ph[tls];
-    fixed.p_align = align;
-    off_t at = (off_t)(eh.e_phoff + (Elf64_Off)tls * sizeof *ph);
-    if (replace_phdr(path, fd, st, &fixed, at) != 0) { failed++; goto done; }
-    realigned++;
-    record_change(path);
+    if (ph[tls].p_align > align) {
+        Elf64_Phdr fixed = ph[tls];
+        fixed.p_align = align;
+        off_t at = (off_t)(eh.e_phoff + (Elf64_Off)tls * sizeof *ph);
+        if (replace_phdr(path, fd, st, &fixed, at) != 0) { failed++; goto done; }
+        realigned++;
+    }
+    if (do_md5sums) record_change(path);
 done:
     free(ph);
     free(sh);
@@ -340,10 +359,26 @@ done:
 
 // ---- md5sums --------------------------------------------------------------
 
+// True when the entry [name] names [key], as it is or under the first <old> it
+// starts with on a component boundary.
+static int names(const char *key, const char *name, size_t len) {
+    size_t key_len = strlen(key);
+    if (key_len == len && memcmp(key, name, len) == 0) return 1;
+    for (int p = 0; p < npairs; p++) {
+        if (pairs[p].old[0] != '/' || pairs[p].new[0] != '/') continue;
+        const char *old = pairs[p].old + 1, *new = pairs[p].new + 1;
+        size_t old_len = pairs[p].old_len - 1, new_len = pairs[p].new_len - 1;
+        if (len < old_len || memcmp(name, old, old_len) != 0) continue;
+        if (len > old_len && name[old_len] != '/') continue;
+        return key_len == new_len + len - old_len && memcmp(key, new, new_len) == 0 &&
+               memcmp(key + new_len, name + old_len, len - old_len) == 0;
+    }
+    return 0;
+}
+
 static const struct changed *changed_entry(const char *name, size_t len) {
     for (size_t i = 0; i < nchanges; i++)
-        if (strlen(changes[i].key) == len && memcmp(changes[i].key, name, len) == 0)
-            return &changes[i];
+        if (names(changes[i].key, name, len)) return &changes[i];
     return NULL;
 }
 
@@ -370,7 +405,10 @@ static void md5sums_file(const char *path) {
         // "<32 hex digits>  <path>"
         if (len > 34 && buf[line + 32] == ' ' && buf[line + 33] == ' ') {
             const struct changed *c = changed_entry(buf + line + 34, len - 34);
-            if (c != NULL) { memcpy(buf + line, c->md5, 32); edited = 1; }
+            if (c != NULL && memcmp(buf + line, c->md5, 32) != 0) {
+                memcpy(buf + line, c->md5, 32);
+                edited = 1;
+            }
         }
         line += len + 1;
     }
@@ -410,7 +448,7 @@ static void rewrite_md5sums(const char *dir) {
 
 static void walk(const char *dir) {
     DIR *d = opendir(dir);
-    if (d == NULL) { failed++; return; }
+    if (d == NULL) { unopened(dir); return; }
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
@@ -420,7 +458,7 @@ static void walk(const char *dir) {
             continue;
         }
         struct stat st;
-        if (lstat(path, &st) != 0) { failed++; continue; }
+        if (lstat(path, &st) != 0) { unopened(path); continue; }
         if (S_ISLNK(st.st_mode)) {
             if (do_links) relink(path);
         } else if (S_ISDIR(st.st_mode)) {
@@ -511,7 +549,10 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--links") == 0) do_links = 1;
         else if (strcmp(argv[i], "--tls") == 0) do_tls = 1;
         else if (strcmp(argv[i], "--lock") == 0 && i + 1 < argc) lock = argv[++i];
-        else if (strcmp(argv[i], "--md5sums") == 0 && i + 1 < argc) md5sums = argv[++i];
+        else if (strcmp(argv[i], "--md5sums") == 0 && i + 1 < argc) {
+            md5sums = argv[++i];
+            do_md5sums = 1;
+        }
         else if (strcmp(argv[i], "--stamp") == 0 && i + 2 < argc) {
             stamp = argv[++i];
             version = argv[++i];
@@ -548,13 +589,17 @@ int main(int argc, char **argv) {
 
     // Walked by its real path, which is how an md5sums entry names a file.
     char root[PATH_MAX];
-    if (realpath(tree, root) == NULL) { fprintf(stderr, "%s: %s\n", tree, strerror(errno)); return 1; }
+    // The tree itself has to be readable; only entries inside it are skipped.
+    if (realpath(tree, root) == NULL || access(root, R_OK | X_OK) != 0) {
+        fprintf(stderr, "%s: %s\n", tree, strerror(errno));
+        return 1;
+    }
     walk(root);
     if (md5sums != NULL) rewrite_md5sums(md5sums);
     if (stamp != NULL && failed == 0) write_stamp(stamp, version);
 
     printf("%ld files rewritten, %ld occurrences, %ld symlinks repointed, "
-           "%ld TLS segments realigned, %ld failed\n",
-           touched, hits, links, realigned, failed);
+           "%ld TLS segments realigned, %ld skipped, %ld failed\n",
+           touched, hits, links, realigned, skipped, failed);
     return failed == 0 ? 0 : 1;
 }
