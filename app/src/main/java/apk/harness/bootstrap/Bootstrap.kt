@@ -197,7 +197,7 @@ class Bootstrap(private val context: Context) {
      * the rootfs's link to the native library directory, `bin/proot`, and the
      * repack shim installed as apt's dpkg. Entries a dead proot left in the
      * temporary directory are removed, and the agent's `resolv.conf` and
-     * `hosts` are written.
+     * `hosts` are written, with glibc's `etc/hosts` linked to the latter.
      *
      * Without the shim a Termux `.deb` unpacks into `/data/data/com.termux/...`
      * and fails on a permission error, because its payload is rooted at an
@@ -236,6 +236,7 @@ class Bootstrap(private val context: Context) {
 
         removeProotLeftovers(File(prefix, "tmp"))
         agent.stageEtc()
+        linkGlibcHosts(prefix, File(agent.etc, "hosts"))
     }
 
     /**
@@ -344,17 +345,6 @@ class Bootstrap(private val context: Context) {
         Os.symlink(home.absolutePath, link.path)
     }
 
-    /**
-     * Makes [dir] apt's cache: a directory in the data directory, which the
-     * system does not empty under a download. A link found in its place is
-     * replaced by an empty directory.
-     */
-    private fun stageAptCache(dir: File) {
-        val mode = runCatching { Os.lstat(dir.path).st_mode }.getOrNull()
-        if (mode != null && OsConstants.S_ISLNK(mode)) dir.delete()
-        File(dir, "apt/archives/partial").mkdirs()
-    }
-
     private companion object {
         const val TAG = "Bootstrap"
         const val BASH_PATH = "bin/bash"
@@ -407,6 +397,36 @@ fun removeProotLeftovers(tmp: File) {
         if (File("/proc/$pid").exists()) continue
         removeTree(entry)
     }
+}
+
+/**
+ * Makes [dir] apt's cache: a directory in the data directory, which the system
+ * does not empty under a download. A link found in its place is replaced by an
+ * empty directory, and the `apt` directory in the link's target, the cache apt
+ * kept there, is removed.
+ */
+fun stageAptCache(dir: File) {
+    val path = dir.toPath()
+    if (Files.isSymbolicLink(path)) {
+        val target = path.parent.resolve(Files.readSymbolicLink(path))
+        Files.delete(path)
+        removeTree(File(target.toFile(), "apt"))
+    }
+    File(dir, "apt/archives/partial").mkdirs()
+}
+
+/**
+ * Links `glibc/etc/hosts` under [prefix] to [hosts] when glibc is installed
+ * there and the path is free. glibc reads its own `etc/hosts` rather than
+ * `/etc/hosts`. A file or link already at the path is left alone.
+ */
+fun linkGlibcHosts(prefix: File, hosts: File) {
+    val glibc = File(prefix, "glibc")
+    if (!glibc.isDirectory) return
+    val link = File(glibc, "etc/hosts").toPath()
+    if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) return
+    Files.createDirectories(link.parent)
+    Files.createSymbolicLink(link, hosts.toPath())
 }
 
 /**
