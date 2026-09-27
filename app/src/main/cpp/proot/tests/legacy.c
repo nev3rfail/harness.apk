@@ -6,6 +6,9 @@
  *
  *   legacy setid    the set-id calls
  *   legacy blocked  a call bionic's blocklist names, and an unmarked one
+ *   legacy own      a SIGSYS from a filter of its own, for a call the policy
+ *                   allows
+ *   legacy fork     fork's registers, on x86_64
  *   legacy x86_64   the x86_64 translations, fork's registers and the red zone
  */
 #define _GNU_SOURCE
@@ -47,9 +50,8 @@ static const int trapped[] = {
 #endif
 };
 
-static void trap_legacy_calls(void) {
-	enum { N = sizeof trapped / sizeof *trapped };
-	struct sock_filter filter[4 + 2 * N];
+static void trap(const int *calls, int N) {
+	struct sock_filter filter[5 + 2 * N];
 	struct sock_fprog prog = { .len = 0, .filter = filter };
 	int i;
 
@@ -59,7 +61,7 @@ static void trap_legacy_calls(void) {
 	ADD(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
 	ADD(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)));
 	for (i = 0; i < N; i++) {
-		ADD(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, trapped[i], 0, 1));
+		ADD(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, calls[i], 0, 1));
 		ADD(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP));
 	}
 	ADD(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
@@ -97,6 +99,24 @@ static void setid(void) {
 		r(syscall(SYS_setregid, -1, -1)), r(syscall(SYS_setregid, g + 1, -1)));
 	printf("setfsuid current=%d\n", syscall(SYS_setfsuid, u + 7) == (long) geteuid());
 	printf("setfsgid current=%d\n", syscall(SYS_setfsgid, g + 7) == (long) getegid());
+}
+
+static volatile int own_sigsys;
+
+static void on_sigsys(int signum, siginfo_t *info, void *context) {
+	(void) signum;
+	(void) context;
+	own_sigsys = info->si_syscall;
+}
+
+static void own(void) {
+	static const int getpid_only[] = { SYS_getpid };
+	struct sigaction action = { .sa_sigaction = on_sigsys, .sa_flags = SA_SIGINFO };
+
+	sigaction(SIGSYS, &action, NULL);
+	trap(getpid_only, 1);
+	syscall(SYS_getpid);
+	printf("own sigsys=%d\n", own_sigsys == SYS_getpid);
 }
 
 static void blocked(void) {
@@ -201,19 +221,25 @@ static const char *fd_kind(long fd) {
 	return b;
 }
 
-static void x86_64(const char *dir) {
-	char path[4096];
-	struct stat st;
-	struct itimerval it = { .it_value = { 0, 200000 } };
-	sigset_t mask;
-	long fd, a, b, c, pid;
+static void fork_test(void) {
+	long pid;
 	int status;
-	unsigned long long value;
 
 	pid = fork_regs();
 	waitpid(pid < 0 ? -pid : pid, &status, 0);
 	printf("fork parent=%s child=%s\n", pid > 0 ? "ok" : "changed",
 		WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "ok" : "changed");
+}
+
+static void x86_64(const char *dir) {
+	char path[4096];
+	struct stat st;
+	struct itimerval it = { .it_value = { 0, 200000 } };
+	sigset_t mask;
+	long fd, a, b, c;
+	unsigned long long value;
+
+	fork_test();
 
 	snprintf(path, sizeof path, "%s/fifo", dir);
 	a = syscall(SYS_mknod, path, S_IFIFO | 0600, 0);
@@ -265,12 +291,16 @@ static void x86_64(const char *dir) {
 int main(int argc, char **argv) {
 	if (argc < 2)
 		return 2;
-	trap_legacy_calls();
+	trap(trapped, sizeof trapped / sizeof *trapped);
 	if (!strcmp(argv[1], "setid"))
 		setid();
 	else if (!strcmp(argv[1], "blocked"))
 		blocked();
+	else if (!strcmp(argv[1], "own"))
+		own();
 #if defined(__x86_64__)
+	else if (!strcmp(argv[1], "fork"))
+		fork_test();
 	else if (!strcmp(argv[1], "x86_64") && argc == 3)
 		x86_64(argv[2]);
 #endif

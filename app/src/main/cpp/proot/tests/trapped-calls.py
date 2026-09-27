@@ -21,6 +21,11 @@ Usage: trapped-calls.py DIR           print "ABI NAME" for each trapped call
                                        translation, or, given SECCOMP_C, marks a
                                        call translated, upstream or EPERM that
                                        has no case there
+       trapped-calls.py DIR --header FILE
+                                       print trapped-calls.h: TRAPPED(NUMBER)
+                                       for each call FILE lists, by ABI
+
+DIR/fetch.sh fetches DIR from bionic, and DIR/NOTICE gives its licenses.
 """
 import os
 import re
@@ -65,6 +70,47 @@ def table(level_dir, include, header):
         input="#include <%s>\n" % header, capture_output=True, text=True,
         check=True).stdout
     return set(re.findall(r"^#define __NR_(\w+) ", out, re.M)) - {"syscalls"}
+
+
+def numbers(level_dir, include, header, wanted):
+    """{name: number} for each of @wanted the kernel headers define."""
+    uapi = os.path.join(level_dir, "kernel", "uapi")
+    source = "#include <%s>\n" % header + "".join(
+        "@%s __NR_%s\n" % (n, n) for n in sorted(wanted))
+    out = subprocess.run(
+        ["cpp", "-P", "-nostdinc", "-I", os.path.join(uapi, include), "-I", uapi, "-"],
+        input=source, capture_output=True, text=True, check=True).stdout
+    result = {}
+    for name, value in re.findall(r"^@(\w+) (.+)$", out, re.M):
+        if not value.startswith("__NR_"):
+            result[name] = eval(value)
+    return result
+
+
+def header(root, marks_path):
+    """trapped-calls.h, with the numbers of the calls @marks_path lists."""
+    listed = {}
+    for line in open(marks_path):
+        line = line.split("#")[0].split()
+        if line:
+            listed.setdefault(line[0], set()).add(line[1])
+    out = ["/* The system calls Android's app policy traps at some API level from",
+           " * 30 to 36, by number: trapped-calls.txt as tests/trapped-calls.py",
+           " * --header prints it.  */",
+           ""]
+    guards = {"arm64-v8a": "ARCH_ARM64", "x86_64": "ARCH_X86_64"}
+    for i, (abi, (arch, include, hdr)) in enumerate(ABIS.items()):
+        found = {}
+        for level in LEVELS:
+            found.update(numbers(os.path.join(root, str(level)), include, hdr, listed[abi]))
+        missing = listed[abi] - set(found)
+        if missing:
+            raise SystemExit("%s: no number for %s" % (abi, " ".join(sorted(missing))))
+        out.append("#%s defined(%s)" % ("if" if i == 0 else "elif", guards[abi]))
+        for name in sorted(found, key=lambda n: found[n]):
+            out.append("TRAPPED(%d) /* %s */" % (found[name], name))
+    out.append("#endif")
+    return "\n".join(out) + "\n"
 
 
 def list_file(level_dir, kind, which):
@@ -129,6 +175,9 @@ def check(root, marks_path, seccomp_c):
 
 
 def main(argv):
+    if len(argv) == 4 and argv[2] == "--header":
+        sys.stdout.write(header(argv[1], argv[3]))
+        return 0
     if len(argv) >= 4 and argv[2] == "--check":
         return check(argv[1], argv[3], argv[4] if len(argv) > 4 else None)
     if len(argv) != 2:

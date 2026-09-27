@@ -1,0 +1,28 @@
+bionic-seccomp
+
+The files under 30/ to 36/ are copied unchanged from bionic, the C library of
+the Android Open Source Project (https://android.googlesource.com/platform/bionic),
+at the release tags and commits fetch.sh names. fetch.sh reproduces them.
+They are used only by tests/trapped-calls.py and are not part of any built
+file.
+
+- SYSCALLS.TXT and the SECCOMP_*.TXT lists: Copyright The Android Open Source
+  Project, licensed under the Apache License, Version 2.0 (COPYING.Apache-2.0).
+- kernel/uapi/**: bionic's copies of the Linux kernel's user-space API headers,
+  generated from the kernel's own. They are licensed under the GNU General
+  Public License, version 2 (GPL-2.0 WITH Linux-syscall-note); the text of
+  that license is app/src/main/assets/notices/proot/COPYING.proot. The note
+  reads:
+
+      NOTE! This copyright does *not* cover user programs that use kernel
+      services by normal system calls - this is merely considered normal use
+      of the kernel, and does *not* fall under the heading of "derived work".
+      Also note that the GPL below is copyrighted by the Free Software
+      Foundation, but the instance of code that it refers to (the Linux
+      kernel) is copyrighted by me and others who actually wrote it.
+
+      Also note that the only valid version of the GPL as far as the kernel
+      is concerned is _this_ particular version of the license (ie v2, not
+      v2.2 or v3.x or whatever), unless explicitly otherwise stated.
+
+                              Linus Torvalds

@@ -2,10 +2,11 @@
 """P3's host tests: the waiter's status, forwarding, and the death of either
 process.
 
-Usage: p3.py PROOT CATCH INTERP TMPDIR
+Usage: p3.py PROOT CATCH INTERP TMPDIR SLOW_SETSID
 
 PROOT is libproot.so, CATCH is catch.c built, INTERP is the dynamic linker
-that runs PROOT, and TMPDIR is an empty directory. Prints "ok   NAME" or
+that runs PROOT, TMPDIR is an empty directory, and SLOW_SETSID is
+slow-setsid.c built as a shared library. Prints "ok   NAME" or
 "FAIL NAME: why" for each test and exits 1 when one fails. Each test's
 processes are `sleep 12NN` with its own NN, and each test ends by killing
 the ones it started.
@@ -19,7 +20,7 @@ import subprocess
 import sys
 import time
 
-P, CATCH, INTERP, TMP = sys.argv[1:5]
+P, CATCH, INTERP, TMP, SLOW_SETSID = sys.argv[1:6]
 TESTS = []
 
 
@@ -289,6 +290,17 @@ def _():
     gone = until(lambda: not alive(tracer) and not sleeps(1208))
     kill(sleeps(1208) + [tracer])
     return daemon and gone, "daemon=%r" % daemon
+
+
+@test("a killpg between vpid 1's reap and the tracer's setsid leaves vpid 1's status")
+def _():
+    # SLOW_SETSID holds the tracer for 2 s before its setsid(2).
+    env = dict(os.environ, LD_PRELOAD=SLOW_SETSID)
+    proc = start([P, "sh", "-c", "exit 5"], start_new_session=True, env=env)
+    time.sleep(0.7)
+    os.killpg(proc.pid, signal.SIGTERM)
+    rc = proc.wait(10)
+    return rc == 5, "rc=%d" % rc
 
 
 @test("after vpid 1's reap, TERM and HUP to the caller's group leave the tracer and a daemon")

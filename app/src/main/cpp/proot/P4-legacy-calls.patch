@@ -8,7 +8,10 @@ allows; dup2(a, a) is answered from /proc/<pid>/fd/<a>; setuid, setgid,
 setreuid and setregid succeed only when they change no id; setfsuid and
 setfsgid return the current id; and the other calls bionic's blocklist names
 return EPERM. trapped-calls.txt lists every trapped call and how it is
-answered. alloc_mem reserves the red zone at every allocation.
+answered; any other untranslated call returns ENOSYS only when
+trapped-calls.h, the list by number, names it, and a SIGSYS for a call it
+does not name, from a filter of the program's own, is delivered to the
+program. alloc_mem reserves the red zone at every allocation.
 
 diff --git a/src/syscall/syscall.c b/src/syscall/syscall.c
 index 0761a26..7ba7645 100644
@@ -31,17 +34,21 @@ index 0761a26..7ba7645 100644
  		else if (tracee->chain.sysnum_workaround_state == SYSNUM_WORKAROUND_PROCESS_FAULTY_CALL) {
  			tracee->chain.sysnum_workaround_state = SYSNUM_WORKAROUND_PROCESS_REPLACED_CALL;
 diff --git a/src/tracee/event.c b/src/tracee/event.c
-index 61256c7..dbfa4c0 100644
+index 61256c7..e6afb58 100644
 --- a/src/tracee/event.c
 +++ b/src/tracee/event.c
-@@ -553,6 +553,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
- 			if (tracee->sigstop == SIGSTOP_IGNORED) {
- 				tracee->sigstop = SIGSTOP_ALLOWED;
- 				signal = 0;
-+				restore_regs_after_seccomp_fork(tracee);
- 			}
- 			break;
+@@ -235,6 +235,11 @@ int event_loop()
  
+ 		tracee->running = false;
+ 
++		/* The first stop of a fork(2) child whose parent is
++		 * known, before its ptracer, if any, sees it.  */
++		if (WIFSTOPPED(tracee_status) && WSTOPSIG(tracee_status) == SIGSTOP)
++			restore_regs_after_seccomp_fork(tracee);
++
+ 		status = notify_extensions(tracee, NEW_STATUS, tracee_status, 0);
+ 		if (status != 0)
+ 			continue;
 diff --git a/src/tracee/mem.c b/src/tracee/mem.c
 index 925f4bd..d21f972 100644
 --- a/src/tracee/mem.c
@@ -61,7 +68,7 @@ index 925f4bd..d21f972 100644
  	/* Sanity check. */
  	if (   (size > 0 && stack_pointer <= (word_t) size)
 diff --git a/src/tracee/seccomp.c b/src/tracee/seccomp.c
-index 66dfef3..eb71c02 100644
+index 66dfef3..1a46e65 100644
 --- a/src/tracee/seccomp.c
 +++ b/src/tracee/seccomp.c
 @@ -7,6 +7,9 @@
@@ -74,16 +81,7 @@ index 66dfef3..eb71c02 100644
  
  #include "extension/extension.h"
  #include "cli/note.h"
-@@ -102,6 +105,8 @@ int handle_seccomp_event(Tracee* tracee)
- 
- 	/* Save regs so they can be restored at end of replaced call.  */
- 	save_current_regs(tracee, ORIGINAL_SECCOMP_REWRITE);
-+	tracee->fork_after_seccomp = false;
-+	tracee->alarm_old_value = 0;
- 
- 	/* X86 uses orig_rax when selecting syscall,
- 	 * however at this point we are after syscall has been rejected
-@@ -130,6 +135,87 @@ void fix_and_restart_enosys_syscall(Tracee* tracee)
+@@ -130,6 +133,107 @@ void fix_and_restart_enosys_syscall(Tracee* tracee)
  	handle_seccomp_event_common(tracee);
  }
  
@@ -168,10 +166,40 @@ index 66dfef3..eb71c02 100644
 +	poke_reg(tracee, SYSARG_RESULT, result);
 +}
 +
++/**
++ * Return true if Android's app policy traps the call @tracee makes.
++ * A SIGSYS for any other call comes from a filter of the program's
++ * own.
++ */
++static bool policy_traps(const Tracee *tracee)
++{
++	if (get_abi(tracee) != ABI_DEFAULT)
++		return false;
++
++	switch (peek_reg(tracee, CURRENT, SYSARG_NUM)) {
++#define TRAPPED(number) case number:
++#include "tracee/trapped-calls.h"
++#undef TRAPPED
++		return true;
++	default:
++		return false;
++	}
++}
++
  static int handle_seccomp_event_common(Tracee *tracee)
  {
  	int ret;
-@@ -472,6 +558,18 @@ static int handle_seccomp_event_common(Tracee *tracee)
+@@ -138,6 +242,9 @@ static int handle_seccomp_event_common(Tracee *tracee)
+ 
+ 	sysnum = get_sysnum(tracee, CURRENT);
+ 
++	tracee->fork_after_seccomp = false;
++	tracee->alarm_old_value = 0;
++
+ 	status = notify_extensions(tracee, SIGSYS_OCC, 0, 0);
+ 	if (status < 0) {
+ 		VERBOSE(tracee, 4, "SIGSYS errored out when being handled by an extension");
+@@ -472,6 +579,18 @@ static int handle_seccomp_event_common(Tracee *tracee)
  		break;
  
  	case PR_dup2:
@@ -190,7 +218,7 @@ index 66dfef3..eb71c02 100644
  		set_sysnum(tracee, PR_dup3);
  		poke_reg(tracee, SYSARG_3, 0);
  		restart_syscall_after_seccomp(tracee);
-@@ -626,6 +724,145 @@ static int handle_seccomp_event_common(Tracee *tracee)
+@@ -626,8 +745,152 @@ static int handle_seccomp_event_common(Tracee *tracee)
  		break;
  	}
  
@@ -335,7 +363,14 @@ index 66dfef3..eb71c02 100644
 +
  	case PR_set_robust_list:
  	default:
++		/* A SIGSYS from the program's own filter is its own
++		 * to handle.  */
++		if (!policy_traps(tracee))
++			return SIGSYS;
++
  		/* Set errno to -ENOSYS */
+ 		set_result_after_seccomp(tracee, -ENOSYS);
+ 	}
 diff --git a/src/tracee/seccomp.h b/src/tracee/seccomp.h
 index 61d9c1c..e60b4a9 100644
 --- a/src/tracee/seccomp.h
@@ -347,7 +382,7 @@ index 61d9c1c..e60b4a9 100644
 +void restore_regs_after_seccomp_fork(Tracee *tracee);
 +void translate_alarm_exit(Tracee *tracee);
 diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
-index 8a98bf2..12db0c4 100644
+index 8a98bf2..dfbab58 100644
 --- a/src/tracee/tracee.c
 +++ b/src/tracee/tracee.c
 @@ -36,6 +36,7 @@
@@ -375,18 +410,16 @@ index 8a98bf2..12db0c4 100644
  	/* Restart the child tracee if it was already alive but
  	 * stopped until that moment.  */
  	if (child->sigstop == SIGSTOP_PENDING) {
-@@ -625,8 +636,10 @@ int new_child(Tracee *parent, word_t clone_flags)
- 			child->as_ptracee.event4.proot.value   = 0;
- 		}
+@@ -608,6 +619,9 @@ int new_child(Tracee *parent, word_t clone_flags)
  
--		if (!keep_stopped)
-+		if (!keep_stopped) {
-+			restore_regs_after_seccomp_fork(child);
- 			(void) restart_tracee(child, 0);
-+		}
- 	}
+ 		child->sigstop = SIGSTOP_ALLOWED;
  
- 	VERBOSE(child, 1, "vpid %" PRIu64 ": pid %d", child->vpid, child->pid);
++		/* Before its ptracer, if any, sees this stop.  */
++		restore_regs_after_seccomp_fork(child);
++
+ 		/* Notify its ptracer if it is ready to be traced.  */
+ 		if (child->as_ptracee.ptracer != NULL) {
+ 			/* Sanity check.  */
 diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
 index f844eec..5a4b9e7 100644
 --- a/src/tracee/tracee.h
@@ -410,3 +443,283 @@ index f844eec..5a4b9e7 100644
  	/* State for the special handling of SIGSTOP.  */
  	enum {
  		SIGSTOP_IGNORED = 0,  /* Ignore SIGSTOP (once the parent is known).  */
+diff --git a/src/tracee/trapped-calls.h b/src/tracee/trapped-calls.h
+new file mode 100644
+index 0000000..a79ea3b
+--- /dev/null
++++ b/src/tracee/trapped-calls.h
+@@ -0,0 +1,274 @@
++/* The system calls Android's app policy traps at some API level from
++ * 30 to 36, by number: trapped-calls.txt as tests/trapped-calls.py
++ * --header prints it.  */
++
++#if defined(ARCH_ARM64)
++TRAPPED(18) /* lookup_dcookie */
++TRAPPED(39) /* umount2 */
++TRAPPED(40) /* mount */
++TRAPPED(42) /* nfsservctl */
++TRAPPED(51) /* chroot */
++TRAPPED(58) /* vhangup */
++TRAPPED(89) /* acct */
++TRAPPED(99) /* set_robust_list */
++TRAPPED(100) /* get_robust_list */
++TRAPPED(104) /* kexec_load */
++TRAPPED(105) /* init_module */
++TRAPPED(106) /* delete_module */
++TRAPPED(112) /* clock_settime */
++TRAPPED(116) /* syslog */
++TRAPPED(142) /* reboot */
++TRAPPED(143) /* setregid */
++TRAPPED(144) /* setgid */
++TRAPPED(145) /* setreuid */
++TRAPPED(146) /* setuid */
++TRAPPED(149) /* setresgid */
++TRAPPED(151) /* setfsuid */
++TRAPPED(152) /* setfsgid */
++TRAPPED(159) /* setgroups */
++TRAPPED(161) /* sethostname */
++TRAPPED(162) /* setdomainname */
++TRAPPED(170) /* settimeofday */
++TRAPPED(171) /* adjtimex */
++TRAPPED(180) /* mq_open */
++TRAPPED(181) /* mq_unlink */
++TRAPPED(182) /* mq_timedsend */
++TRAPPED(183) /* mq_timedreceive */
++TRAPPED(184) /* mq_notify */
++TRAPPED(185) /* mq_getsetattr */
++TRAPPED(186) /* msgget */
++TRAPPED(187) /* msgctl */
++TRAPPED(188) /* msgrcv */
++TRAPPED(189) /* msgsnd */
++TRAPPED(190) /* semget */
++TRAPPED(191) /* semctl */
++TRAPPED(192) /* semtimedop */
++TRAPPED(193) /* semop */
++TRAPPED(194) /* shmget */
++TRAPPED(195) /* shmctl */
++TRAPPED(196) /* shmat */
++TRAPPED(197) /* shmdt */
++TRAPPED(202) /* accept */
++TRAPPED(217) /* add_key */
++TRAPPED(218) /* request_key */
++TRAPPED(219) /* keyctl */
++TRAPPED(224) /* swapon */
++TRAPPED(225) /* swapoff */
++TRAPPED(234) /* remap_file_pages */
++TRAPPED(235) /* mbind */
++TRAPPED(236) /* get_mempolicy */
++TRAPPED(237) /* set_mempolicy */
++TRAPPED(238) /* migrate_pages */
++TRAPPED(239) /* move_pages */
++TRAPPED(244) /* arch_specific_syscall */
++TRAPPED(262) /* fanotify_init */
++TRAPPED(263) /* fanotify_mark */
++TRAPPED(264) /* name_to_handle_at */
++TRAPPED(265) /* open_by_handle_at */
++TRAPPED(266) /* clock_adjtime */
++TRAPPED(272) /* kcmp */
++TRAPPED(273) /* finit_module */
++TRAPPED(280) /* bpf */
++TRAPPED(282) /* userfaultfd */
++TRAPPED(288) /* pkey_mprotect */
++TRAPPED(289) /* pkey_alloc */
++TRAPPED(290) /* pkey_free */
++TRAPPED(292) /* io_pgetevents */
++TRAPPED(293) /* rseq */
++TRAPPED(294) /* kexec_file_load */
++TRAPPED(424) /* pidfd_send_signal */
++TRAPPED(425) /* io_uring_setup */
++TRAPPED(426) /* io_uring_enter */
++TRAPPED(427) /* io_uring_register */
++TRAPPED(428) /* open_tree */
++TRAPPED(429) /* move_mount */
++TRAPPED(430) /* fsopen */
++TRAPPED(431) /* fsconfig */
++TRAPPED(432) /* fsmount */
++TRAPPED(433) /* fspick */
++TRAPPED(435) /* clone3 */
++TRAPPED(436) /* close_range */
++TRAPPED(437) /* openat2 */
++TRAPPED(439) /* faccessat2 */
++TRAPPED(441) /* epoll_pwait2 */
++TRAPPED(442) /* mount_setattr */
++TRAPPED(443) /* quotactl_fd */
++TRAPPED(444) /* landlock_create_ruleset */
++TRAPPED(445) /* landlock_add_rule */
++TRAPPED(446) /* landlock_restrict_self */
++TRAPPED(447) /* memfd_secret */
++TRAPPED(448) /* process_mrelease */
++TRAPPED(449) /* futex_waitv */
++TRAPPED(450) /* set_mempolicy_home_node */
++TRAPPED(451) /* cachestat */
++TRAPPED(452) /* fchmodat2 */
++TRAPPED(453) /* map_shadow_stack */
++TRAPPED(454) /* futex_wake */
++TRAPPED(455) /* futex_wait */
++TRAPPED(456) /* futex_requeue */
++TRAPPED(457) /* statmount */
++TRAPPED(458) /* listmount */
++TRAPPED(459) /* lsm_get_self_attr */
++TRAPPED(460) /* lsm_set_self_attr */
++TRAPPED(461) /* lsm_list_modules */
++#elif defined(ARCH_X86_64)
++TRAPPED(4) /* stat */
++TRAPPED(6) /* lstat */
++TRAPPED(7) /* poll */
++TRAPPED(21) /* access */
++TRAPPED(22) /* pipe */
++TRAPPED(23) /* select */
++TRAPPED(29) /* shmget */
++TRAPPED(30) /* shmat */
++TRAPPED(31) /* shmctl */
++TRAPPED(33) /* dup2 */
++TRAPPED(34) /* pause */
++TRAPPED(37) /* alarm */
++TRAPPED(43) /* accept */
++TRAPPED(57) /* fork */
++TRAPPED(64) /* semget */
++TRAPPED(65) /* semop */
++TRAPPED(66) /* semctl */
++TRAPPED(67) /* shmdt */
++TRAPPED(68) /* msgget */
++TRAPPED(69) /* msgsnd */
++TRAPPED(70) /* msgrcv */
++TRAPPED(71) /* msgctl */
++TRAPPED(82) /* rename */
++TRAPPED(83) /* mkdir */
++TRAPPED(84) /* rmdir */
++TRAPPED(85) /* creat */
++TRAPPED(86) /* link */
++TRAPPED(87) /* unlink */
++TRAPPED(88) /* symlink */
++TRAPPED(90) /* chmod */
++TRAPPED(92) /* chown */
++TRAPPED(94) /* lchown */
++TRAPPED(103) /* syslog */
++TRAPPED(105) /* setuid */
++TRAPPED(106) /* setgid */
++TRAPPED(111) /* getpgrp */
++TRAPPED(113) /* setreuid */
++TRAPPED(114) /* setregid */
++TRAPPED(116) /* setgroups */
++TRAPPED(119) /* setresgid */
++TRAPPED(122) /* setfsuid */
++TRAPPED(123) /* setfsgid */
++TRAPPED(132) /* utime */
++TRAPPED(133) /* mknod */
++TRAPPED(134) /* uselib */
++TRAPPED(136) /* ustat */
++TRAPPED(139) /* sysfs */
++TRAPPED(153) /* vhangup */
++TRAPPED(154) /* modify_ldt */
++TRAPPED(156) /* _sysctl */
++TRAPPED(159) /* adjtimex */
++TRAPPED(161) /* chroot */
++TRAPPED(163) /* acct */
++TRAPPED(164) /* settimeofday */
++TRAPPED(165) /* mount */
++TRAPPED(166) /* umount2 */
++TRAPPED(167) /* swapon */
++TRAPPED(168) /* swapoff */
++TRAPPED(169) /* reboot */
++TRAPPED(170) /* sethostname */
++TRAPPED(171) /* setdomainname */
++TRAPPED(172) /* iopl */
++TRAPPED(173) /* ioperm */
++TRAPPED(174) /* create_module */
++TRAPPED(175) /* init_module */
++TRAPPED(176) /* delete_module */
++TRAPPED(177) /* get_kernel_syms */
++TRAPPED(178) /* query_module */
++TRAPPED(180) /* nfsservctl */
++TRAPPED(181) /* getpmsg */
++TRAPPED(182) /* putpmsg */
++TRAPPED(183) /* afs_syscall */
++TRAPPED(184) /* tuxcall */
++TRAPPED(185) /* security */
++TRAPPED(201) /* time */
++TRAPPED(205) /* set_thread_area */
++TRAPPED(211) /* get_thread_area */
++TRAPPED(212) /* lookup_dcookie */
++TRAPPED(213) /* epoll_create */
++TRAPPED(214) /* epoll_ctl_old */
++TRAPPED(215) /* epoll_wait_old */
++TRAPPED(216) /* remap_file_pages */
++TRAPPED(220) /* semtimedop */
++TRAPPED(227) /* clock_settime */
++TRAPPED(232) /* epoll_wait */
++TRAPPED(235) /* utimes */
++TRAPPED(236) /* vserver */
++TRAPPED(237) /* mbind */
++TRAPPED(238) /* set_mempolicy */
++TRAPPED(239) /* get_mempolicy */
++TRAPPED(240) /* mq_open */
++TRAPPED(241) /* mq_unlink */
++TRAPPED(242) /* mq_timedsend */
++TRAPPED(243) /* mq_timedreceive */
++TRAPPED(244) /* mq_notify */
++TRAPPED(245) /* mq_getsetattr */
++TRAPPED(246) /* kexec_load */
++TRAPPED(248) /* add_key */
++TRAPPED(249) /* request_key */
++TRAPPED(250) /* keyctl */
++TRAPPED(253) /* inotify_init */
++TRAPPED(256) /* migrate_pages */
++TRAPPED(261) /* futimesat */
++TRAPPED(273) /* set_robust_list */
++TRAPPED(274) /* get_robust_list */
++TRAPPED(279) /* move_pages */
++TRAPPED(282) /* signalfd */
++TRAPPED(284) /* eventfd */
++TRAPPED(300) /* fanotify_init */
++TRAPPED(301) /* fanotify_mark */
++TRAPPED(303) /* name_to_handle_at */
++TRAPPED(304) /* open_by_handle_at */
++TRAPPED(305) /* clock_adjtime */
++TRAPPED(312) /* kcmp */
++TRAPPED(313) /* finit_module */
++TRAPPED(320) /* kexec_file_load */
++TRAPPED(321) /* bpf */
++TRAPPED(323) /* userfaultfd */
++TRAPPED(329) /* pkey_mprotect */
++TRAPPED(330) /* pkey_alloc */
++TRAPPED(331) /* pkey_free */
++TRAPPED(333) /* io_pgetevents */
++TRAPPED(334) /* rseq */
++TRAPPED(335) /* uretprobe */
++TRAPPED(424) /* pidfd_send_signal */
++TRAPPED(425) /* io_uring_setup */
++TRAPPED(426) /* io_uring_enter */
++TRAPPED(427) /* io_uring_register */
++TRAPPED(428) /* open_tree */
++TRAPPED(429) /* move_mount */
++TRAPPED(430) /* fsopen */
++TRAPPED(431) /* fsconfig */
++TRAPPED(432) /* fsmount */
++TRAPPED(433) /* fspick */
++TRAPPED(435) /* clone3 */
++TRAPPED(436) /* close_range */
++TRAPPED(437) /* openat2 */
++TRAPPED(439) /* faccessat2 */
++TRAPPED(441) /* epoll_pwait2 */
++TRAPPED(442) /* mount_setattr */
++TRAPPED(443) /* quotactl_fd */
++TRAPPED(444) /* landlock_create_ruleset */
++TRAPPED(445) /* landlock_add_rule */
++TRAPPED(446) /* landlock_restrict_self */
++TRAPPED(447) /* memfd_secret */
++TRAPPED(448) /* process_mrelease */
++TRAPPED(449) /* futex_waitv */
++TRAPPED(450) /* set_mempolicy_home_node */
++TRAPPED(451) /* cachestat */
++TRAPPED(452) /* fchmodat2 */
++TRAPPED(453) /* map_shadow_stack */
++TRAPPED(454) /* futex_wake */
++TRAPPED(455) /* futex_wait */
++TRAPPED(456) /* futex_requeue */
++TRAPPED(457) /* statmount */
++TRAPPED(458) /* listmount */
++TRAPPED(459) /* lsm_get_self_attr */
++TRAPPED(460) /* lsm_set_self_attr */
++TRAPPED(461) /* lsm_list_modules */
++#endif

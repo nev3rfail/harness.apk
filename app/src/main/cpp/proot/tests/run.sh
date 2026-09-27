@@ -23,6 +23,7 @@ P=$w/proot/libproot.so
 "$cc" -O1 -Wall -Wextra -Werror "$here/mkelf.c" -o "$w/mkelf"
 "$cc" -O1 -Wall -Wextra -Werror "$here/catch.c" -o "$w/catch"
 "$cc" -O1 -Wall -Wextra -Werror "$here/legacy.c" -o "$w/legacy"
+"$cc" -O1 -Wall -Wextra -Werror -shared -fPIC "$here/slow-setsid.c" -o "$w/slow-setsid.so"
 for m in good misaligned shared same class32; do
   "$w/mkelf" "$m" "$w/$m"
   chmod 755 "$w/$m"
@@ -112,7 +113,9 @@ setfsuid current=1
 setfsgid current=1 rc=0" "$(run "$P" "$w/legacy" setid)"
 check "a blocklisted call gets EPERM, others ENOSYS" "chroot=EPERM sethostname=EPERM faccessat2=ENOSYS rc=0" \
   "$(run "$P" "$w/legacy" blocked)"
+check "a SIGSYS from the program's own filter reaches it" "own sigsys=1 rc=0"   "$(run "$P" "$w/legacy" own)"
 if [ "$(uname -m)" = x86_64 ]; then
+  check "x86_64: fork's registers in a child an emulated ptracer follows" "fork parent=ok child=ok"     "$(run "$P" strace -f -qq -o /dev/null "$w/legacy" fork)"
   mkdir -p "$w/legacy.d"
   out=$(run "$P" "$w/legacy" x86_64 "$w/legacy.d")
   check "x86_64: fork's registers in parent and child" "fork parent=ok child=ok" "$out"
@@ -128,11 +131,15 @@ if [ "$(uname -m)" = x86_64 ]; then
   check "x86_64: an unmarked trapped call" "uselib=ENOSYS" "$out"
   check "x86_64: the red zone across alarm and poll" "red zone alarm=kept poll=kept" "$out"
 fi
+src=${PROOT_CACHE:-${TMPDIR:-/tmp}/harness-proot}/host/proot/src
 check "the trapped-call list" "rc=0" \
-  "$(run python3 "$here/trapped-calls.py" "$here/../bionic-seccomp" --check "$here/../trapped-calls.txt" "${PROOT_CACHE:-${TMPDIR:-/tmp}/harness-proot}/host/proot/src/tracee/seccomp.c")"
+  "$(run python3 "$here/trapped-calls.py" "$here/../bionic-seccomp" --check "$here/../trapped-calls.txt" "$src/tracee/seccomp.c")"
+python3 "$here/trapped-calls.py" "$here/../bionic-seccomp" --header "$here/../trapped-calls.txt" > "$w/trapped-calls.h"
+check "P4's trapped-calls.h is the list's" "rc=0" \
+  "$(run cmp "$w/trapped-calls.h" "$src/tracee/trapped-calls.h")"
 
 # P3
-python3 "$here/p3.py" "$P" "$w/catch" "$interp" "$w/p3" || failed=$((failed + 1))
+python3 "$here/p3.py" "$P" "$w/catch" "$interp" "$w/p3" "$w/slow-setsid.so" || failed=$((failed + 1))
 
 # libandroid-shmem's key directory. timeout bounds each call.
 check "shmem key, PROOT_TMP_DIR unset" "ret=-1 errno=ENOENT rc=0" \

@@ -11,11 +11,13 @@ tracer until that option covers it.
 
 A signal another process sends to the waiter goes to the tracer, and one the
 waiter sends to the tracer goes to vpid 1. The tracer drops other senders'
-signals and the kernel's, the terminal's included; its fault handlers act on
-its own faults only. Job-control signals keep their default action in both.
-Once vpid 1 is reaped, the tracer clears its death signal, points 2 at
-/dev/null and calls setsid(); from then on SIGHUP and SIGPIPE are ignored and
-any other signal but the waiter's takes its default action.
+signals and the kernel's, the terminal's included. A fault of either process
+(SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGSYS, SIGABRT from the kernel)
+kills it, and the tracer's kills every tracee first. Job-control signals keep
+their default action in both. Once vpid 1 is reaped, the tracer stops
+forwarding, clears its death signal, points 2 at /dev/null and calls setsid();
+only then are SIGHUP and SIGPIPE ignored and any other signal but the
+waiter's given its default action.
 
 The tracer points 0 and 1 at /dev/null and closes the other descriptors it
 inherited, but 2, once vpid 1 is forked. The --sysvipc helper is exec'd
@@ -372,10 +374,10 @@ index 22f57ec..8a98bf2 100644
  
 diff --git a/src/tracee/waiter.c b/src/tracee/waiter.c
 new file mode 100644
-index 0000000..bde56ee
+index 0000000..f31c4f7
 --- /dev/null
 +++ b/src/tracee/waiter.c
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,442 @@
 +/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*-
 + *
 + * This file is part of PRoot.
@@ -422,7 +424,14 @@ index 0000000..bde56ee
 +static pid_t waiter_pid;
 +static pid_t tracer_pid;
 +static pid_t vpid1_pid;
++
++/* Set once waitpid(2) returns vpid 1's exit: the tracer forwards no
++ * signal from then on.  */
 +static volatile sig_atomic_t vpid1_reaped;
++
++/* Set once the tracer is in a session of its own: signals take the
++ * rules that follow vpid 1's reap from then on.  */
++static volatile sig_atomic_t own_session;
 +
 +/* The tracer's end of the status pipe.  */
 +static int status_fd = -1;
@@ -437,7 +446,28 @@ index 0000000..bde56ee
 + */
 +static bool is_fault(int signum)
 +{
-+	return signum == SIGSEGV || signum == SIGILL || signum == SIGABRT || signum == SIGFPE;
++	switch (signum) {
++	case SIGSEGV:
++	case SIGBUS:
++	case SIGILL:
++	case SIGFPE:
++	case SIGTRAP:
++	case SIGSYS:
++	case SIGABRT:
++		return true;
++	default:
++		return false;
++	}
++}
++
++/**
++ * Deliver @signum to this process with its default action once the
++ * handler returns, since the handler blocks it until then.
++ */
++static void die_by(int signum)
++{
++	(void) signal(signum, SIG_DFL);
++	(void) kill(getpid(), signum);
 +}
 +
 +/**
@@ -530,8 +560,9 @@ index 0000000..bde56ee
 +
 +/**
 + * Handle @signum in the waiter: one sent by another process is sent to
-+ * the tracer, and one from the kernel, the terminal's for instance, is
-+ * ignored since vpid 1 gets its own copy through the process group.
++ * the tracer, a fault of the waiter takes its default action, and any
++ * other from the kernel, the terminal's for instance, is ignored since
++ * vpid 1 gets its own copy through the process group.
 + */
 +static void waiter_handler(int signum, siginfo_t *siginfo, void *ucontext UNUSED)
 +{
@@ -541,10 +572,8 @@ index 0000000..bde56ee
 +		return;
 +	}
 +
-+	/* A fault of the waiter itself happens again with the
-+	 * default action.  */
 +	if (is_fault(signum))
-+		(void) signal(signum, SIG_DFL);
++		die_by(signum);
 +}
 +
 +/**
@@ -700,38 +729,41 @@ index 0000000..bde56ee
 + * any other is dropped: one sent to the process group reaches vpid 1
 + * directly and through the waiter already.
 + *
-+ * Once vpid 1 is reaped, the tracer is in a session of its own:
++ * Once vpid 1 is reaped and the tracer is in a session of its own,
 + * signals from the waiter are dropped, SIGHUP and SIGPIPE are ignored
 + * and any other signal takes its default action.
++ *
++ * A fault of the tracer kills all tracees.
 + */
 +static void tracer_handler(int signum, siginfo_t *siginfo, void *ucontext UNUSED)
 +{
-+	if (siginfo->si_code > 0) {
++	if (siginfo->si_code > 0 && is_fault(signum)) {
 +		/* Kill all tracees on abnormal termination of the
 +		 * tracer.  This ensures no process is left
 +		 * untraced.  */
-+		if (is_fault(signum)) {
++		kill_all_tracees();
++		switch (signum) {
++		case SIGSEGV:
++		case SIGILL:
++		case SIGABRT:
++		case SIGFPE:
 +			note(NULL, WARNING, INTERNAL, "signal %d received", signum);
-+			kill_all_tracees();
 +			_exit(EXIT_FAILURE);
-+		}
 +
-+		if (!vpid1_reaped)
++		default:
++			die_by(signum);
 +			return;
++		}
 +	}
-+	else if (siginfo->si_pid == waiter_pid) {
++
++	if (siginfo->si_code <= 0 && siginfo->si_pid == waiter_pid) {
 +		if (!vpid1_reaped)
 +			(void) kill(vpid1_pid, signum);
 +		return;
 +	}
-+	else if (!vpid1_reaped)
-+		return;
 +
-+	/* The signal is blocked while this handler runs, and it is
-+	 * delivered with its default action when the handler
-+	 * returns.  */
-+	(void) signal(signum, SIG_DFL);
-+	(void) kill(getpid(), signum);
++	if (own_session)
++		die_by(signum);
 +}
 +
 +/**
@@ -751,6 +783,7 @@ index 0000000..bde56ee
 +void tracer_reaped(pid_t pid, int status)
 +{
 +	ssize_t size;
++	int fd;
 +
 +	if (pid != vpid1_pid || vpid1_reaped
 +	    || !(WIFEXITED(status) || WIFSIGNALED(status)))
@@ -761,16 +794,24 @@ index 0000000..bde56ee
 +	/* The waiter's exit leaves the tracer running.  */
 +	(void) prctl(PR_SET_PDEATHSIG, 0);
 +
-+	/* Standard output points at /dev/null since vpid 1 was
-+	 * forked.  */
-+	(void) dup2(STDOUT_FILENO, STDERR_FILENO);
++	fd = open("/dev/null", O_WRONLY);
++	if (fd >= 0) {
++		(void) dup2(fd, STDERR_FILENO);
++		if (fd != STDERR_FILENO)
++			close(fd);
++	}
++	else
++		close(STDERR_FILENO);
 +
 +	/* The waiter, or the process that started it, leads the
-+	 * process group, so this succeeds.  */
++	 * process group, so this succeeds.  Until it returns, a
++	 * signal sent to that group or from the terminal is dropped
++	 * by the rules that hold while vpid 1 runs.  */
 +	(void) setsid();
 +
 +	(void) signal(SIGHUP, SIG_IGN);
 +	(void) signal(SIGPIPE, SIG_IGN);
++	own_session = 1;
 +
 +	do
 +		size = write(status_fd, &status, sizeof(status));
