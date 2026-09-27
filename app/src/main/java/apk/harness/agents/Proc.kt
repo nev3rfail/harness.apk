@@ -40,6 +40,8 @@ data class TabIdentity(
     val leader: Int?,
     val sessionId: String = "",
     val label: String = "",
+    /** The tab's key, which numbers its notification. */
+    val key: Long = 0,
 )
 
 /**

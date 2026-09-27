@@ -82,6 +82,16 @@ class WorkingTest {
     }
 
     @Test
+    fun `a zombie or dead agent rests whatever its record says`() {
+        val proc = folder.newFolder("proc")
+        process(proc, 10)
+        process(proc, 20, state = 'Z', pgrp = 10, session = 10, tpgid = 10)
+        process(proc, 21, state = 'X', pgrp = 10, session = 10, tpgid = 10)
+
+        assertEquals(emptyList<String>(), working(count(proc, listOf(record(20, "busy"), record(21, "busy")))))
+    }
+
+    @Test
     fun `a record carrying no current tab's tag is not counted`() {
         val proc = folder.newFolder("proc")
         process(proc, 10)
@@ -164,6 +174,32 @@ class WorkingTest {
 
         assertEquals(listOf("t"), working(soon))
         assertEquals(first.samples, soon.samples)
+    }
+
+    @Test
+    fun `work holds the service and forgets when it rested`() {
+        assertEquals(Hold.Awake to null, holdDecision(working = true, restingSince = 5, now = 100))
+    }
+
+    @Test
+    fun `rest shorter than the grace waits out the rest of it`() {
+        assertEquals(Hold.Wait(GRACE_MS) to 100L, holdDecision(working = false, restingSince = null, now = 100))
+        assertEquals(Hold.Wait(GRACE_MS - 4_000) to 100L, holdDecision(false, restingSince = 100, now = 4_100))
+    }
+
+    @Test
+    fun `rest as long as the grace stops the service`() {
+        assertEquals(Hold.Stop to 100L, holdDecision(false, restingSince = 100, now = 100 + GRACE_MS))
+    }
+
+    @Test
+    fun `work in the grace starts the wait over`() {
+        val (_, since) = holdDecision(false, restingSince = null, now = 0)
+        val (awake, cleared) = holdDecision(true, restingSince = since, now = 5_000)
+        val (wait, _) = holdDecision(false, restingSince = cleared, now = 6_000)
+
+        assertEquals(Hold.Awake, awake)
+        assertEquals(Hold.Wait(GRACE_MS), wait)
     }
 
     @Test

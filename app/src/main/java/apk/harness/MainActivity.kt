@@ -154,6 +154,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Whether the tabs a start brings back have been brought back, which a
+    // request waits for; with the pending request, under one lock.
+    private val openLock = Any()
+    private var restored = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -166,10 +171,22 @@ class MainActivity : ComponentActivity() {
             }
         }
         // While the app is in front, work that starts starts the service: a
-        // start from the background is refused.
+        // start from the background is refused. Counted on a record, on a change
+        // to the tabs, and every 30 s for a shell job, which changes no record;
+        // off the main thread, since a count reads the process table.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                Roster.roster.collect { if (Work.count().isNotEmpty()) AgentService.request(this@MainActivity) }
+                withContext(Dispatchers.Default) {
+                    val countAndRequest = {
+                        if (Work.count().isNotEmpty()) AgentService.request(this@MainActivity)
+                    }
+                    launch { Roster.roster.collect { countAndRequest() } }
+                    launch { Roster.tabsChanged.collect { countAndRequest() } }
+                    while (true) {
+                        delay(FRONT_RECOUNT_MS)
+                        countAndRequest()
+                    }
+                }
             }
         }
 
@@ -180,6 +197,9 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && !fromHistory) pendingOpen = openRequestOf(intent)
         if (intent.action == ACTION_OPEN) setIntent(Intent(Intent.ACTION_MAIN))
 
+        // Working notifications a process that died left behind name tabs that
+        // are gone.
+        AgentService.clearTabNotifications(this)
         // Nothing standing in the shade outlives the process that raised it.
         // Every agent is a child of this app, so an ask whose agent has gone
         // points at a conversation that is not there, and building the tabs is
@@ -316,7 +336,23 @@ class MainActivity : ComponentActivity() {
         val request = pendingOpen.also { pendingOpen = null }
         // Starting an agent binds a socket, stages the home and reads the
         // history, none of which belongs on the thread the screen is drawn on.
-        lifecycleScope.launch(Dispatchers.IO) { bringBack(it, home, request) }
+        // A request arriving during the restore waits for it, so the two do not
+        // decide the tabs together.
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                bringBack(it, home, request)
+            } finally {
+                val next = synchronized(openLock) {
+                    restored = true
+                    pendingOpen.also { pendingOpen = null }
+                }
+                when (next) {
+                    is OpenRequest.Open -> open(it, next)
+                    is OpenRequest.Refused -> runOnUiThread { toast(next.reason) }
+                    null -> Unit
+                }
+            }
+        }
     }
 
     /**
@@ -453,9 +489,11 @@ class MainActivity : ComponentActivity() {
             is OpenRequest.Refused -> toast(request.reason)
             is OpenRequest.Open -> {
                 val holder = tabs
-                if (holder == null) {
-                    pendingOpen = request
-                } else {
+                val queued = synchronized(openLock) {
+                    if (holder == null || !restored) pendingOpen = request
+                    holder == null || !restored
+                }
+                if (!queued && holder != null) {
                     // Opening binds a socket, stages the home and reads the
                     // history, none of which belongs on the main thread.
                     lifecycleScope.launch(Dispatchers.IO) { open(holder, request) }
@@ -1370,6 +1408,9 @@ private const val NO_PICKER = "This device has no file picker."
 
 /** Where the open tabs are kept, in the app's no-backup directory. */
 private const val TABS_FILE = "tabs.json"
+
+/** How often the app in front counts what is working, for shell jobs. */
+private const val FRONT_RECOUNT_MS = 30_000L
 /** The request [intent] makes of the app, or null for an intent that makes none. */
 private fun openRequestOf(intent: Intent): OpenRequest? = openRequest(
     intent.action,
