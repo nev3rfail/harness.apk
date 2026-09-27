@@ -2,6 +2,7 @@ package apk.harness.bootstrap
 
 import android.content.Context
 import android.os.Build
+import android.system.Os
 import android.util.Log
 import java.io.File
 
@@ -153,15 +154,27 @@ class AgentStage(private val context: Context) {
     }
 
     /**
+     * Writes the resolver and the hosts file into [etc], each through a
+     * temporary file renamed over it, since a running program may read them.
+     * The router binds every file there onto `/etc/<name>` for a program run
+     * under proot, so `localhost` resolves without a DNS query. Run at every
+     * start.
+     */
+    fun stageEtc() {
+        etc.mkdirs()
+        for ((name, text) in listOf("resolv.conf" to RESOLV_CONF, "hosts" to HOSTS)) {
+            val staged = File(etc, "$name.tmp")
+            staged.writeText(text)
+            Os.rename(staged.path, File(etc, name).path)
+        }
+    }
+
+    /**
      * The files around the binary: a resolver for the two runtimes that look for
      * one, a hosts file, and the answer to the account question.
      */
     private fun configure() {
-        etc.mkdirs()
-        File(etc, "resolv.conf").writeText(RESOLV_CONF)
-        // Bound onto /etc/hosts for a program run under proot, so `localhost`
-        // resolves without a DNS query.
-        File(etc, "hosts").writeText(HOSTS)
+        stageEtc()
         File(etc, SETDNS_NAME).writeText(SETDNS_JS)
 
         // The agent's first run asks which account to sign in with, and asks

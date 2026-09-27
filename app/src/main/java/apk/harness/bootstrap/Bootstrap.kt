@@ -196,7 +196,8 @@ class Bootstrap(private val context: Context) {
      * expect, a temporary directory, a rootfs home pointing at the app's own,
      * the rootfs's link to the native library directory, `bin/proot`, and the
      * repack shim installed as apt's dpkg. Entries a dead proot left in the
-     * temporary directory are removed.
+     * temporary directory are removed, and the agent's `resolv.conf` and
+     * `hosts` are written.
      *
      * Without the shim a Termux `.deb` unpacks into `/data/data/com.termux/...`
      * and fails on a permission error, because its payload is rooted at an
@@ -234,6 +235,7 @@ class Bootstrap(private val context: Context) {
         writeReplacing(File(confd, "99-cache"), "APT::Keep-Downloaded-Packages \"false\";\n")
 
         removeProotLeftovers(File(prefix, "tmp"))
+        agent.stageEtc()
     }
 
     /**
