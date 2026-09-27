@@ -119,7 +119,7 @@ class SavedTabsTest {
         allFiles: Boolean = true,
         exists: Set<String> = setOf("/app/files", "/work", "/storage/emulated/0/p"),
         recency: Map<String, Long> = emptyMap(),
-        parkAll: Boolean = false,
+        allDormant: Boolean = false,
     ) = restorePlan(
         saved,
         live = live,
@@ -127,7 +127,7 @@ class SavedTabsTest {
         insideApp = { it.startsWith("/app") },
         exists = { it in exists },
         recency = { recency[it] ?: 0L },
-        parkAll = parkAll,
+        allDormant = allDormant,
     )
 
     @Test
@@ -135,7 +135,7 @@ class SavedTabsTest {
         val out = plan(SavedTabs(1, front = b, tabs = listOf(tab(a), tab(b), tab(c, "/work"))))
 
         assertEquals(b, out.start!!.sessionId)
-        assertEquals(setOf(a, c), out.parked.map { it.sessionId }.toSet())
+        assertEquals(setOf(a, c), out.dormant.map { it.sessionId }.toSet())
     }
 
     @Test
@@ -154,9 +154,21 @@ class SavedTabsTest {
             exists = setOf("/app/files"),
         )
 
-        assertEquals(listOf(a), out.parked.map { it.sessionId })
+        assertEquals(listOf(a), out.dormant.map { it.sessionId })
         assertEquals(emptyList<SavedTab>(), out.dropped)
         assertEquals(b, out.start!!.sessionId)
+    }
+
+    @Test
+    fun `a directory outside the app that is missing is kept dormant, not dropped`() {
+        val out = plan(
+            SavedTabs(1, front = a, tabs = listOf(tab(a, "/storage/usb/p"), tab(b))),
+            allFiles = true,
+            exists = setOf("/app/files"),
+        )
+
+        assertEquals(listOf(a), out.dormant.map { it.sessionId })
+        assertEquals(emptyList<SavedTab>(), out.dropped)
     }
 
     @Test
@@ -164,7 +176,7 @@ class SavedTabsTest {
         val out = plan(SavedTabs(1, front = a, tabs = listOf(tab(a), tab(b))), live = setOf(a))
 
         assertEquals(b, out.start!!.sessionId)
-        assertEquals(listOf(a), out.parked.map { it.sessionId })
+        assertEquals(listOf(a), out.dormant.map { it.sessionId })
     }
 
     @Test
@@ -180,10 +192,10 @@ class SavedTabsTest {
 
     @Test
     fun `a request from outside parks everything`() {
-        val out = plan(SavedTabs(1, front = a, tabs = listOf(tab(a), tab(b))), parkAll = true)
+        val out = plan(SavedTabs(1, front = a, tabs = listOf(tab(a), tab(b))), allDormant = true)
 
         assertNull(out.start)
-        assertEquals(setOf(a, b), out.parked.map { it.sessionId }.toSet())
+        assertEquals(setOf(a, b), out.dormant.map { it.sessionId }.toSet())
     }
 
     @Test

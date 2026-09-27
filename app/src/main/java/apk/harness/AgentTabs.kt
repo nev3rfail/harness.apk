@@ -134,6 +134,10 @@ class AgentTabs(
     // What each tab knows about following its agent, by key.
     private val following = HashMap<Long, FollowState>()
 
+    // The conversations whose agent is being started, held from the check that
+    // no tab has them until the tab is added.
+    private val starting = HashSet<String>()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // One screen writes the file after another, and a screen whose end was
@@ -158,7 +162,7 @@ class AgentTabs(
 
     // Held so stopAll can take back exactly the source it gave.
     private val identities: () -> List<TabIdentity> = {
-        _tabs.value.map { TabIdentity(it.tag, it.session.pid) }
+        _tabs.value.map { TabIdentity(it.tag, it.session.pid, it.sessionId, it.label) }
     }
 
     // After every field it reads: the roster may arrive at once.
@@ -199,8 +203,9 @@ class AgentTabs(
             if (stopped) return false
             // The tab to start is dormant until it starts, so a start that is
             // refused leaves it where the others are rather than losing it.
-            _dormant.value = plan.parked + listOfNotNull(plan.start)
-            persist()
+            _dormant.value = plan.dormant + listOfNotNull(plan.start)
+            // Written by the start that follows, which names the tab in front;
+            // a write here would name none.
         }
         for (tab in plan.dropped) Log.i(TAG, "dropped the tab of ${tab.sessionId} in ${tab.directory}")
         val start = plan.start ?: return false
@@ -241,7 +246,8 @@ class AgentTabs(
      *
      * A conversation that already has a tab is brought forward rather than
      * started twice: two agents appending to one transcript is a conversation
-     * with two authors and no way to read it back. A dormant tab of it starts.
+     * with two authors and no way to read it back. A dormant tab of it starts,
+     * untrusted: its directory came back from a file, not from the operator.
      */
     fun resume(chat: Chat, directory: File, trusted: Boolean = true): AgentTab? {
         tabFor(chat.sessionId)?.let { existing ->
@@ -249,7 +255,7 @@ class AgentTabs(
             return existing
         }
         if (_dormant.value.any { it.sessionId == chat.sessionId }) {
-            return openDormant(chat.sessionId, trusted)
+            return openDormant(chat.sessionId)
         }
         return openConversation(directory, chat.sessionId, chat.backendId, chat.label, trusted)
     }
@@ -260,7 +266,9 @@ class AgentTabs(
      * not -- a conversation opened and never spoken in has nothing to resume.
      *
      * Refused, with the reason told, while the roster names the conversation as
-     * live in another agent.
+     * live in another agent. A conversation already starting -- a second tap
+     * while the first one's agent is still coming up -- is not started again:
+     * the id is held from the check to the tab being added.
      */
     fun openConversation(
         directory: File,
@@ -269,16 +277,24 @@ class AgentTabs(
         label: String,
         trusted: Boolean,
     ): AgentTab? {
-        tabFor(sessionId)?.let { existing ->
-            show(existing.sessionId)
-            return existing
+        synchronized(lock) {
+            tabFor(sessionId)?.let { existing ->
+                _activeKey.value = existing.key
+                persist()
+                return existing
+            }
+            if (!starting.add(sessionId)) return null
         }
-        if (liveElsewhere(sessionId)) return null
-        val backend = backendFor(backendId)
-        val arguments =
-            if (backend.hasTranscript(agent.home, sessionId)) backend.resume(sessionId)
-            else backend.start(sessionId)
-        return add(directory, sessionId, label, backend, arguments, trusted)
+        try {
+            if (liveElsewhere(sessionId)) return null
+            val backend = backendFor(backendId)
+            val arguments =
+                if (backend.hasTranscript(agent.home, sessionId)) backend.resume(sessionId)
+                else backend.start(sessionId)
+            return add(directory, sessionId, label, backend, arguments, trusted)
+        } finally {
+            synchronized(lock) { starting.remove(sessionId) }
+        }
     }
 
     /**
@@ -301,30 +317,32 @@ class AgentTabs(
     }
 
     /**
-     * The running tab in [directory] whose conversation has no transcript yet,
-     * which is a tab nobody has spoken in.
+     * The session of a tab in [directory], running or dormant, whose
+     * conversation has no transcript yet: a tab nobody has spoken in.
      */
-    fun untouchedIn(directory: File): AgentTab? {
+    fun untouchedIn(directory: File): String? {
         val path = oneSpelling(directory.absolutePath)
-        return _tabs.value.firstOrNull {
+        val backend = BACKENDS.first()
+        val running = _tabs.value.firstOrNull {
             oneSpelling(it.directory.absolutePath) == path &&
                 !it.backend.hasTranscript(agent.home, it.sessionId)
         }
+        if (running != null) return running.sessionId
+        return _dormant.value.firstOrNull {
+            oneSpelling(File(it.directory).absolutePath) == path &&
+                !backend.hasTranscript(agent.home, it.sessionId)
+        }?.sessionId
     }
 
     /**
      * Starts the dormant tab of [sessionId] as a running one, in its own
-     * directory. It is not trusted by being started: a restart is not a tap.
+     * directory. It is not trusted by being started: its directory came back
+     * from a file, and a restart is not a tap.
      */
-    fun openDormant(sessionId: String, trusted: Boolean = false): AgentTab? {
+    fun openDormant(sessionId: String): AgentTab? {
         val saved = _dormant.value.firstOrNull { it.sessionId == sessionId } ?: return null
-        val opened = openConversation(File(saved.directory), saved.sessionId, saved.backend, saved.label, trusted)
-            ?: return null
-        synchronized(lock) {
-            _dormant.value = _dormant.value.filter { it.sessionId != sessionId }
-            persist()
-        }
-        return opened
+        // The start drops the dormant record once the tab is added.
+        return openConversation(File(saved.directory), saved.sessionId, saved.backend, saved.label, trusted = false)
     }
 
     /**
@@ -354,6 +372,13 @@ class AgentTabs(
     fun continueHere(chat: Chat, directory: File) {
         val tab = active ?: return
         if (tab.sessionId == chat.sessionId) return
+        // A conversation another tab holds, or one starting, is brought forward
+        // rather than typed into this agent: that would be two writers.
+        tabFor(chat.sessionId)?.let {
+            show(it.sessionId)
+            return
+        }
+        if (synchronized(lock) { chat.sessionId in starting }) return
         if (liveElsewhere(chat.sessionId)) return
         val backend = backendFor(chat.backendId)
 
@@ -367,9 +392,6 @@ class AgentTabs(
             // stands behind the one going away.
             openConversation(directory, chat.sessionId, chat.backendId, chat.label, trusted = true)
                 ?: return
-            synchronized(lock) {
-                _dormant.value = _dormant.value.filter { it.sessionId != chat.sessionId }
-            }
             close(tab.key)
             return
         }
@@ -577,7 +599,7 @@ class AgentTabs(
 
         val tab = AgentTab(key, sessionId, directory, label, backend, session, editor, tag)
         val added = synchronized(lock) {
-            if (stopped) return@synchronized false
+            if (stopped || tabFor(sessionId) != null) return@synchronized false
             _tabs.value = _tabs.value + tab
             // A conversation with a running tab has no dormant one.
             _dormant.value = _dormant.value.filter { it.sessionId != sessionId }

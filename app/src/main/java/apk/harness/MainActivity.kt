@@ -54,6 +54,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStateAtLeast
 import apk.harness.agents.BACKENDS
@@ -132,9 +133,28 @@ class MainActivity : ComponentActivity() {
      */
     private var pendingOpen: OpenRequest? = null
 
+    /** A request waiting for the all-files grant, run again when it is there. */
+    @Volatile
+    private var awaitingGrant: OpenRequest.Open? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // The screen stays on while a tab is working, and is left to its
+        // timeout when none is. Set on the main thread, where the window is.
+        lifecycleScope.launch {
+            Work.working.collect { working ->
+                if (working.isNotEmpty()) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+        // While the app is in front, work that starts starts the service: a
+        // start from the background is refused.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Roster.roster.collect { if (Work.count().isNotEmpty()) AgentService.request(this@MainActivity) }
+            }
+        }
 
         // An intent that created the task is the one the activity is recreated
         // from after the process dies, from recents or from the launcher icon, so
@@ -143,8 +163,6 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && !fromHistory) pendingOpen = openRequestOf(intent)
         if (intent.action == ACTION_OPEN) setIntent(Intent(Intent.ACTION_MAIN))
 
-        // Started before anything else it protects.
-        AgentService.start(this)
         // Nothing standing in the shade outlives the process that raised it.
         // Every agent is a child of this app, so an ask whose agent has gone
         // points at a conversation that is not there, and building the tabs is
@@ -296,7 +314,10 @@ class MainActivity : ComponentActivity() {
         refuse = { message -> runOnUiThread { toast(message) } },
     ).also {
         tabs = it
-        bringBack(it, home, pendingOpen.also { pendingOpen = null })
+        val request = pendingOpen.also { pendingOpen = null }
+        // Starting an agent binds a socket, stages the home and reads the
+        // history, none of which belongs on the thread the screen is drawn on.
+        lifecycleScope.launch(Dispatchers.IO) { bringBack(it, home, request) }
     }
 
     /**
@@ -306,13 +327,13 @@ class MainActivity : ComponentActivity() {
      * A request from another app, arriving with the start, makes every saved tab
      * come back dormant so the tab it asks for is the one that runs. A request
      * that opens nothing leaves the ordinary start in its place: no start ends
-     * with no tab running.
+     * with no tab running. Off the main thread.
      */
     private fun bringBack(tabs: AgentTabs, home: File, request: OpenRequest?) {
         val saved = readSaved(File(noBackupFilesDir, TABS_FILE))
         val live = Roster.readNow().mapTo(HashSet()) { it.sessionId }
         val ownData = bothSpellings(this, dataDir)
-        fun plan(parkAll: Boolean) = saved?.let {
+        fun plan(allDormant: Boolean) = saved?.let {
             restorePlan(
                 it,
                 live = live,
@@ -320,44 +341,48 @@ class MainActivity : ComponentActivity() {
                 insideApp = { path -> !outsideApp(path, ownData) },
                 exists = { path -> File(path).isDirectory },
                 recency = { id -> BACKENDS.maxOf { backend -> backend.transcriptModified(home, id) } },
-                parkAll = parkAll,
+                allDormant = allDormant,
             )
         }
 
         when (request) {
-            is OpenRequest.Refused -> toast(request.reason)
+            is OpenRequest.Refused -> runOnUiThread { toast(request.reason) }
             is OpenRequest.Open -> {
-                plan(parkAll = true)?.let(tabs::restore)
+                plan(allDormant = true)?.let(tabs::restore)
                 if (open(tabs, request)) return
-                val front = plan(parkAll = false)?.start
+                val front = plan(allDormant = false)?.start
                 if (front != null && tabs.openDormant(front.sessionId) != null) return
                 tabs.openDefault()
                 return
             }
             null -> Unit
         }
-        val plan = plan(parkAll = false)
+        val plan = plan(allDormant = false)
         if (plan != null && tabs.restore(plan)) return
         tabs.openDefault()
     }
 
     /**
      * Opens what [request] asks for, and answers whether a tab of it is on
-     * screen.
+     * screen. Off the main thread.
      *
      * The tab is not trusted by being opened: an intent is not the operator's
      * tap, so the agent asks about a directory nobody has vouched for.
+     *
+     * A directory outside the app, with no all-files access, waits for the
+     * grant: the operator is taken to its settings screen, and the request runs
+     * again when the app is back with the grant. The check is made on the path
+     * as given and again on the path it resolves to, so a link inside the app
+     * that points out of it is held to the same rule.
      */
     private fun open(tabs: AgentTabs, request: OpenRequest.Open): Boolean {
         val ownData = bothSpellings(this, dataDir)
-        if (outsideApp(request.directory, ownData) && !Environment.isExternalStorageManager()) {
-            toast(NO_STORAGE)
-            runCatching { startActivity(allFilesSettings(this)) }
-            return false
-        }
+        fun needsGrant(path: String) = outsideApp(path, ownData) && !Environment.isExternalStorageManager()
+        if (needsGrant(request.directory)) return awaitGrant(request)
         val directory = runCatching { File(request.directory).canonicalFile }.getOrNull()
+        if (directory != null && needsGrant(directory.path)) return awaitGrant(request)
         if (directory == null || !directory.isDirectory) {
-            toast("${request.directory} is not a directory.")
+            runOnUiThread { toast("${request.directory} is not a directory.") }
             return false
         }
 
@@ -369,10 +394,19 @@ class MainActivity : ComponentActivity() {
             return tabs.openConversation(directory, session, backend.id, directory.name, trusted = false) != null
         }
         // A caller repeating itself gets one fresh tab, not one per call.
-        tabs.untouchedIn(directory)?.let { return tabs.show(it.sessionId) }
+        tabs.untouchedIn(directory)?.let { id -> return tabs.show(id) || tabs.openDormant(id) != null }
         return tabs.start(directory, directory.name, trusted = false) != null
     }
 
+    /** Holds [request] until the all-files grant is there, and asks for it. */
+    private fun awaitGrant(request: OpenRequest.Open): Boolean {
+        awaitingGrant = request
+        runOnUiThread {
+            toast(NO_STORAGE)
+            runCatching { startActivity(allFilesSettings(this)) }
+        }
+        return false
+    }
     /** A short note to the operator. */
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -383,16 +417,30 @@ class MainActivity : ComponentActivity() {
         // An agent can die while the screen is away, and a death writes no
         // record.
         Roster.refresh()
+        if (Work.count().isNotEmpty()) AgentService.request(this)
     }
 
     override fun onPause() {
         super.onPause()
         showing()?.onPauseView()
+        // The last moment the app is visible, and so the last one a start is
+        // allowed in. A prompt sent and the phone pocketed turns busy a moment
+        // after this; the service started here holds for its grace and stops
+        // itself if nothing turns out to be working.
+        if (Work.anyAgent() || Work.count().isNotEmpty()) AgentService.request(this)
     }
 
     override fun onResume() {
         super.onResume()
         showing()?.onResumeView()
+        if (Work.count().isNotEmpty()) AgentService.request(this)
+        // Back from the grant screen a request was sent to.
+        val waiting = awaitingGrant
+        val holder = tabs
+        if (waiting != null && holder != null && Environment.isExternalStorageManager()) {
+            awaitingGrant = null
+            lifecycleScope.launch(Dispatchers.IO) { open(holder, waiting) }
+        }
     }
 
     /**
@@ -416,7 +464,13 @@ class MainActivity : ComponentActivity() {
             is OpenRequest.Refused -> toast(request.reason)
             is OpenRequest.Open -> {
                 val holder = tabs
-                if (holder == null) pendingOpen = request else open(holder, request)
+                if (holder == null) {
+                    pendingOpen = request
+                } else {
+                    // Opening binds a socket, stages the home and reads the
+                    // history, none of which belongs on the main thread.
+                    lifecycleScope.launch(Dispatchers.IO) { open(holder, request) }
+                }
             }
         }
     }
@@ -430,7 +484,6 @@ class MainActivity : ComponentActivity() {
         tabs?.stopAll()
         panels.stop()
         AgentService.clearAsks(this)
-        AgentService.stop(this)
     }
 
     /**
@@ -535,7 +588,11 @@ private fun HarnessScreen(
     }
 
     val open by tabs.tabs.collectAsState()
-    val dormant by tabs.dormant.collectAsState()
+    // A conversation with a running tab is drawn by that tab, never twice.
+    val dormantTabs by tabs.dormant.collectAsState()
+    val dormant = remember(open, dormantTabs) {
+        dormantTabs.filter { saved -> open.none { it.sessionId == saved.sessionId } }
+    }
     val activeKey by tabs.activeKey.collectAsState()
     val active = open.firstOrNull { it.key == activeKey }
 

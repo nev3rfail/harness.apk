@@ -11,7 +11,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- A cached app is frozen, and a frozen app stops reading the terminal the
-         agent is writing to. -->
+         agent is writing to. While a tab is working the service keeps the app
+         out of that state and the CPU awake; when none is, it stops. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -126,7 +127,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="The agent and every program it starts are child processes of this app, running tasks the user started in a terminal. They must not be stopped or paused while the app is in the background, or the task and its terminal session are lost." />
+                android:value="The agent and every program it starts are child processes of this app, running tasks the user started in a terminal. The service runs only while one of them is working - an agent answering, or a command the user ran still making progress - so that the work finishes with the app in the background. It stops itself when nothing is working." />
         </service>
 
         <!-- A file handed to another app cannot travel as a path: an app-private
