@@ -24,24 +24,20 @@ object ClaudeBackend : AgentBackend {
 
     override fun running(home: File): List<RunningSession> = roster(home, File(PROC))
 
+    override fun rosterDirectory(home: File): File = File(config(home), "sessions")
+
+    override fun parseRecord(text: String): RecordRead {
+        val record = runCatching { JSONObject(text) }.getOrNull() ?: return RecordRead.Unparsable
+        val entry = rosterEntry(record) ?: return RecordRead.Empty
+        return RecordRead.Entry(entry.pid, entry.sessionId, entry.status, record.string("procStart"))
+    }
+
     /**
      * The roster under `sessions/`, checked against the process table in
-     * [procDirectory].
-     *
-     * A process writes `sessions/<pid>.json` for itself and does not always
-     * remove it, so a killed agent leaves its record behind. [stillRunning] is
-     * what decides which records are about a process that exists.
+     * [procDirectory], as [readRoster] reads one.
      */
-    fun roster(home: File, procDirectory: File): List<RunningSession> {
-        val sessions = File(config(home), "sessions")
-        val files = sessions.listFiles { file -> file.name.endsWith(ROSTER_SUFFIX) }.orEmpty()
-        return files.mapNotNull { file ->
-            val text = runCatching { file.readText() }.getOrNull() ?: return@mapNotNull null
-            val record = runCatching { JSONObject(text) }.getOrNull() ?: return@mapNotNull null
-            val entry = rosterEntry(record) ?: return@mapNotNull null
-            entry.takeIf { stillRunning(procDirectory, it.pid, record.string("procStart")) }
-        }
-    }
+    fun roster(home: File, procDirectory: File): List<RunningSession> =
+        readRoster(rosterDirectory(home), ::parseRecord, ProcTable(procDirectory))
 
     override fun resume(sessionId: String): List<String> = listOf("--resume", sessionId)
 
@@ -63,7 +59,7 @@ object ClaudeBackend : AgentBackend {
     override fun mostRecent(home: File, directory: File): String? {
         val project = File(config(home), "projects/${flatten(directory.absolutePath)}")
         return project.listFiles { file -> file.name.endsWith(TRANSCRIPT_SUFFIX) }
-            ?.filter { it.isFile }
+            ?.filter { it.isFile && isSessionId(it.name.removeSuffix(TRANSCRIPT_SUFFIX)) }
             ?.maxByOrNull { it.lastModified() }
             ?.name
             ?.removeSuffix(TRANSCRIPT_SUFFIX)
@@ -73,7 +69,6 @@ object ClaudeBackend : AgentBackend {
     private fun config(home: File) = File(home, ".claude")
 
     private const val PROC = "/proc"
-    private const val ROSTER_SUFFIX = ".json"
     private const val TRANSCRIPT_SUFFIX = ".jsonl"
 }
 

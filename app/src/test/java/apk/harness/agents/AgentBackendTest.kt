@@ -24,6 +24,8 @@ class AgentBackendTest {
 
         override val script: String get() = unreached()
         override fun running(home: File) = unreached()
+        override fun rosterDirectory(home: File) = unreached()
+        override fun parseRecord(text: String) = unreached()
         override fun resume(sessionId: String) = unreached()
         override fun start(sessionId: String) = unreached()
         override fun mcpConfig(file: File) = unreached()

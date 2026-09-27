@@ -35,6 +35,15 @@ interface AgentBackend {
     /** The processes of this backend that are running, as they report themselves. */
     fun running(home: File): List<RunningSession>
 
+    /**
+     * The directory this backend's processes write their records into, or null
+     * for a backend that keeps none.
+     */
+    fun rosterDirectory(home: File): File?
+
+    /** What one record file in [rosterDirectory] says, from its [text]. */
+    fun parseRecord(text: String): RecordRead
+
     /** Arguments that reopen the conversation [sessionId] names. */
     fun resume(sessionId: String): List<String>
 
@@ -70,12 +79,35 @@ interface AgentBackend {
  *
  * [status] is `busy`, `idle`, or null for a record that omits it -- which a
  * process writes before it has anything to say about itself.
+ *
+ * [procStart] is the process's start time from the kernel's `stat`, never from
+ * the record, and [tag] the tab its environment names, or null when it names
+ * none or cannot be read.
  */
 data class RunningSession(
     val pid: Int,
     val sessionId: String,
     val status: String?,
+    val procStart: Long? = null,
+    val tag: String? = null,
 )
+
+/** What a record file says, before its process is checked. */
+sealed interface RecordRead {
+    /** The file does not parse: it may be caught mid-rewrite. */
+    data object Unparsable : RecordRead
+
+    /** The file parses and names no usable session or no process. */
+    data object Empty : RecordRead
+
+    /** A record naming [pid], [sessionId], and the start time it claims. */
+    data class Entry(
+        val pid: Int,
+        val sessionId: String,
+        val status: String?,
+        val claimedStart: String?,
+    ) : RecordRead
+}
 
 /** Every backend the app knows. The single place a second one is added. */
 val BACKENDS: List<AgentBackend> = listOf(ClaudeBackend)

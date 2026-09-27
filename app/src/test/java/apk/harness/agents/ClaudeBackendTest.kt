@@ -156,6 +156,35 @@ class ClaudeBackendTest {
     }
 
     @Test
+    fun `a running record carries the kernel's start time and the tab its process names`() {
+        val home = folder.newFolder("home")
+        val proc = folder.newFolder("proc")
+        stat(proc, 22740, "6577951")
+        File(proc, "22740/environ").writeBytes("PATH=/bin\u0000HARNESS_TAB=tab-1\u0000".toByteArray())
+        record(home, "22740.json", device)
+
+        val entry = ClaudeBackend.roster(home, proc).single()
+        assertEquals(6577951L, entry.procStart)
+        assertEquals("tab-1", entry.tag)
+    }
+
+    @Test
+    fun `a record naming an id that is not a session id is not running`() {
+        val home = folder.newFolder("home")
+        val proc = folder.newFolder("proc")
+        stat(proc, 22740, "6577951")
+        record(home, "22740.json", device.replace(DEVICE_SESSION, "x --settings evil"))
+
+        assertEquals(emptyList<RunningSession>(), ClaudeBackend.roster(home, proc))
+    }
+
+    @Test
+    fun `the roster directory is the CLI's sessions directory`() {
+        val home = File("/h")
+        assertEquals(File(home, ".claude/sessions"), ClaudeBackend.rosterDirectory(home))
+    }
+
+    @Test
     fun `a home with no roster holds no running agents`() {
         assertEquals(
             emptyList<RunningSession>(),
@@ -172,14 +201,25 @@ class ClaudeBackendTest {
         val home = folder.newFolder("home")
         val work = File(folder.root, "work")
         val project = projectDirectory(home, work)
-        val older = File(project, "older.jsonl").apply { writeText("{}\n") }
-        val newer = File(project, "newer.jsonl").apply { writeText("{}\n") }
+        val older = File(project, "$OLDER.jsonl").apply { writeText("{}\n") }
+        val newer = File(project, "$NEWER.jsonl").apply { writeText("{}\n") }
         // Write order alone would leave the newer file newest, so the test says
         // nothing about the rule unless the host let both times be set.
         assertTrue(older.setLastModified(1_000_000))
         assertTrue(newer.setLastModified(2_000_000))
 
-        assertEquals("newer", ClaudeBackend.mostRecent(home, work))
+        assertEquals(NEWER, ClaudeBackend.mostRecent(home, work))
+    }
+
+    @Test
+    fun `a transcript whose name is not a session id is never the most recent`() {
+        val home = folder.newFolder("home")
+        val work = File(folder.root, "work")
+        val project = projectDirectory(home, work)
+        File(project, "$OLDER.jsonl").apply { writeText("{}\n") }.setLastModified(1_000_000)
+        File(project, "notes.jsonl").apply { writeText("{}\n") }.setLastModified(2_000_000)
+
+        assertEquals(OLDER, ClaudeBackend.mostRecent(home, work))
     }
 
     @Test
@@ -200,7 +240,7 @@ class ClaudeBackendTest {
     fun `a chat read by this backend is tagged with it`() {
         val home = folder.newFolder("home")
         val work = File(folder.root, "work")
-        File(projectDirectory(home, work), "s.jsonl").writeText("""{"type":"user","cwd":"/work"}""")
+        File(projectDirectory(home, work), "$OLDER.jsonl").writeText("""{"type":"user","cwd":"/work"}""")
 
         assertEquals(
             listOf("claude"),
@@ -285,5 +325,11 @@ class ClaudeBackendTest {
     @Test
     fun `an empty viewport answers nothing`() {
         assertNull(promptLine(""))
+    }
+
+    private companion object {
+        const val DEVICE_SESSION = "da24d711-40d4-44c3-85b4-9512de5a54c5"
+        const val OLDER = "11111111-1111-4111-8111-111111111111"
+        const val NEWER = "22222222-2222-4222-8222-222222222222"
     }
 }

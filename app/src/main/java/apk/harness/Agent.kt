@@ -2,6 +2,7 @@ package apk.harness
 
 import android.content.Context
 import android.util.Log
+import apk.harness.agents.TAB_VARIABLE
 import apk.harness.bootstrap.AgentStage
 import apk.harness.chats.oneSpelling
 import com.ghostty.android.terminal.TerminalSession
@@ -44,12 +45,18 @@ class Agent(private val context: Context) {
      *
      * [script] is the file under `HARNESS_HOME` the launcher runs, which is how
      * a backend brings its own invocation along with its own flags.
+     *
+     * [tag] names the tab in the environment of every process the session
+     * starts, whichever backend's script runs, so a record a process writes about
+     * itself can be matched to the tab it runs in. A conversation switch inside
+     * the CLI keeps its process and so keeps the tag.
      */
     fun session(
         directory: File,
         idePort: Int,
         arguments: List<String>,
         script: String,
+        tag: String,
     ): TerminalSession {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
@@ -83,6 +90,7 @@ class Agent(private val context: Context) {
         ).toMutableMap()
         environment += stage.environment()
         if (idePort > 0) environment["CLAUDE_CODE_SSE_PORT"] = idePort.toString()
+        environment[TAB_VARIABLE] = tag
         environment["HARNESS_AGENT_SCRIPT"] = script
         // Word-split by the shell that reads it, which is why nothing here may
         // carry a space. Session ids are UUIDs and paths are the app's own.
