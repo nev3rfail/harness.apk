@@ -542,6 +542,8 @@ class AgentTabs(
             _tabs.value.also { _tabs.value = emptyList() }
         }
         Roster.withdrawTabs(identities)
+        // The service counts the tabs it can see, and there are none now.
+        Roster.tabsChanged()
         writer.close()
         closing.forEach(::release)
     }

@@ -436,10 +436,12 @@ class MainActivity : ComponentActivity() {
 
     /** Holds [request] until the all-files grant is there, and asks for it. */
     private fun awaitGrant(request: OpenRequest.Open): Boolean {
-        awaitingGrant = request
+        // Held on the main thread just before the settings screen opens, so the
+        // resume that answers it is the one after that screen.
         runOnUiThread {
+            awaitingGrant = request
             toast(NO_STORAGE)
-            runCatching { startActivity(allFilesSettings(this)) }
+            if (runCatching { startActivity(allFilesSettings(this)) }.isFailure) awaitingGrant = null
         }
         return false
     }
@@ -506,10 +508,14 @@ class MainActivity : ComponentActivity() {
             is OpenRequest.Refused -> toast(request.reason)
             is OpenRequest.Open -> {
                 val holder = tabs
+                var replaced: OpenRequest? = null
                 val queued = synchronized(openLock) {
-                    if (holder == null || !restored) pendingOpen = request
-                    holder == null || !restored
+                    val wait = holder == null || !restored
+                    if (wait) replaced = pendingOpen.also { pendingOpen = request }
+                    wait
                 }
+                // One request waits at a time; the one it replaces is not opened.
+                if (replaced is OpenRequest.Open) toast("A newer request replaced one still waiting to open.")
                 if (!queued && holder != null) {
                     // Opening binds a socket, stages the home and reads the
                     // history, none of which belongs on the main thread.
