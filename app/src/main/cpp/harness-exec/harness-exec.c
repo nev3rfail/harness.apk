@@ -42,7 +42,6 @@
  * it take one anonymous mapping.
  */
 #define _GNU_SOURCE
-#include <dirent.h>
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -954,35 +954,47 @@ struct hx_dirent {
 	char name[];
 };
 
-/* Binds every file in $HARNESS_ETC onto /etc, in name order, leaving the last
- * three places for the rest. */
+/* Binds the regular files in $HARNESS_ETC onto /etc: the first by name,
+ * leaving the last three places for the rest. Files left out are said once
+ * for the prefix, by the capture that creates its marker in $PREFIX/tmp. */
 static void hx_bind_etc(void) {
 	static const char more[] = "harness-exec: more files in $HARNESS_ETC than a proot binds; the rest are left out\n";
-	char buf[1024], src[PATH_MAX], dst[5 + NAME_MAX + 1];
-	size_t first = hx_cfg.nbind, i, j;
+	uint64_t buf[128];
+	char names[HX_BINDS - 3][NAME_MAX + 1], src[PATH_MAX], dst[5 + NAME_MAX + 1];
+	size_t cnt = 0, i, j;
 	int over = 0;
 	long fd = hx_sys(SYS_openat, AT_FDCWD, hx_cfg.etc, O_RDONLY | O_DIRECTORY | O_CLOEXEC), n;
 	if (fd < 0) return;
 	while ((n = hx_sys(SYS_getdents64, fd, buf, sizeof buf)) > 0)
-		for (long off = 0; off < n; off += ((struct hx_dirent *)(buf + off))->reclen) {
-			struct hx_dirent *d = (struct hx_dirent *)(buf + off);
-			if (d->type == DT_DIR || !strcmp(d->name, ".") || !strcmp(d->name, "..")) continue;
-			if (hx_cfg.nbind - first == HX_BINDS - 3) {
+		for (long off = 0; off < n; off += ((struct hx_dirent *)((char *)buf + off))->reclen) {
+			struct hx_dirent *d = (struct hx_dirent *)((char *)buf + off);
+			struct stat st;
+			if (fstatat((int)fd, d->name, &st, 0) || !S_ISREG(st.st_mode)) continue;
+			/* Kept in name order; when full, the last name goes. */
+			for (j = cnt; j > 0 && strcmp(names[j - 1], d->name) > 0; j--)
+				;
+			if (cnt == HX_BINDS - 3) {
 				over = 1;
-				continue;
+				if (j == cnt) continue;
+				cnt--;
 			}
-			memcpy(dst, "/etc/", 5);
-			memcpy(dst + 5, d->name, strlen(d->name) + 1);
-			if (!hx_join(src, hx_cfg.etc, d->name)) hx_bind(src, dst);
+			memmove(names[j + 1], names[j], (cnt - j) * sizeof *names);
+			memcpy(names[j], d->name, strlen(d->name) + 1);
+			cnt++;
 		}
 	hx_sys(SYS_close, fd);
-	for (i = first + 1; i < hx_cfg.nbind; i++)
-		for (j = i; j > first && strcmp(hx_cfg.bind[j - 1], hx_cfg.bind[j]) > 0; j--) {
-			const char *t = hx_cfg.bind[j];
-			hx_cfg.bind[j] = hx_cfg.bind[j - 1];
-			hx_cfg.bind[j - 1] = t;
+	for (i = 0; i < cnt; i++) {
+		memcpy(dst, "/etc/", 5);
+		memcpy(dst + 5, names[i], strlen(names[i]) + 1);
+		if (!hx_join(src, hx_cfg.etc, names[i])) hx_bind(src, dst);
+	}
+	if (over && hx_cfg.prefix[0] && !hx_join(src, hx_cfg.prefix, "tmp/.harness-etc-left-out")) {
+		long m = hx_sys(SYS_openat, AT_FDCWD, src, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+		if (m >= 0) {
+			hx_sys(SYS_close, m);
+			hx_sys(SYS_write, 2, more, sizeof more - 1);
 		}
-	if (over) hx_sys(SYS_write, 2, more, sizeof more - 1);
+	}
 }
 
 /* Row 10's bindings, of the sources that exist; glibc's ld.so last, checked

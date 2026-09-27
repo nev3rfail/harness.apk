@@ -750,23 +750,38 @@ static void test_capture(void) {
 	hx_release(&x);
 	if (rename(S("%s.away", PROOT), PROOT)) abort();
 
-	/* More files than the maximum: the rest left out, and said once. */
+	/* More files than the maximum: the first by name kept, the rest left out,
+	 * and said once however many processes capture. Only regular files, and
+	 * links to them, are bound. */
 	{
 		char *many = S("%s/many", R), *env[] = {CAPTURE[0], S("HARNESS_ETC=%s", many), NULL};
 		char *log = S("%s/capture.log", R), text[512] = "";
 		int fd = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644), saved = dup(2);
-		size_t etc_binds = 0;
+		const char *names[HX_BINDS + 8];
+		size_t etc_binds = 0, nn = 0;
 		FILE *f;
-		mkdirs(many);
-		for (int i = 0; i < HX_BINDS + 4; i++)
-			script(S("%s/f%02d", many, i), "");
+		mkdirs(S("%s/d-sub", many));
+		if (symlink("d-sub", S("%s/d-dirlink", many)) || mkfifo(S("%s/d-fifo", many), 0644)) abort();
+		/* "e" before "e.conf", which a comparison of --bind=SRC:DST gets wrong. */
+		names[nn++] = "e";
+		names[nn++] = "e.conf";
+		for (int i = 0; i < HX_BINDS + 2; i++)
+			names[nn++] = S("f%02d", i);
+		/* Written last first, so directory order is not name order. */
+		for (size_t i = nn; i-- > 0;)
+			script(S("%s/%s", many, names[i]), "");
 		dup2(fd, 2);
-		hx_capture(env, L);
+		for (int i = 0; i < 3; i++)
+			hx_capture(env, L);
 		dup2(saved, 2);
 		close(fd);
 		close(saved);
 		for (size_t i = 0; i < hx_cfg.nbind; i++)
-			etc_binds += !strncmp(hx_cfg.bind[i], S("--bind=%s/", many), strlen(many) + 8);
+			if (!strncmp(hx_cfg.bind[i], S("--bind=%s/", many), strlen(many) + 8)) {
+				CHECK(i == etc_binds &&
+				      !strcmp(hx_cfg.bind[i], S("--bind=%s/%s:/etc/%s", many, names[i], names[i])));
+				etc_binds++;
+			}
 		CHECK(etc_binds == HX_BINDS - 3);
 		/* With the certificates, the musl loader and glibc's ld.so. */
 		CHECK(hx_cfg.nbind == HX_BINDS && hx_cfg.glibc_bind);
@@ -792,32 +807,31 @@ static void test_capture(void) {
 	configure(0);
 }
 
-/* Row 10's arguments and environment at the largest list that fits inline, and
- * the first that does not; then E2BIG when that cannot be mapped. */
-static void test_row10_e2big(void) {
-	const char *st = S("%s/static", D);
+/* Routes path with ever more arguments until the arrays no longer fit inline:
+ * every one must come out whole, with off arguments in front of P, the
+ * environment xenv, and nothing written past struct hx_exec. Returns the most
+ * arguments that fit inline. */
+static size_t boundary(int line, const char *path, char **argv, char **env, const char *xpath, size_t off,
+                       const char *const *xenv) {
 	struct {
 		struct hx_exec x;
 		unsigned char canary[256];
 	} b;
 	size_t n, inline_max = 0;
-	char **argv = calloc(4002, sizeof *argv);
-	configure(0);
 	argv[0] = "x";
 	for (n = 1; n < 4000; n++) {
 		int ok, intact = 1;
 		argv[n] = S("a%zu", n);
 		argv[n + 1] = NULL;
 		memset(b.canary, 0x5a, sizeof b.canary);
-		if (hx_route(st, argv, ENV, NULL, &b.x)) break;
-		ok = !strcmp(b.x.path, PROOT) && !strcmp(b.x.argv[0], PROOT) && !strcmp(b.x.argv[6], B_MUSL) &&
-		     !strcmp(b.x.argv[7], st) && !strcmp(b.x.argv[7 + n], argv[n]) && !b.x.argv[8 + n] &&
-		     same(b.x.envp, ROW5_ENV);
+		if (hx_route(path, argv, env, NULL, &b.x)) break;
+		ok = !strcmp(b.x.path, xpath) && !strcmp(b.x.argv[off + n], argv[n]) && !b.x.argv[off + n + 1] &&
+		     same(b.x.envp, xenv);
 		for (size_t i = 0; i < sizeof b.canary; i++)
 			intact &= b.canary[i] == 0x5a;
-		CHECK(intact);
 		if (!ok || !intact) {
-			fprintf(stderr, "row 10 with %zu arguments\n", n + 1);
+			fprintf(stderr, "line %d: %s with %zu arguments: %s\n", line, path, n + 1, ok ? "overflow" : "wrong");
+			failures++;
 			break;
 		}
 		if (b.x.map) {
@@ -826,8 +840,37 @@ static void test_row10_e2big(void) {
 		}
 		inline_max = n;
 	}
-	printf("row 10: %zu arguments inline, %zu mapped\n", inline_max + 1, inline_max + 2);
-	CHECK(inline_max > 100 && n == inline_max + 1);
+	checks++;
+	if (!(inline_max > 50 && n == inline_max + 1)) failures++;
+	return inline_max + 1;
+}
+
+/* Row 10's arguments and environment at the largest list that fits inline, and
+ * the first that does not; the same for a long LD_PRELOAD as asked under proot
+ * and through row 5; then E2BIG when that cannot be mapped. */
+static void test_row10_e2big(void) {
+	const char *st = S("%s/static", D), *bionic = S("%s/bionic", D);
+	char **argv = calloc(4002, sizeof *argv), *pre = malloc(1100), *lenv[4];
+	struct hx_exec x;
+	size_t n;
+	configure(0);
+	n = boundary(__LINE__, st, argv, ENV, PROOT, 7, ROW5_ENV);
+	printf("row 10: %zu arguments inline, %zu mapped\n", n, n + 1);
+
+	/* About a kilobyte of preloads that are not termux-exec, and one that is. */
+	strcpy(pre, "LD_PRELOAD=/p/libtermux-exec.so");
+	while (strlen(pre) < 1050)
+		strcat(pre, ":/a/long/preload/path/libx.so");
+	lenv[0] = "PATH=/usr/bin";
+	lenv[1] = pre;
+	lenv[2] = NULL;
+	{
+		const char *stripped = S("LD_PRELOAD=%s", pre + strlen("LD_PRELOAD=/p/libtermux-exec.so:"));
+		boundary(__LINE__, BINPROOT, argv, lenv, PROOT, 0, V("PATH=/usr/bin", TMP, stripped, HP, HE));
+		t_traced = PROOT;
+		boundary(__LINE__, bionic, argv, lenv, bionic, 0, V("PATH=/usr/bin", stripped, HP, HE));
+		configure(0);
+	}
 
 	pid_t pid = fork();
 	if (!pid) {
@@ -838,7 +881,11 @@ static void test_row10_e2big(void) {
 			if (sscanf(line, "VmSize: %lu", &kb) == 1) break;
 		struct rlimit rl = {kb * 1024 + 4096, kb * 1024 + 4096};
 		if (setrlimit(RLIMIT_AS, &rl)) _exit(2);
-		_exit(hx_route(st, argv, ENV, NULL, &b.x) == E2BIG ? 0 : 1);
+		/* One more than row 10 fits inline. */
+		for (size_t i = 1; i <= n; i++)
+			argv[i] = "a";
+		argv[n + 1] = NULL;
+		_exit(hx_route(st, argv, ENV, NULL, &x) == E2BIG ? 0 : 1);
 	}
 	int status;
 	waitpid(pid, &status, 0);
