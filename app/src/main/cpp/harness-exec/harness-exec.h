@@ -37,9 +37,18 @@ struct hx_scratch {
 	char interp[HX_DEPTH][HX_INTERP_PATH];
 	char header[HX_DEPTH][HX_HEADER];
 	char elf_interp[HX_HEADER];
-	/* In turn: the rewrite, the ELF header, the realpath, then the
-	 * normalized path or TERMUX_EXEC__PROC_SELF_EXE. */
+	/* In turn: the rewrite, the ELF header, the realpath, the tracer's
+	 * executable, then the normalized path or TERMUX_EXEC__PROC_SELF_EXE. */
 	char work[PATH_MAX];
+	/* The realpath of $HARNESS_PREFIX/bin/proot, or empty. */
+	char proot[PATH_MAX];
+	/* A linker64 exec's argv[1], resolved. */
+	char arg1[PATH_MAX];
+	/* The tracer's /proc/<pid>/status and /proc/<pid>/cmdline, and its
+	 * argv[1] resolved against its working directory. */
+	char tracer_status[512];
+	char tracer_cmdline[PATH_MAX];
+	char tracer_arg1[PATH_MAX];
 	const char *head[2 * HX_DEPTH + 2];
 };
 
@@ -48,12 +57,13 @@ struct hx_scratch {
  * not fit inline. hx_release unmaps that once the exec has failed or the spawn
  * has returned.
  *
- * It lives on the caller's stack, 19832 bytes on LP64, because a vfork child
+ * It lives on the caller's stack, 36728 bytes on LP64, because a vfork child
  * shares the parent's address space: a mapping made there and followed by a
  * successful exec stays in the parent for good. Only arrays larger than
  * HX_INLINE still take one: around a thousand arguments and environment
  * entries together. The unit tests measure the deepest stack a routing vfork
- * child reaches, a PATH search included, at 24672 bytes on x86_64. */
+ * child reaches, a PATH search, a linker64 exec's argv[1] and a linker64
+ * tracer's included, at 41776 bytes on x86_64. */
 struct hx_exec {
 	const char *path;
 	char **argv;
@@ -66,7 +76,8 @@ struct hx_exec {
 
 /* Records the configuration from the process's own start: HARNESS_PREFIX,
  * HARNESS_ETC and TERMUX_EXEC__PROC_SELF_EXE from envp, and nativeLibraryDir as
- * libdir, or the directory of /proc/self/exe when libdir is null. */
+ * libdir, or, when libdir is null, the directory of the file /proc/self/maps
+ * shows holding this code. */
 HX_API void hx_capture(char *const envp[], const char *libdir);
 
 /* Decides how to run path. base, when not null, is the directory a relative path

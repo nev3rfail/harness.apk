@@ -13,15 +13,28 @@
  *      four, with its argument and the script in front of the arguments.
  *   3. The target is classified by its realpath:
  *
- *      row  target                           runs as
- *      1    linker64                         as asked
- *      2    the loader                       as asked, shim prepended
- *      3    the shim                         as asked
- *      4    native dynamic ELF under system  as asked
- *      5    anything else under system       as asked
- *      6    PT_INTERP /system/bin/linker64   /system/bin/linker64 P ...
- *      7    PT_INTERP ld-musl-*              [shim] loader --argv0 argv0 P ...
- *      8    anything else                    as asked, environment unchanged
+ *      row  target                             runs as
+ *      1    linker64 with a proot as argv[1]   as row 5, with argv[1] as P
+ *      2    linker64                           as asked
+ *      3    the loader                         as asked, shim prepended
+ *      4    the shim                           as asked
+ *      5    a proot                            libproot.so, arguments as asked
+ *      6    native dynamic ELF under system    as asked
+ *      7    anything else under system         as asked
+ *      8    PT_INTERP linker64                 /system/bin/linker64 P ...
+ *      9    PT_INTERP ld-musl-*                [shim] loader --argv0 argv0 P ...
+ *      10   any other native ELF program       libproot.so --exec-bin DIR BINDS P ...
+ *      11   anything else                      as asked, environment unchanged
+ *
+ *      A proot is libproot.so or the realpath of $HARNESS_PREFIX/bin/proot.
+ *      Row 10's BINDS put $HARNESS_ETC's files, the certificates, the musl
+ *      loader and glibc's ld.so at the paths a Linux program looks for them.
+ *
+ *   A process traced by a proot, directly or through linker64, runs rows 1 and
+ *   5 as above, 3 and 9 without the shim, and 4 as its argv[1...]. Row 9 runs
+ *   as asked when /lib/ld-musl-*.so.1 exists, as it does inside a row-10 proot.
+ *   Every other exec runs as asked, and LD_PRELOAD loses its termux-exec
+ *   entries, or all of them for a target with neither interpreter.
  *
  * Everything here is safe in a vfork child: raw system calls, no allocator, no
  * stdio, no writes to environ. The working state and the new argument and
@@ -29,6 +42,7 @@
  * it take one anonymous mapping.
  */
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -53,22 +67,37 @@ static long hx_ret(long r) { return r == -1 ? -errno : r; }
 #if defined(__aarch64__)
 #define HX_MACHINE EM_AARCH64
 #define HX_USE_SHIM 0
+#define HX_MUSL_LIB "/lib/ld-musl-aarch64.so.1"
+#define HX_GLIBC_NAME "ld-linux-aarch64.so.1"
+#define HX_GLIBC_LIB "/lib/ld-linux-aarch64.so.1"
 #elif defined(__x86_64__)
 #define HX_MACHINE EM_X86_64
 /* Android's seccomp allowlist omits the legacy x86_64 system calls musl makes,
  * so a musl program there runs under the tracer that rewrites them. */
 #define HX_USE_SHIM 1
+#define HX_MUSL_LIB "/lib/ld-musl-x86_64.so.1"
+#define HX_GLIBC_NAME "ld-linux-x86-64.so.2"
+#define HX_GLIBC_LIB "/lib64/ld-linux-x86-64.so.2"
 #else
 #error "unsupported architecture"
 #endif
 
 #define HX_PSE "TERMUX_EXEC__PROC_SELF_EXE"
+#define HX_TMP "PROOT_TMP_DIR"
 
 #define HX_LOADER "libmuslloader.so"
 #define HX_SHIM "libsyscallshim.so"
 #define HX_PRELOAD "libtermuxexec.so"
+#define HX_PROOT "libproot.so"
+
+/* Row 10's --bind arguments at most. */
+#define HX_BINDS 16
+/* The arguments a row puts in front of the caller's: row 10's. */
+#define HX_PRE (3 + HX_BINDS)
 
 static const char *hx_linker64 = "/system/bin/linker64";
+/* Where a row-10 proot binds the musl loader. */
+static const char *hx_musl_lib = HX_MUSL_LIB;
 
 static const char *const hx_linkers[] = {
     "/system/bin/linker64",
@@ -93,15 +122,37 @@ static struct {
 	/* TERMUX_EXEC__PROC_SELF_EXE as the process was started. */
 	char self[PATH_MAX];
 	int use_shim;
+	/* libproot.so, when it exists. */
+	char proot[PATH_MAX];
+	/* $HARNESS_PREFIX/bin, $HARNESS_PREFIX/bin/proot, and the
+	 * PROOT_TMP_DIR entry naming $HARNESS_PREFIX/tmp. */
+	char bin[PATH_MAX];
+	char bin_proot[PATH_MAX];
+	char tmp[PATH_MAX];
+	/* glibc's ld.so under the prefix, bound when it exists. */
+	char glibc[PATH_MAX];
+	/* Row 10's --bind arguments: bind[0..nbind), where the last is glibc's
+	 * when glibc_bind is set. */
+	char bind_text[HX_BINDS][PATH_MAX];
+	const char *bind[HX_BINDS];
+	size_t nbind;
+	int glibc_bind;
+	/* /proc/self/maps, read through this at capture. */
+	char maps[4096];
 } hx_cfg;
 
-enum { HX_KEEP, HX_OURS, HX_DROP };
+/* LD_PRELOAD as it is, with ours first, removed, or with its termux-exec
+ * entries removed. */
+enum { HX_KEEP, HX_OURS, HX_DROP, HX_STRIP };
+/* PROOT_TMP_DIR as it is, added when absent, or replaced. */
+enum { HX_TMP_KEEP, HX_TMP_ADD, HX_TMP_SET };
 
 struct hx_env {
 	int preload;
 	int libpath;
 	int shim;
 	const char *pse;
+	int tmp;
 };
 
 static void hx_proc_path(char *out, const char *a, unsigned long n, const char *b) {
@@ -165,33 +216,35 @@ static int hx_canon_sys(const char *path, char *out) {
 	return e;
 }
 
-/* The executable of this process's tracer, or empty. */
-static void hx_tracer_sys(char *out) {
-	char status[512], proc[64], *t;
+/* The pid of this process's tracer, or 0, and its executable in out, or
+ * empty. */
+static unsigned long hx_tracer_sys(struct hx_scratch *s, char *out) {
+	char proc[64], *status = s->tracer_status, *t;
 	unsigned long pid = 0;
 	long fd, n;
 	out[0] = 0;
 	fd = hx_sys(SYS_openat, AT_FDCWD, "/proc/self/status", O_RDONLY | O_CLOEXEC);
-	if (fd < 0) return;
-	n = hx_sys(SYS_read, fd, status, sizeof status - 1);
+	if (fd < 0) return 0;
+	n = hx_sys(SYS_read, fd, status, sizeof s->tracer_status - 1);
 	hx_sys(SYS_close, fd);
-	if (n <= 0) return;
+	if (n <= 0) return 0;
 	status[n] = 0;
 	t = strstr(status, "\nTracerPid:");
-	if (!t) return;
+	if (!t) return 0;
 	for (t += 11; *t == ' ' || *t == '\t'; t++)
 		;
 	for (; *t >= '0' && *t <= '9'; t++)
 		pid = pid * 10 + (unsigned long)(*t - '0');
-	if (!pid) return;
+	if (!pid) return 0;
 	hx_proc_path(proc, "/proc/", pid, "/exe");
 	if (hx_link_sys(proc, out)) out[0] = 0;
+	return pid;
 }
 
 #ifdef UNIT_TEST
 static int (*hx_link)(const char *, char *) = hx_link_sys;
 static int (*hx_canon)(const char *, char *) = hx_canon_sys;
-static void (*hx_tracer)(char *) = hx_tracer_sys;
+static unsigned long (*hx_tracer)(struct hx_scratch *, char *) = hx_tracer_sys;
 #else
 #define hx_link hx_link_sys
 #define hx_canon hx_canon_sys
@@ -222,11 +275,45 @@ static int hx_is_musl(const char *interp) {
 	return !strncmp(base ? base + 1 : interp, "ld-musl-", 8);
 }
 
-/* Whether this process is the shim or is traced by it. */
-static int hx_shimmed(char *tmp) {
-	if (!hx_link("/proc/self/exe", tmp) && !strcmp(tmp, hx_cfg.shim)) return 1;
-	hx_tracer(tmp);
-	return tmp[0] && !strcmp(tmp, hx_cfg.shim);
+/* Whether a PT_INTERP names linker64 by one of its paths. */
+static int hx_is_linker_interp(const char *interp) {
+	for (size_t i = 0; i < sizeof hx_linkers / sizeof *hx_linkers; i++)
+		if (!strcmp(interp, hx_linkers[i])) return 1;
+	return 0;
+}
+
+/* Whether real, a realpath, is a proot. s->proot holds the realpath of
+ * $HARNESS_PREFIX/bin/proot. */
+static int hx_is_proot(const struct hx_scratch *s, const char *real) {
+	return hx_cfg.proot[0] && (!strcmp(real, hx_cfg.proot) || (s->proot[0] && !strcmp(real, s->proot)));
+}
+
+/* Whether the tracer pid, whose executable is exe, is a proot: itself, or
+ * linker64 running one as its argv[1]. */
+static int hx_proot_tracer(struct hx_scratch *s, unsigned long pid, const char *exe) {
+	char proc[64], *c = s->tracer_cmdline, *arg1 = s->tracer_arg1;
+	long fd, n;
+	size_t l0;
+	if (!pid || !exe[0]) return 0;
+	if (hx_is_proot(s, exe)) return 1;
+	if (!hx_is_linker(exe)) return 0;
+	hx_proc_path(proc, "/proc/", pid, "/cmdline");
+	fd = hx_sys(SYS_openat, AT_FDCWD, proc, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) return 0;
+	n = hx_sys(SYS_read, fd, c, sizeof s->tracer_cmdline - 1);
+	hx_sys(SYS_close, fd);
+	if (n <= 0) return 0;
+	c[n] = 0;
+	l0 = strlen(c);
+	if ((long)l0 + 1 >= n) return 0;
+	c += l0 + 1;
+	if (c[0] == '/') {
+		if (hx_copy(arg1, c)) return 0;
+	} else {
+		hx_proc_path(arg1, "/proc/", pid, "/cwd");
+		if (hx_join(arg1, arg1, c)) return 0;
+	}
+	return !hx_canon(arg1, arg1) && hx_is_proot(s, arg1);
 }
 
 /* Whether path is /proc/self/exe or /proc/<pid>/exe; pid is 0 for self. */
@@ -315,24 +402,26 @@ static int hx_shebang(char *h, size_t n, char **interp, char **arg) {
 	return 0;
 }
 
-/* Whether an ELF of n header bytes open as fd is native, and its PT_INTERP. */
-static void hx_elf(long fd, const char *h, size_t n, int *native, char *interp) {
+/* Whether an ELF of n header bytes open as fd is native, and its PT_INTERP.
+ * Returns its e_type, or 0 for an ELF that is not 64-bit. */
+static int hx_elf(long fd, const char *h, size_t n, int *native, char *interp) {
 	Elf64_Ehdr eh;
 	interp[0] = 0;
 	*native = 0;
-	if (n < sizeof eh || h[EI_CLASS] != ELFCLASS64) return;
+	if (n < sizeof eh || h[EI_CLASS] != ELFCLASS64) return 0;
 	memcpy(&eh, h, sizeof eh);
 	*native = eh.e_machine == HX_MACHINE;
 	for (unsigned i = 0; i < eh.e_phnum && i < 64; i++) {
 		Elf64_Phdr ph;
 		long r = hx_sys(SYS_pread64, fd, &ph, sizeof ph, (long)(eh.e_phoff + (uint64_t)i * eh.e_phentsize));
-		if (r != (long)sizeof ph) return;
+		if (r != (long)sizeof ph) break;
 		if (ph.p_type != PT_INTERP) continue;
 		r = hx_sys(SYS_pread64, fd, interp, ph.p_filesz < HX_HEADER ? ph.p_filesz : HX_HEADER - 1,
 		           (long)ph.p_offset);
 		interp[r > 0 ? r : 0] = 0;
-		return;
+		break;
 	}
+	return eh.e_type;
 }
 
 /* The arguments as asked: what the shebangs put in front, then the caller's
@@ -383,18 +472,23 @@ static int hx_termux_exec(const char *e, size_t n) {
 	return (l >= 14 && !memcmp(b, "libtermux-exec", 14)) || (l == 16 && !memcmp(b, HX_PRELOAD, 16));
 }
 
-/* LD_PRELOAD with ours first and no other termux-exec. */
-static char *hx_preload(char **area, const char *old) {
-	char *s = hx_put(area, "LD_PRELOAD=", hx_cfg.preload), *w = *area - 1;
+/* LD_PRELOAD with first, when not null, at its head, and no termux-exec
+ * entry otherwise. Null when that leaves it empty. */
+static char *hx_preload(char **area, const char *old, const char *first) {
+	char *s = hx_put(area, "LD_PRELOAD=", first ? first : ""), *w = *area - 1;
 	while (old && *old) {
 		size_t n = strcspn(old, ": ");
 		if (n && !hx_termux_exec(old, n)) {
-			*w++ = ':';
+			if (w > s + 11) *w++ = ':';
 			memcpy(w, old, n);
 			w += n;
 		}
 		old += n;
 		if (*old) old++;
+	}
+	if (w == s + 11) {
+		*area = s;
+		return 0;
 	}
 	*w++ = 0;
 	*area = w;
@@ -403,21 +497,32 @@ static char *hx_preload(char **area, const char *old) {
 
 /* The most hx_environ writes past the caller's entries: pointers and text. */
 static size_t hx_environ_size(const struct hx_env *e, const char *old) {
-	return 6 * sizeof(char *) + (e->preload == HX_OURS ? 13 + strlen(hx_cfg.preload) + (old ? strlen(old) : 0) : 0) +
-	       (e->pse ? 28 + strlen(e->pse) : 0) + 16 + strlen(hx_cfg.prefix) + 2 * (18 + strlen(hx_cfg.etc));
+	size_t n = 7 * sizeof(char *) + (e->pse ? 28 + strlen(e->pse) : 0) + 16 + strlen(hx_cfg.prefix) +
+	           2 * (18 + strlen(hx_cfg.etc)) + (e->tmp != HX_TMP_KEEP ? strlen(hx_cfg.tmp) + 1 : 0);
+	if (e->preload == HX_OURS) n += 13 + strlen(hx_cfg.preload) + (old ? strlen(old) : 0);
+	if (e->preload == HX_STRIP) n += 12 + (old ? strlen(old) : 0);
+	return n;
 }
 
 static char **hx_environ(char **out, char *area, char *const envp[], const struct hx_env *e, const char *old) {
 	size_t k = 0;
+	char *pre;
+	int tmp = hx_cfg.tmp[0] && (e->tmp == HX_TMP_SET || (e->tmp == HX_TMP_ADD && !hx_env_get(envp, HX_TMP)));
 	for (; *envp; envp++) {
 		const char *v = *envp;
 		if ((e->preload != HX_KEEP && hx_is(v, "LD_PRELOAD")) || (e->libpath == HX_DROP && hx_is(v, "LD_LIBRARY_PATH")) ||
 		    hx_is(v, HX_PSE) || (hx_cfg.prefix[0] && hx_is(v, "HARNESS_PREFIX")) ||
-		    (hx_cfg.etc[0] && hx_is(v, "HARNESS_ETC")) || (e->shim && hx_cfg.etc[0] && hx_is(v, "SYSCALL_SHIM_ETC")))
+		    (hx_cfg.etc[0] && hx_is(v, "HARNESS_ETC")) || (e->shim && hx_cfg.etc[0] && hx_is(v, "SYSCALL_SHIM_ETC")) ||
+		    (tmp && hx_is(v, HX_TMP)))
 			continue;
 		out[k++] = (char *)v;
 	}
-	if (e->preload == HX_OURS) out[k++] = hx_preload(&area, old);
+	/* Ahead of the entries below: where it stays when routed again. */
+	if (tmp) out[k++] = hx_cfg.tmp;
+	if (e->preload == HX_OURS || e->preload == HX_STRIP) {
+		pre = hx_preload(&area, old, e->preload == HX_OURS ? hx_cfg.preload : 0);
+		if (pre) out[k++] = pre;
+	}
 	if (e->pse) out[k++] = hx_put(&area, HX_PSE "=", e->pse);
 	if (hx_cfg.prefix[0]) out[k++] = hx_put(&area, "HARNESS_PREFIX=", hx_cfg.prefix);
 	if (hx_cfg.etc[0]) out[k++] = hx_put(&area, "HARNESS_ETC=", hx_cfg.etc);
@@ -426,26 +531,42 @@ static char **hx_environ(char **out, char *area, char *const envp[], const struc
 	return out;
 }
 
-static int hx_row(const char *real, int native, const char *interp) {
-	if (hx_is_linker(real)) return 1;
-	if (hx_cfg.loader[0] && !strcmp(real, hx_cfg.loader)) return 2;
-	if (hx_cfg.shim[0] && !strcmp(real, hx_cfg.shim)) return 3;
-	if (hx_under_system(real)) return native && interp[0] ? 4 : 5;
-	if (!strcmp(interp, "/system/bin/linker64")) return 6;
-	if (interp[0] && hx_is_musl(interp)) return 7;
-	return 8;
+/* The row for real, the target's realpath. A linker64 exec's argv[1] is
+ * resolved against base, as the path is. */
+static int hx_row(struct hx_scratch *s, const char *real, int native, int type, const struct hx_args *a,
+                  const char *base) {
+	const char *interp = s->elf_interp, *arg1 = hx_arg(a, 1);
+	if (hx_is_linker(real)) {
+		if (arg1 && hx_cfg.proot[0] &&
+		    !(base && arg1[0] != '/' ? hx_join(s->arg1, base, arg1) : hx_copy(s->arg1, arg1)) &&
+		    !hx_canon(s->arg1, s->arg1) && hx_is_proot(s, s->arg1))
+			return 1;
+		return 2;
+	}
+	if (hx_cfg.loader[0] && !strcmp(real, hx_cfg.loader)) return 3;
+	if (hx_cfg.shim[0] && !strcmp(real, hx_cfg.shim)) return 4;
+	if (hx_is_proot(s, real)) return 5;
+	if (hx_under_system(real)) return native && interp[0] ? 6 : 7;
+	if (hx_is_linker_interp(interp)) return 8;
+	if (interp[0] && hx_is_musl(interp)) return 9;
+	if (native && (type == ET_EXEC || type == ET_DYN) && hx_cfg.tmp[0] && hx_cfg.etc[0] && hx_cfg.proot[0]) return 10;
+	return 11;
 }
 
-int hx_route(const char *path, char *const argv[], char *const envp[], const char *base, struct hx_exec *x) {
+/* hx_route_once's answer for the shim under proot: decide its argv[1...]. */
+#define HX_AGAIN (-1)
+
+static int hx_route_once(const char *path, char *const argv[], char *const envp[], const char *base,
+                         struct hx_exec *x) {
 	static char *const none[] = {0};
 	struct hx_scratch *s = &x->s;
 	char *w = s->work, *p = s->path, **av, **ev;
-	const char **head = s->head, *old, *head0, *prog, *pre[4];
+	const char **head = s->head, *old, *head0, *prog, *pre[HX_PRE];
 	struct hx_args a;
-	struct hx_env env = {HX_KEEP, HX_KEEP, 0, 0};
-	size_t argc = 0, envc = 0, hn = 0, pn = 0, depth, i, k = 0, need;
+	struct hx_env env = {HX_KEEP, HX_KEEP, 0, 0, HX_TMP_KEEP};
+	size_t argc = 0, envc = 0, hn = 0, pn = 0, from = 0, depth, i, k = 0, need;
 	unsigned long pid;
-	int native = 0, row, shim = 0, first = 0, e;
+	int native = 0, type = 0, row, shim = 0, first = 0, under = 0, loaded, e;
 
 	x->map = 0;
 	if (!path) return EFAULT;
@@ -486,7 +607,7 @@ int hx_route(const char *path, char *const argv[], char *const envp[], const cha
 		}
 		w[n] = 0;
 		if (n >= SELFMAG && !memcmp(w, ELFMAG, SELFMAG)) {
-			hx_elf(fd, w, (size_t)n, &native, s->elf_interp);
+			type = hx_elf(fd, w, (size_t)n, &native, s->elf_interp);
 			hx_sys(SYS_close, fd);
 			break;
 		}
@@ -513,63 +634,106 @@ int hx_route(const char *path, char *const argv[], char *const envp[], const cha
 
 	/* Step 3. */
 	if (hx_canon(p, w) && hx_normalize(p, w)) hx_copy(w, p);
-	row = hx_row(w, native, s->elf_interp);
-	if ((row == 2 || row == 7) && hx_cfg.use_shim && hx_cfg.shim[0] && !hx_shimmed(w)) shim = 1;
-
+	if (!hx_cfg.bin_proot[0] || hx_canon(hx_cfg.bin_proot, s->proot)) s->proot[0] = 0;
 	a = (struct hx_args){head, hn, argv[0] ? argv + 1 : argv, hn + argc - (argv[0] ? 1 : 0)};
+	row = hx_row(s, w, native, type, &a, base);
+	loaded = row == 2 || hx_is_linker_interp(s->elf_interp) || (s->elf_interp[0] && hx_is_musl(s->elf_interp));
+	if (row != 1 && row != 5) {
+		/* w holds the tracer's executable, then this process's. */
+		pid = hx_tracer(s, w);
+		under = hx_proot_tracer(s, pid, w);
+		if ((row == 3 || row == 9) && !under && hx_cfg.use_shim && hx_cfg.shim[0] && strcmp(w, hx_cfg.shim) &&
+		    (hx_link("/proc/self/exe", w) || strcmp(w, hx_cfg.shim)))
+			shim = 1;
+	}
+	/* Under proot, rows 3 and 9 run without the shim, and every other row as
+	 * asked: row 0. Row 9 runs as asked where the musl loader is bound. */
+	if (under) {
+		if (row == 4 && hn == 1 && argv[1]) return HX_AGAIN;
+		if (row != 3 && (row != 9 || !hx_sys(SYS_faccessat, AT_FDCWD, hx_musl_lib, F_OK, 0))) row = 0;
+	}
+
 	/* Where P goes in place of argv[0], it is normalized into w; head0 may
 	 * point there before it is written. */
 	head0 = hn ? head[0] : w;
 	x->path = p;
 
 	switch (row) {
+	case 0:
+		env = (struct hx_env){loaded ? HX_STRIP : HX_DROP, HX_KEEP, 0, 0, HX_TMP_KEEP};
+		break;
 	case 1:
-		env = (struct hx_env){HX_OURS, HX_KEEP, 0, 0};
-		if (hx_arg(&a, 1) && !hx_normalize(hx_arg(&a, 1), w)) env.pse = w;
+		/* argv[1] is the proot's own argv[0]. */
+		from = 1;
+		/* fall through */
+	case 5:
+		env = (struct hx_env){HX_STRIP, HX_KEEP, 0, 0, HX_TMP_ADD};
+		x->path = hx_cfg.proot;
 		break;
 	case 2:
+		env = (struct hx_env){HX_OURS, HX_KEEP, 0, 0, HX_TMP_KEEP};
+		if (hx_arg(&a, 1) && !hx_normalize(hx_arg(&a, 1), w)) env.pse = w;
+		break;
+	case 3:
 		if (shim) {
 			/* The shim runs the loader, which this router in the shim then
 			 * decides again, without the shim. */
-			env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0};
+			env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0, HX_TMP_KEEP};
 			pre[pn++] = hx_cfg.shim;
 			first = 1;
 			x->path = hx_cfg.shim;
 		} else {
-			env = (struct hx_env){HX_DROP, HX_DROP, 0, 0};
+			env = (struct hx_env){HX_DROP, HX_DROP, 0, 0, HX_TMP_KEEP};
 			prog = hx_loader_program(&a);
 			if (prog && !hx_normalize(prog, w)) env.pse = w;
 		}
 		break;
-	case 3:
-		env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0};
-		break;
 	case 4:
-		env = (struct hx_env){HX_OURS, HX_DROP, 0, 0};
-		break;
-	case 5:
-		env = (struct hx_env){HX_DROP, HX_DROP, 0, 0};
+		env = (struct hx_env){HX_OURS, HX_KEEP, 1, 0, HX_TMP_KEEP};
 		break;
 	case 6:
-		env = (struct hx_env){HX_OURS, HX_KEEP, 0, w};
+		env = (struct hx_env){HX_OURS, HX_DROP, 0, 0, HX_TMP_KEEP};
+		break;
+	case 7:
+		env = (struct hx_env){HX_DROP, HX_DROP, 0, 0, HX_TMP_KEEP};
+		break;
+	case 8:
+		env = (struct hx_env){HX_OURS, HX_KEEP, 0, w, HX_TMP_KEEP};
 		pre[pn++] = head0;
 		first = 1;
 		x->path = hx_linker64;
 		break;
-	case 7:
+	case 9:
 		if (shim) pre[pn++] = hx_cfg.shim;
 		pre[pn++] = hx_cfg.loader;
 		pre[pn++] = "--argv0";
 		pre[pn++] = head0;
 		first = 1;
 		x->path = shim ? hx_cfg.shim : hx_cfg.loader;
-		env = shim ? (struct hx_env){HX_OURS, HX_KEEP, 1, 0} : (struct hx_env){HX_DROP, HX_DROP, 0, w};
+		env = shim ? (struct hx_env){HX_OURS, HX_KEEP, 1, 0, HX_TMP_KEEP}
+		           : (struct hx_env){HX_DROP, HX_DROP, 0, w, HX_TMP_KEEP};
 		break;
+	case 10: {
+		/* The binding set with glibc's ld.so where it exists. */
+		size_t n = hx_cfg.nbind - (size_t)hx_cfg.glibc_bind;
+		if (hx_cfg.glibc_bind && !hx_sys(SYS_faccessat, AT_FDCWD, hx_cfg.glibc, F_OK, 0)) n++;
+		pre[pn++] = hx_cfg.proot;
+		pre[pn++] = "--exec-bin";
+		pre[pn++] = hx_cfg.bin;
+		for (i = 0; i < n; i++)
+			pre[pn++] = hx_cfg.bind[i];
+		first = 1;
+		x->path = hx_cfg.proot;
+		/* A bionic preload fails in another ld.so. */
+		env = s->elf_interp[0] ? (struct hx_env){HX_DROP, HX_DROP, 0, 0, HX_TMP_SET}
+		                       : (struct hx_env){HX_STRIP, HX_KEEP, 0, 0, HX_TMP_SET};
+		break;
+	}
 	}
 	if (first && hx_normalize(p, w)) hx_copy(w, p);
 
 	need = (pn + a.n + 2) * sizeof(char *);
-	if (row != 8) need += envc * sizeof(char *) + hx_environ_size(&env, old);
+	if (row != 11) need += envc * sizeof(char *) + hx_environ_size(&env, old);
 	if (need <= sizeof x->area) {
 		av = x->area;
 	} else {
@@ -582,17 +746,24 @@ int hx_route(const char *path, char *const argv[], char *const envp[], const cha
 	for (i = 0; i < pn; i++)
 		av[k++] = (char *)pre[i];
 	if (first) av[k++] = w;
-	for (i = (size_t)first; i < a.n; i++)
+	for (i = (size_t)first + from; i < a.n; i++)
 		av[k++] = (char *)hx_arg(&a, i);
 	av[k++] = 0;
 	x->argv = av;
-	if (row == 8) {
+	if (row == 11) {
 		x->envp = (char **)envp;
 		return 0;
 	}
 	ev = av + k;
-	x->envp = hx_environ(ev, (char *)(ev + envc + 6), envp, &env, old);
+	x->envp = hx_environ(ev, (char *)(ev + envc + 7), envp, &env, old);
 	return 0;
+}
+
+int hx_route(const char *path, char *const argv[], char *const envp[], const char *base, struct hx_exec *x) {
+	int e;
+	while ((e = hx_route_once(path, argv, envp, base, x)) == HX_AGAIN)
+		path = *++argv;
+	return e;
 }
 
 int hx_route_search(const char *file, const char *search, char *const argv[], char *const envp[], const char *base,
@@ -719,14 +890,126 @@ static void hx_take(char *dst, char *const envp[], const char *key) {
 	if (!v || hx_copy(dst, v)) dst[0] = 0;
 }
 
+/* The file mapped at addr, from /proc/self/maps, into out. */
+static int hx_mapped(uintptr_t addr, char *out) {
+	char *b = hx_cfg.maps, *line, *nl;
+	size_t len = 0;
+	int skip = 0, e = ENOENT;
+	long fd = hx_sys(SYS_openat, AT_FDCWD, "/proc/self/maps", O_RDONLY | O_CLOEXEC), n;
+	if (fd < 0) return (int)-fd;
+	while ((n = hx_sys(SYS_read, fd, b + len, sizeof hx_cfg.maps - 1 - len)) > 0) {
+		len += (size_t)n;
+		b[len] = 0;
+		for (line = b; (nl = memchr(line, '\n', (size_t)(b + len - line))); line = nl + 1) {
+			uintptr_t lo = 0, hi = 0;
+			const char *c = line;
+			*nl = 0;
+			if (skip) {
+				skip = 0;
+				continue;
+			}
+			/* start-end perms offset dev inode path */
+			for (; (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'); c++)
+				lo = lo * 16 + (uintptr_t)(*c <= '9' ? *c - '0' : *c - 'a' + 10);
+			if (*c++ != '-') continue;
+			for (; (*c >= '0' && *c <= '9') || (*c >= 'a' && *c <= 'f'); c++)
+				hi = hi * 16 + (uintptr_t)(*c <= '9' ? *c - '0' : *c - 'a' + 10);
+			if (addr < lo || addr >= hi) continue;
+			c = strchr(c, '/');
+			e = c ? hx_copy(out, c) : ENOENT;
+			goto done;
+		}
+		len = (size_t)(b + len - line);
+		memmove(b, line, len);
+		/* A line longer than the buffer is passed over. */
+		if (len == sizeof hx_cfg.maps - 1) {
+			len = 0;
+			skip = 1;
+		}
+	}
+done:
+	hx_sys(SYS_close, fd);
+	return e;
+}
+
+/* Adds --bind=src:dst to row 10's arguments. */
+static int hx_bind(const char *src, const char *dst) {
+	size_t ls = strlen(src), ld = strlen(dst);
+	char *b;
+	if (hx_cfg.nbind == HX_BINDS || 7 + ls + 1 + ld >= PATH_MAX) return ENOSPC;
+	b = hx_cfg.bind_text[hx_cfg.nbind];
+	memcpy(b, "--bind=", 7);
+	memcpy(b + 7, src, ls);
+	b[7 + ls] = ':';
+	memcpy(b + 8 + ls, dst, ld + 1);
+	hx_cfg.bind[hx_cfg.nbind++] = b;
+	return 0;
+}
+
+struct hx_dirent {
+	uint64_t ino;
+	int64_t off;
+	unsigned short reclen;
+	unsigned char type;
+	char name[];
+};
+
+/* Binds every file in $HARNESS_ETC onto /etc, in name order, leaving the last
+ * three places for the rest. */
+static void hx_bind_etc(void) {
+	static const char more[] = "harness-exec: more files in $HARNESS_ETC than a proot binds; the rest are left out\n";
+	char buf[1024], src[PATH_MAX], dst[5 + NAME_MAX + 1];
+	size_t first = hx_cfg.nbind, i, j;
+	int over = 0;
+	long fd = hx_sys(SYS_openat, AT_FDCWD, hx_cfg.etc, O_RDONLY | O_DIRECTORY | O_CLOEXEC), n;
+	if (fd < 0) return;
+	while ((n = hx_sys(SYS_getdents64, fd, buf, sizeof buf)) > 0)
+		for (long off = 0; off < n; off += ((struct hx_dirent *)(buf + off))->reclen) {
+			struct hx_dirent *d = (struct hx_dirent *)(buf + off);
+			if (d->type == DT_DIR || !strcmp(d->name, ".") || !strcmp(d->name, "..")) continue;
+			if (hx_cfg.nbind - first == HX_BINDS - 3) {
+				over = 1;
+				continue;
+			}
+			memcpy(dst, "/etc/", 5);
+			memcpy(dst + 5, d->name, strlen(d->name) + 1);
+			if (!hx_join(src, hx_cfg.etc, d->name)) hx_bind(src, dst);
+		}
+	hx_sys(SYS_close, fd);
+	for (i = first + 1; i < hx_cfg.nbind; i++)
+		for (j = i; j > first && strcmp(hx_cfg.bind[j - 1], hx_cfg.bind[j]) > 0; j--) {
+			const char *t = hx_cfg.bind[j];
+			hx_cfg.bind[j] = hx_cfg.bind[j - 1];
+			hx_cfg.bind[j - 1] = t;
+		}
+	if (over) hx_sys(SYS_write, 2, more, sizeof more - 1);
+}
+
+/* Row 10's bindings, of the sources that exist; glibc's ld.so last, checked
+ * at each route. */
+static void hx_bindings(void) {
+	char src[PATH_MAX];
+	hx_cfg.nbind = 0;
+	hx_cfg.glibc_bind = 0;
+	if (hx_cfg.etc[0]) hx_bind_etc();
+	if (hx_cfg.prefix[0] && !hx_join(src, hx_cfg.prefix, "etc/tls/cert.pem") &&
+	    !hx_sys(SYS_faccessat, AT_FDCWD, src, F_OK, 0))
+		hx_bind(src, "/etc/ssl/certs/ca-certificates.crt");
+	if (hx_cfg.loader[0] && !hx_sys(SYS_faccessat, AT_FDCWD, hx_cfg.loader, F_OK, 0)) hx_bind(hx_cfg.loader, HX_MUSL_LIB);
+	if (hx_cfg.prefix[0] && !hx_join(hx_cfg.glibc, hx_cfg.prefix, "glibc/lib/" HX_GLIBC_NAME))
+		hx_cfg.glibc_bind = !hx_bind(hx_cfg.glibc, HX_GLIBC_LIB);
+}
+
 void hx_capture(char *const envp[], const char *libdir) {
 	char dir[PATH_MAX];
 	hx_take(hx_cfg.prefix, envp, "HARNESS_PREFIX");
 	hx_take(hx_cfg.etc, envp, "HARNESS_ETC");
 	hx_take(hx_cfg.self, envp, HX_PSE);
+	/* The loader's directory, from the mapping that holds this code: under
+	 * proot, /proc/self/exe names the program. */
 	if (!libdir) {
 		char *slash;
-		if (hx_link("/proc/self/exe", dir)) dir[0] = 0;
+		if (hx_mapped((uintptr_t)hx_capture, dir)) dir[0] = 0;
 		slash = strrchr(dir, '/');
 		if (slash) *slash = 0;
 		libdir = dir;
@@ -735,7 +1018,20 @@ void hx_capture(char *const envp[], const char *libdir) {
 	if (!hx_cfg.libdir[0] || hx_join(hx_cfg.loader, hx_cfg.libdir, HX_LOADER) ||
 	    hx_join(hx_cfg.shim, hx_cfg.libdir, HX_SHIM) || hx_join(hx_cfg.preload, hx_cfg.libdir, HX_PRELOAD))
 		hx_cfg.loader[0] = hx_cfg.shim[0] = hx_cfg.preload[0] = 0;
+	if (!hx_cfg.libdir[0] || hx_join(hx_cfg.proot, hx_cfg.libdir, HX_PROOT) ||
+	    hx_sys(SYS_faccessat, AT_FDCWD, hx_cfg.proot, X_OK, 0))
+		hx_cfg.proot[0] = 0;
 	for (size_t i = 0; i < sizeof hx_linkers / sizeof *hx_linkers; i++)
 		if (hx_canon(hx_linkers[i], hx_cfg.linker[i])) hx_cfg.linker[i][0] = 0;
 	hx_cfg.use_shim = HX_USE_SHIM;
+	hx_cfg.bin[0] = hx_cfg.bin_proot[0] = hx_cfg.tmp[0] = 0;
+	if (hx_cfg.prefix[0] && !hx_join(hx_cfg.bin, hx_cfg.prefix, "bin") &&
+	    !hx_join(hx_cfg.bin_proot, hx_cfg.bin, "proot") && strlen(hx_cfg.prefix) + 18 < PATH_MAX) {
+		char *t = hx_cfg.tmp;
+		hx_put(&t, HX_TMP "=", hx_cfg.prefix);
+		memcpy(t - 1, "/tmp", 5);
+	} else {
+		hx_cfg.bin[0] = hx_cfg.bin_proot[0] = 0;
+	}
+	hx_bindings();
 }
