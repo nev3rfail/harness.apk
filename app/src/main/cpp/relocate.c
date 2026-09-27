@@ -10,7 +10,7 @@
 // kernel and the linker collapse, and a longer one is left out of this pass.
 //
 // --links repoints each symlink whose target starts with an <old> on a component
-// boundary, longest <old> first. A target is a string in the link's own inode
+// boundary, longest <old> first, after any run of leading slashes. A target is a string in the link's own inode
 // rather than bytes in a file, so it takes a <new> of any length, unpadded.
 //
 // --tls lowers a PT_TLS alignment larger than the largest alignment of the TLS
@@ -240,17 +240,22 @@ static void relink(const char *path) {
     if (n <= 0) { failed++; return; }
     target[n] = '\0';
 
+    // A run of leading slashes names the same path as one, and some packages
+    // ship targets spelled `//data/...`.
+    const char *t = target;
+    while (t[0] == '/' && t[1] == '/') t++;
+
     // Longest <old> first, since the pairs are sorted that way.
     const struct pair *pr = NULL;
     for (int p = 0; p < npairs && pr == NULL; p++) {
-        const char *rest = target + pairs[p].old_len;
-        if (strncmp(target, pairs[p].old, pairs[p].old_len) == 0 && (*rest == '/' || *rest == '\0'))
+        const char *rest = t + pairs[p].old_len;
+        if (strncmp(t, pairs[p].old, pairs[p].old_len) == 0 && (*rest == '/' || *rest == '\0'))
             pr = &pairs[p];
     }
     if (pr == NULL) return;
 
     char fixed[PATH_MAX];
-    if (snprintf(fixed, sizeof fixed, "%s%s", pr->new, target + pr->old_len) >= (int)sizeof fixed) {
+    if (snprintf(fixed, sizeof fixed, "%s%s", pr->new, t + pr->old_len) >= (int)sizeof fixed) {
         failed++;
         return;
     }

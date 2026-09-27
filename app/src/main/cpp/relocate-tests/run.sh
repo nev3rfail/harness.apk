@@ -81,6 +81,7 @@ ln -s "$T/filesystem/x" "$t/d/sibling"
 ln -s /data/data/com.termuxx/a "$t/d/longer"
 ln -s "/usr$TF" "$t/d/inside"
 ln -s ../lib/a "$t/d/relative"
+ln -s "/$TF/usr/lib/a" "$t/d/doubled"
 "$R" --links "$t" $PAIRS > /dev/null
 ok "links: files prefix" '[ "$(readlink "$t/files")" = "$N/root/usr/lib/a" ]'
 ok "links: the whole target" '[ "$(readlink "$t/exact")" = "$N/root" ]'
@@ -93,6 +94,7 @@ ok "links: no match inside a component" \
   '[ "$(readlink "$t/d/longer")" = /data/data/com.termuxx/a ]'
 ok "links: no match past the start" '[ "$(readlink "$t/d/inside")" = "/usr$TF" ]'
 ok "links: a relative target" '[ "$(readlink "$t/d/relative")" = ../lib/a ]'
+ok "links: a target starting with two slashes" '[ "$(readlink "$t/d/doubled")" = "$N/root/usr/lib/a" ]'
 ok "links: contents are left to --content" '[ "$(cat "$t/file")" = "$TF/usr" ]'
 
 t=$W/links-short
