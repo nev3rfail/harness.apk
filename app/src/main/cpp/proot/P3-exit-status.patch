@@ -1,0 +1,818 @@
+P3. Exit status and signals.
+
+proot runs as two processes. The waiter is the process the caller started: it
+traces nothing and exits with vpid 1's wait status, which the tracer writes
+into a close-on-exec pipe when it reaps vpid 1, re-raising a signal with the
+default action. When the pipe closes with no status, the waiter blocks every
+signal, reaps the tracer and exits with its status. The tracer is its child,
+dies with it through PR_SET_PDEATHSIG until vpid 1 is reaped, and sets
+PTRACE_O_EXITKILL, so the tracees die with the tracer. vpid 1 dies with the
+tracer until that option covers it.
+
+A signal another process sends to the waiter goes to the tracer, and one the
+waiter sends to the tracer goes to vpid 1. The tracer drops other senders'
+signals and the kernel's, the terminal's included; its fault handlers act on
+its own faults only. Job-control signals keep their default action in both.
+Once vpid 1 is reaped, the tracer clears its death signal, points 2 at
+/dev/null and calls setsid(); from then on SIGHUP and SIGPIPE are ignored and
+any other signal but the waiter's takes its default action.
+
+The tracer points 0 and 1 at /dev/null and closes the other descriptors it
+inherited, but 2, once vpid 1 is forked. The --sysvipc helper is exec'd
+through proot_path and points 2 at /dev/null. The ptrace emulation kills the
+ptracees of a ptracer that set PTRACE_O_EXITKILL when that ptracer exits.
+
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+index cb0f14b..1008940 100644
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@ -53,6 +53,7 @@ OBJECTS += \
+ 	tracee/mem.o		\
+ 	tracee/reg.o		\
+ 	tracee/event.o		\
++	tracee/waiter.o		\
+ 	tracee/seccomp.o        \
+ 	tracee/statx.o		\
+ 	ptrace/ptrace.o		\
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index efad6f2..0d724e9 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -41,6 +41,7 @@
+ #include "extension/extension.h"
+ #include "tracee/tracee.h"
+ #include "tracee/event.h"
++#include "tracee/waiter.h"
+ #include "path/binding.h"
+ #include "path/canon.h"
+ #include "path/path.h"
+@@ -471,6 +472,10 @@ int main(int argc, char *const argv[])
+ 		sysvipc_shm_helper_main();
+ 	}
+ 
++	/* From here on, this is the tracer; the waiter exits with the
++	 * status of the first tracee.  */
++	start_waiter();
++
+ 	/* Pre-create the first tracee (pid == 0).  */
+ 	tracee = get_tracee(NULL, 0, true);
+ 	if (tracee == NULL)
+@@ -508,6 +513,7 @@ int main(int argc, char *const argv[])
+ 		print_execve_help(tracee, tracee->exe, status);
+ 		goto error;
+ 	}
++	tracer_forked_vpid1(tracee->pid);
+ 
+ 	/* Start tracing the first tracee and all its children.  */
+ 	exit(event_loop());
+diff --git a/src/extension/sysvipc/sysvipc_shm.c b/src/extension/sysvipc/sysvipc_shm.c
+index b14eb65..83d175b 100644
+--- a/src/extension/sysvipc/sysvipc_shm.c
++++ b/src/extension/sysvipc/sysvipc_shm.c
+@@ -7,6 +7,7 @@
+ #include "extension/extension.h"
+ #include "path/temp.h"
+ #include "syscall/chain.h"
++#include "execve/execve.h"
+ 
+ #include <sys/socket.h>
+ #include <sys/un.h>
+@@ -149,10 +150,25 @@ static void sysvipc_shm_send_helper_request(struct SysVIpcShmHelperRequest *requ
+ 			fcntl(0, F_SETFL, 0);
+ 			fcntl(1, F_SETFL, 0);
+ 
++			/* The helper holds none of the caller's
++			 * descriptors.  */
++			int null = open("/dev/null", O_WRONLY);
++			if (null >= 0) {
++				dup2(null, 2);
++				if (null > 2)
++					close(null);
++			}
++
+ 			/* Fork again to detach from proot waitpid() */
+ 			forked = fork();
+ 			if (forked == 0) {
++				/* /proc/self/exe names the dynamic linker
++				 * when one runs proot.  */
++#if defined(PROOT_UNBUNDLE_LOADER)
++				execl(proot_path, "proot", "--shm-helper", NULL);
++#else
+ 				execl("/proc/self/exe", "proot", "--shm-helper", NULL);
++#endif
+ 				perror("proot-shm-helper: execl");
+ 				_exit(1);
+ 			} else {
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index 830982e..61256c7 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -34,9 +34,11 @@
+ #include <stdlib.h>     /* atexit(3), getenv(3), */
+ #include <talloc.h>     /* talloc_*, */
+ #include <inttypes.h>   /* PRI*, */
++#include <sys/prctl.h>  /* prctl(2), PR_SET_PDEATHSIG, */
+ 
+ #include "tracee/event.h"
+ #include "tracee/seccomp.h"
++#include "tracee/waiter.h"
+ #include "tracee/mem.h"
+ #include "cli/note.h"
+ #include "path/path.h"
+@@ -79,6 +81,7 @@ int launch_process(Tracee *tracee, char *const argv[])
+ {
+ 	char *const default_argv[] = { "-sh", NULL };
+ 	long status;
++	pid_t tracer;
+ 	pid_t pid;
+ 
+ 	/* Set pokedata workaround stub addr if needed. */
+@@ -89,6 +92,7 @@ int launch_process(Tracee *tracee, char *const argv[])
+ 	if (tracee->verbose > 0)
+ 		list_open_fd(tracee);
+ 
++	tracer = getpid();
+ 	pid = fork();
+ 	switch(pid) {
+ 	case -1:
+@@ -96,6 +100,13 @@ int launch_process(Tracee *tracee, char *const argv[])
+ 		return -errno;
+ 
+ 	case 0: /* child */
++		/* Die with the tracer until PTRACE_O_EXITKILL covers
++		 * this process: a signal can kill the tracer before it
++		 * installs its handlers.  */
++		(void) prctl(PR_SET_PDEATHSIG, SIGKILL);
++		if (getppid() != tracer)
++			_exit(EXIT_FAILURE);
++
+ 		/* Declare myself as ptraceable before executing the
+ 		 * requested program. */
+ 		status = ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+@@ -111,6 +122,10 @@ int launch_process(Tracee *tracee, char *const argv[])
+ 		 * does the same thing. */
+ 		kill(getpid(), SIGSTOP);
+ 
++		/* The tracer sets PTRACE_O_EXITKILL at the entry of
++		 * this call, before it runs.  */
++		(void) prctl(PR_SET_PDEATHSIG, 0);
++
+ 		/* Improve performance by using seccomp mode 2, unless
+ 		 * this support is explicitly disabled.  */
+ 		if (getenv("PROOT_NO_SECCOMP") == NULL)
+@@ -133,102 +148,6 @@ int launch_process(Tracee *tracee, char *const argv[])
+ 	return -ENOSYS;
+ }
+ 
+-/* Send the KILL signal to all tracees when PRoot has received a fatal
+- * signal.  */
+-static void kill_all_tracees2(int signum, siginfo_t *siginfo UNUSED, void *ucontext UNUSED)
+-{
+-	note(NULL, WARNING, INTERNAL, "signal %d received from process %d",
+-		signum, siginfo->si_pid);
+-	kill_all_tracees();
+-
+-	/* Exit immediately for system signals (segmentation fault,
+-	 * illegal instruction, ...), otherwise exit cleanly through
+-	 * the event loop.  */
+-	if (signum != SIGQUIT)
+-		_exit(EXIT_FAILURE);
+-}
+-
+-/**
+- * Helper for print_talloc_hierarchy().
+- */
+-static void print_talloc_chunk(const void *ptr, int depth, int max_depth UNUSED,
+-			int is_ref, void *data UNUSED)
+-{
+-	const char *name;
+-	size_t count;
+-	size_t size;
+-
+-	name = talloc_get_name(ptr);
+-	size = talloc_get_size(ptr);
+-	count = talloc_reference_count(ptr);
+-
+-	if (depth == 0)
+-		return;
+-
+-	while (depth-- > 1)
+-		fprintf(stderr, "\t");
+-
+-	fprintf(stderr, "%-16s ", name);
+-
+-	if (is_ref)
+-		fprintf(stderr, "-> %-8p", ptr);
+-	else {
+-		fprintf(stderr, "%-8p  %zd bytes  %zd ref'", ptr, size, count);
+-
+-		if (name[0] == '$') {
+-			fprintf(stderr, "\t(\"%s\")", (char *)ptr);
+-		}
+-		if (name[0] == '@') {
+-			char **argv;
+-			int i;
+-
+-			fprintf(stderr, "\t(");
+-			for (i = 0, argv = (char **)ptr; argv[i] != NULL; i++)
+-				fprintf(stderr, "\"%s\", ", argv[i]);
+-			fprintf(stderr, ")");
+-		}
+-		else if (strcmp(name, "Tracee") == 0) {
+-			fprintf(stderr, "\t(pid = %d, parent = %p)",
+-				((Tracee *)ptr)->pid, ((Tracee *)ptr)->parent);
+-		}
+-		else if (strcmp(name, "Bindings") == 0) {
+-			Tracee *tracee;
+-
+-			tracee = TRACEE(ptr);
+-
+-			if (ptr == tracee->fs->bindings.pending)
+-				fprintf(stderr, "\t(pending)");
+-			else if (ptr == tracee->fs->bindings.guest)
+-				fprintf(stderr, "\t(guest)");
+-			else if (ptr == tracee->fs->bindings.host)
+-				fprintf(stderr, "\t(host)");
+-		}
+-		else if (strcmp(name, "Binding") == 0) {
+-			Binding *binding = (Binding *)ptr;
+-			fprintf(stderr, "\t(%s:%s)", binding->host.path, binding->guest.path);
+-		}
+-	}
+-
+-	fprintf(stderr, "\n");
+-}
+-
+-/* Print on stderr the complete talloc hierarchy.  */
+-static void print_talloc_hierarchy(int signum, siginfo_t *siginfo UNUSED, void *ucontext UNUSED)
+-{
+-	switch (signum) {
+-	case SIGUSR1:
+-		talloc_report_depth_cb(NULL, 0, 100, print_talloc_chunk, NULL);
+-		break;
+-
+-	case SIGUSR2:
+-		talloc_report_depth_file(NULL, 0, 100, stderr);
+-		break;
+-
+-	default:
+-		break;
+-	}
+-}
+-
+ static int last_exit_status = -1;
+ 
+ /**
+@@ -278,66 +197,14 @@ static void check_architecture(Tracee *tracee)
+  */
+ int event_loop()
+ {
+-	struct sigaction signal_action;
+ 	long status;
+-	int signum;
+ 
+ 	/* Kill all tracees when exiting.  */
+ 	status = atexit(kill_all_tracees);
+ 	if (status != 0)
+ 		note(NULL, WARNING, INTERNAL, "atexit() failed");
+ 
+-	/* All signals are blocked when the signal handler is called.
+-	 * SIGINFO is used to know which process has signaled us and
+-	 * RESTART is used to restart waitpid(2) seamlessly.  */
+-	bzero(&signal_action, sizeof(signal_action));
+-	signal_action.sa_flags = SA_SIGINFO | SA_RESTART;
+-	status = sigfillset(&signal_action.sa_mask);
+-	if (status < 0)
+-		note(NULL, WARNING, SYSTEM, "sigfillset()");
+-
+-	/* Handle all signals.  */
+-	for (signum = 0; signum < SIGRTMAX; signum++) {
+-		switch (signum) {
+-		case SIGQUIT:
+-		case SIGILL:
+-		case SIGABRT:
+-		case SIGFPE:
+-		case SIGSEGV:
+-			/* Kill all tracees on abnormal termination
+-			 * signals.  This ensures no process is left
+-			 * untraced.  */
+-			signal_action.sa_sigaction = kill_all_tracees2;
+-			break;
+-
+-		case SIGUSR1:
+-		case SIGUSR2:
+-			/* Print on stderr the complete talloc
+-			 * hierarchy, useful for debug purpose.  */
+-			signal_action.sa_sigaction = print_talloc_hierarchy;
+-			break;
+-
+-		case SIGCHLD:
+-		case SIGCONT:
+-		case SIGSTOP:
+-		case SIGTSTP:
+-		case SIGTTIN:
+-		case SIGTTOU:
+-			/* The default action is OK for these signals,
+-			 * they are related to tty and job control.  */
+-			continue;
+-
+-		default:
+-			/* Ignore all other signals, including
+-			 * terminating ones (^C for instance). */
+-			signal_action.sa_sigaction = (void *)SIG_IGN;
+-			break;
+-		}
+-
+-		status = sigaction(signum, &signal_action, NULL);
+-		if (status < 0 && errno != EINVAL)
+-			note(NULL, WARNING, SYSTEM, "sigaction(%d)", signum);
+-	}
++	install_tracer_handlers();
+ 
+ 	while (1) {
+ 		int tracee_status;
+@@ -358,6 +225,10 @@ int event_loop()
+ 			break;
+ 		}
+ 
++		/* Hand vpid 1's status to the waiter as soon as it
++		 * is known.  */
++		tracer_reaped(pid, tracee_status);
++
+ 		/* Get information about this tracee. */
+ 		tracee = get_tracee(NULL, pid, true);
+ 		assert(tracee != NULL);
+@@ -452,7 +323,8 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
+ 				PTRACE_O_TRACEVFORKDONE	|
+ 				PTRACE_O_TRACEEXEC	|
+ 				PTRACE_O_TRACECLONE	|
+-				PTRACE_O_TRACEEXIT);
++				PTRACE_O_TRACEEXIT	|
++				PTRACE_O_EXITKILL);
+ 
+ 			/* Distinguish some events from others and
+ 			 * automatically trace each new process with
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index 22f57ec..8a98bf2 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -101,8 +101,12 @@ static int remove_tracee(Tracee *tracee)
+ 		if (relative->parent == tracee)
+ 			relative->parent = NULL;
+ 
+-		/* Its tracees are now free.  */
++		/* Its tracees are now free, or killed when it asked
++		 * for PTRACE_O_EXITKILL.  */
+ 		if (relative->as_ptracee.ptracer == tracee) {
++			if ((relative->as_ptracee.options & PTRACE_O_EXITKILL) != 0)
++				kill(relative->pid, SIGKILL);
++
+ 			/* Release the pending event, if any.  */
+ 			relative->as_ptracee.ptracer = NULL;
+ 
+diff --git a/src/tracee/waiter.c b/src/tracee/waiter.c
+new file mode 100644
+index 0000000..bde56ee
+--- /dev/null
++++ b/src/tracee/waiter.c
+@@ -0,0 +1,403 @@
++/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*-
++ *
++ * This file is part of PRoot.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301 USA.
++ */
++
++/* PRoot runs as two processes.  The waiter is the process the caller
++ * started: it traces nothing and exits with the status of vpid 1.
++ * The tracer is its child: it traces vpid 1 and every descendant,
++ * and runs until the last of them exits.  A pipe carries vpid 1's
++ * wait status from the tracer to the waiter.  */
++
++#include <stdbool.h>      /* bool, true, false, */
++#include <signal.h>       /* sigaction(2), kill(2), SIG*, */
++#include <unistd.h>       /* fork(2), pipe2(2), dup2(2), setsid(2), */
++#include <fcntl.h>        /* open(2), fcntl(2), O_*, */
++#include <dirent.h>       /* opendir(3), readdir(3), */
++#include <errno.h>        /* errno(3), */
++#include <stdlib.h>       /* exit(3), strtol(3), realloc(3), free(3), */
++#include <strings.h>      /* bzero(3), */
++#include <sys/prctl.h>    /* prctl(2), PR_SET_PDEATHSIG, */
++#include <sys/wait.h>     /* waitpid(2), W*, */
++#include <sys/resource.h> /* setrlimit(2), RLIMIT_CORE, */
++
++#include "tracee/waiter.h"
++#include "tracee/tracee.h"
++#include "cli/note.h"
++#include "attribute.h"
++
++static pid_t waiter_pid;
++static pid_t tracer_pid;
++static pid_t vpid1_pid;
++static volatile sig_atomic_t vpid1_reaped;
++
++/* The tracer's end of the status pipe.  */
++static int status_fd = -1;
++
++/* The descriptors the tracer inherited from the caller.  */
++static int *inherited_fds;
++static size_t nb_inherited_fds;
++
++/**
++ * Return true if @signum reports a fault of this process when the
++ * kernel sends it.
++ */
++static bool is_fault(int signum)
++{
++	return signum == SIGSEGV || signum == SIGILL || signum == SIGABRT || signum == SIGFPE;
++}
++
++/**
++ * Install @handler for every signal but the job-control ones, SIGKILL,
++ * SIGSTOP and, when @with_sigchld is false, SIGCHLD.
++ */
++static void install_handlers(void (*handler)(int, siginfo_t *, void *), bool with_sigchld)
++{
++	struct sigaction action;
++	int signum;
++
++	/* All signals are blocked while the handler runs.  SA_RESTART
++	 * restarts read(2) and waitpid(2) seamlessly.  */
++	bzero(&action, sizeof(action));
++	action.sa_flags = SA_SIGINFO | SA_RESTART;
++	sigfillset(&action.sa_mask);
++	action.sa_sigaction = handler;
++
++	for (signum = 1; signum <= SIGRTMAX; signum++) {
++		switch (signum) {
++		case SIGKILL:
++		case SIGSTOP:
++		case SIGCONT:
++		case SIGTSTP:
++		case SIGTTIN:
++		case SIGTTOU:
++			/* The default action is OK for these signals,
++			 * they are related to tty and job control.  */
++			continue;
++
++		case SIGCHLD:
++			if (!with_sigchld)
++				continue;
++			break;
++
++		default:
++			break;
++		}
++
++		/* sigaction(2) refuses the real-time signals the C
++		 * library reserves.  */
++		(void) sigaction(signum, &action, NULL);
++	}
++}
++
++/**
++ * Move @fd above the standard descriptors, which the tracer points at
++ * /dev/null.  This function returns the new descriptor, or -1 if an
++ * error occurred.
++ */
++static int above_stdio(int fd)
++{
++	int new_fd;
++
++	if (fd > STDERR_FILENO)
++		return fd;
++
++	new_fd = fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
++	close(fd);
++	return new_fd;
++}
++
++/**
++ * Exit the way @status says a process ended: with its exit status, or
++ * by its signal with the default action.
++ */
++static void exit_as(int status) __attribute__((noreturn));
++static void exit_as(int status)
++{
++	if (WIFSIGNALED(status)) {
++		const struct rlimit no_core = { 0, 0 };
++		int signum = WTERMSIG(status);
++		sigset_t set;
++
++		/* The program has dumped its own core already.  */
++		(void) setrlimit(RLIMIT_CORE, &no_core);
++
++		(void) signal(signum, SIG_DFL);
++		sigemptyset(&set);
++		sigaddset(&set, signum);
++		(void) sigprocmask(SIG_UNBLOCK, &set, NULL);
++		(void) kill(getpid(), signum);
++
++		/* A signal whose default action does not terminate.  */
++		_exit(128 + signum);
++	}
++
++	_exit(WEXITSTATUS(status));
++}
++
++/**
++ * Handle @signum in the waiter: one sent by another process is sent to
++ * the tracer, and one from the kernel, the terminal's for instance, is
++ * ignored since vpid 1 gets its own copy through the process group.
++ */
++static void waiter_handler(int signum, siginfo_t *siginfo, void *ucontext UNUSED)
++{
++	if (siginfo->si_code <= 0) {
++		if (siginfo->si_pid != waiter_pid)
++			(void) kill(tracer_pid, signum);
++		return;
++	}
++
++	/* A fault of the waiter itself happens again with the
++	 * default action.  */
++	if (is_fault(signum))
++		(void) signal(signum, SIG_DFL);
++}
++
++/**
++ * Run the waiter: exit with vpid 1's status once the tracer writes it
++ * into @fd, or with the tracer's own status when the pipe closes
++ * without one.
++ */
++static void run_waiter(int fd) __attribute__((noreturn));
++static void run_waiter(int fd)
++{
++	sigset_t set;
++	ssize_t size;
++	int status;
++
++	do
++		size = read(fd, &status, sizeof(status));
++	while (size < 0 && errno == EINTR);
++
++	if (size == sizeof(status))
++		exit_as(status);
++
++	/* The tracer died first.  Its pid can't be reused before it is
++	 * reaped, so no signal is sent to it from now on.  */
++	sigfillset(&set);
++	(void) sigprocmask(SIG_BLOCK, &set, NULL);
++
++	while (waitpid(tracer_pid, &status, 0) < 0) {
++		if (errno != EINTR)
++			_exit(EXIT_FAILURE);
++	}
++
++	exit_as(status);
++}
++
++/**
++ * Remember the descriptors the tracer inherited, but the status pipe
++ * and the listing's own.
++ */
++static void list_inherited_fds(void)
++{
++	struct dirent *entry;
++	DIR *dir;
++	int *fds;
++
++	dir = opendir("/proc/self/fd");
++	if (dir == NULL)
++		return;
++
++	while ((entry = readdir(dir)) != NULL) {
++		int fd;
++
++		if (entry->d_name[0] == '.')
++			continue;
++
++		fd = strtol(entry->d_name, NULL, 10);
++		if (fd == dirfd(dir) || fd == status_fd)
++			continue;
++
++		fds = realloc(inherited_fds, (nb_inherited_fds + 1) * sizeof(int));
++		if (fds == NULL)
++			break;
++		inherited_fds = fds;
++		inherited_fds[nb_inherited_fds++] = fd;
++	}
++
++	closedir(dir);
++}
++
++/**
++ * Fork the tracer.  This function returns in the tracer only; the
++ * waiter exits with the status of vpid 1.
++ */
++void start_waiter(void)
++{
++	int fds[2];
++	pid_t pid;
++
++	if (pipe2(fds, O_CLOEXEC) < 0) {
++		note(NULL, ERROR, SYSTEM, "pipe2()");
++		exit(EXIT_FAILURE);
++	}
++
++	fds[0] = above_stdio(fds[0]);
++	fds[1] = above_stdio(fds[1]);
++	if (fds[0] < 0 || fds[1] < 0) {
++		note(NULL, ERROR, SYSTEM, "fcntl()");
++		exit(EXIT_FAILURE);
++	}
++
++	waiter_pid = getpid();
++
++	pid = fork();
++	switch (pid) {
++	case -1:
++		note(NULL, ERROR, SYSTEM, "fork()");
++		exit(EXIT_FAILURE);
++
++	case 0: /* tracer */
++		close(fds[0]);
++		status_fd = fds[1];
++
++		/* Die with the waiter, which may have died before
++		 * this request.  */
++		(void) prctl(PR_SET_PDEATHSIG, SIGKILL);
++		if (getppid() != waiter_pid)
++			_exit(EXIT_FAILURE);
++
++		list_inherited_fds();
++		return;
++
++	default: /* waiter */
++		tracer_pid = pid;
++		close(fds[1]);
++		install_handlers(waiter_handler, true);
++		run_waiter(fds[0]);
++	}
++}
++
++/**
++ * Point the tracer's standard input and output at /dev/null, and close
++ * the other descriptors it inherited but its standard error, once
++ * @pid, vpid 1, holds them.
++ */
++void tracer_forked_vpid1(pid_t pid)
++{
++	size_t i;
++	int fd;
++
++	vpid1_pid = pid;
++
++	fd = open("/dev/null", O_RDWR);
++	if (fd >= 0) {
++		(void) dup2(fd, STDIN_FILENO);
++		(void) dup2(fd, STDOUT_FILENO);
++		if (fd > STDERR_FILENO)
++			close(fd);
++	}
++
++	for (i = 0; i < nb_inherited_fds; i++) {
++		if (inherited_fds[i] > STDERR_FILENO)
++			close(inherited_fds[i]);
++	}
++
++	free(inherited_fds);
++	inherited_fds = NULL;
++	nb_inherited_fds = 0;
++}
++
++/**
++ * Handle @signum in the tracer.
++ *
++ * While vpid 1 runs, a signal the waiter sends is sent to vpid 1, and
++ * any other is dropped: one sent to the process group reaches vpid 1
++ * directly and through the waiter already.
++ *
++ * Once vpid 1 is reaped, the tracer is in a session of its own:
++ * signals from the waiter are dropped, SIGHUP and SIGPIPE are ignored
++ * and any other signal takes its default action.
++ */
++static void tracer_handler(int signum, siginfo_t *siginfo, void *ucontext UNUSED)
++{
++	if (siginfo->si_code > 0) {
++		/* Kill all tracees on abnormal termination of the
++		 * tracer.  This ensures no process is left
++		 * untraced.  */
++		if (is_fault(signum)) {
++			note(NULL, WARNING, INTERNAL, "signal %d received", signum);
++			kill_all_tracees();
++			_exit(EXIT_FAILURE);
++		}
++
++		if (!vpid1_reaped)
++			return;
++	}
++	else if (siginfo->si_pid == waiter_pid) {
++		if (!vpid1_reaped)
++			(void) kill(vpid1_pid, signum);
++		return;
++	}
++	else if (!vpid1_reaped)
++		return;
++
++	/* The signal is blocked while this handler runs, and it is
++	 * delivered with its default action when the handler
++	 * returns.  */
++	(void) signal(signum, SIG_DFL);
++	(void) kill(getpid(), signum);
++}
++
++/**
++ * Install the tracer's signal handlers.  SIGCHLD keeps its default
++ * action, since the tracer gets one for every stop of a tracee.
++ */
++void install_tracer_handlers(void)
++{
++	install_handlers(tracer_handler, false);
++}
++
++/**
++ * Hand vpid 1's exit @status to the waiter, if @pid is vpid 1 and
++ * @status is its exit.  The tracer leaves the caller's session first,
++ * and its messages go to /dev/null from then on.
++ */
++void tracer_reaped(pid_t pid, int status)
++{
++	ssize_t size;
++
++	if (pid != vpid1_pid || vpid1_reaped
++	    || !(WIFEXITED(status) || WIFSIGNALED(status)))
++		return;
++
++	vpid1_reaped = 1;
++
++	/* The waiter's exit leaves the tracer running.  */
++	(void) prctl(PR_SET_PDEATHSIG, 0);
++
++	/* Standard output points at /dev/null since vpid 1 was
++	 * forked.  */
++	(void) dup2(STDOUT_FILENO, STDERR_FILENO);
++
++	/* The waiter, or the process that started it, leads the
++	 * process group, so this succeeds.  */
++	(void) setsid();
++
++	(void) signal(SIGHUP, SIG_IGN);
++	(void) signal(SIGPIPE, SIG_IGN);
++
++	do
++		size = write(status_fd, &status, sizeof(status));
++	while (size < 0 && errno == EINTR);
++
++	close(status_fd);
++	status_fd = -1;
++}
+diff --git a/src/tracee/waiter.h b/src/tracee/waiter.h
+new file mode 100644
+index 0000000..ba394e8
+--- /dev/null
++++ b/src/tracee/waiter.h
+@@ -0,0 +1,31 @@
++/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*-
++ *
++ * This file is part of PRoot.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301 USA.
++ */
++
++#ifndef TRACEE_WAITER_H
++#define TRACEE_WAITER_H
++
++#include <sys/types.h>
++
++extern void start_waiter(void);
++extern void tracer_forked_vpid1(pid_t pid);
++extern void install_tracer_handlers(void);
++extern void tracer_reaped(pid_t pid, int status);
++
++#endif /* TRACEE_WAITER_H */

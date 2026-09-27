@@ -1,0 +1,133 @@
+P6. linker64 under proot.
+
+An exec of one of the linker64 paths whose argv[1] is a native ELF execs
+argv[1] with the arguments after it. The loader then maps the program with
+linker64 as its interpreter, and /proc/self/exe names the program.
+
+diff --git a/src/execve/shebang.c b/src/execve/shebang.c
+index 46562bd..5dc2d08 100644
+--- a/src/execve/shebang.c
++++ b/src/execve/shebang.c
+@@ -36,6 +36,7 @@
+ #include "execve/shebang.h"
+ #include "execve/execve.h"
+ #include "execve/aoxp.h"
++#include "execve/elf.h"
+ #include "path/binding.h"
+ #include "path/path.h"
+ #include "tracee/tracee.h"
+@@ -237,6 +238,103 @@ void rewrite_exec_bin(const Tracee *tracee, char user_path[PATH_MAX])
+ 		strcpy(user_path, path);
+ }
+ 
++/* The paths of Android's dynamic linker.  */
++static const char *const linker64_paths[] = {
++	"/system/bin/linker64",
++	"/apex/com.android.runtime/bin/linker64",
++	"/system/bin/bootstrap/linker64",
++};
++
++/**
++ * Check if @host_path is a 64-bit ELF file for the host architecture.
++ */
++static bool is_native_elf(const char *host_path)
++{
++	int host_elf_machine[] = HOST_ELF_MACHINE;
++	ElfHeader elf_header;
++	int fd;
++	int i;
++
++	fd = open_elf(host_path, &elf_header);
++	if (fd < 0)
++		return false;
++	close(fd);
++
++	if (!IS_CLASS64(elf_header))
++		return false;
++
++	for (i = 0; host_elf_machine[i] != 0; i++) {
++		if (host_elf_machine[i] == ELF_FIELD(elf_header, machine))
++			return true;
++	}
++
++	return false;
++}
++
++/**
++ * When @host_path is one of the linker64 paths and argv[1] is a native
++ * ELF, make argv[1] the program: @user_path and @host_path become its
++ * paths, and *@argv loses its first entry.  The loader then maps the
++ * program with linker64 as its interpreter, so /proc/self/exe names
++ * the program.  This function returns -errno if an error occurred,
++ * otherwise 0.
++ */
++static int unwrap_linker64(Tracee *tracee, char host_path[PATH_MAX],
++			char user_path[PATH_MAX], ArrayOfXPointers **argv)
++{
++	char program_host_path[PATH_MAX];
++	char program_path[PATH_MAX];
++	char linker_path[PATH_MAX];
++	const char *name;
++	char *program;
++	bool is_linker;
++	size_t i;
++	int status;
++
++	name = strrchr(host_path, '/');
++	if (name == NULL || strcmp(name, "/linker64") != 0)
++		return 0;
++
++	is_linker = false;
++	for (i = 0; i < sizeof(linker64_paths) / sizeof(linker64_paths[0]) && !is_linker; i++) {
++		status = translate_path(tracee, linker_path, AT_FDCWD, linker64_paths[i], true);
++		is_linker = (status >= 0 && strcmp(linker_path, host_path) == 0);
++	}
++	if (!is_linker)
++		return 0;
++
++	if (*argv == NULL) {
++		status = fetch_array_of_xpointers(tracee, argv, SYSARG_2, 0);
++		if (status < 0)
++			return status;
++	}
++
++	/* argv[] ends with a NULL entry.  */
++	if ((*argv)->length < 3)
++		return 0;
++
++	status = read_xpointee_as_string(*argv, 1, &program);
++	if (status < 0)
++		return status;
++
++	if (strlen(program) >= PATH_MAX)
++		return 0;
++	strcpy(program_path, program);
++	rewrite_exec_bin(tracee, program_path);
++
++	status = translate_and_check_exec(tracee, program_host_path, program_path);
++	if (status < 0 || !is_native_elf(program_host_path))
++		return 0;
++
++	status = resize_array_of_xpointers(*argv, 1, -1);
++	if (status < 0)
++		return status;
++
++	strcpy(user_path, program_path);
++	strcpy(host_path, program_host_path);
++	return 0;
++}
++
+ /**
+  * Expand in argv[] the shebang of @user_path, if any.  This function
+  * returns -errno if an error occurred, 1 if a shebang was found and
+@@ -278,6 +376,10 @@ int expand_shebang(Tracee *tracee, char host_path[PATH_MAX], char user_path[PATH
+ 		if (status < 0)
+ 			return status;
+ 
++		status = unwrap_linker64(tracee, host_path, user_path, &argv);
++		if (status < 0)
++			return status;
++
+ 		/* Remember the initial user path.  */
+ 		old_user_path = talloc_strdup(tracee->ctx, user_path);
+ 		if (old_user_path == NULL)

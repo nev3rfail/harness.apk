@@ -29,12 +29,13 @@ jobs:
         run: chmod +x vendor/ghostty-android/scripts/build-android-nonix.sh
 
       # patchelf adds the renderer's DT_NEEDED entries; gcc-aarch64-linux-gnu is
-      # the cross compiler musl's arm64 build asks for.
+      # the cross compiler musl's arm64 build asks for; the proot host tests
+      # hold a clone(2) with strace.
       - name: Install the toolchains the scripts shell out to
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends patchelf gcc-aarch64-linux-gnu
+          sudo apt-get install -y --no-install-recommends patchelf gcc-aarch64-linux-gnu strace
 
       # The NDK revision is app/build.gradle.kts's ndkVersion, and the CMake
       # revision is the one both externalNativeBuild blocks name.

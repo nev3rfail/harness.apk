@@ -1,0 +1,412 @@
+P4. Legacy calls.
+
+At the SIGSYS stop of a call Android's policy traps, fork becomes
+clone(SIGCHLD, 0), with the argument registers restored in the parent at its
+sysexit and in the child at its first stop; mknod, creat, pause, alarm,
+epoll_create, inotify_init, signalfd and eventfd become the calls the policy
+allows; dup2(a, a) is answered from /proc/<pid>/fd/<a>; setuid, setgid,
+setreuid and setregid succeed only when they change no id; setfsuid and
+setfsgid return the current id; and the other calls bionic's blocklist names
+return EPERM. trapped-calls.txt lists every trapped call and how it is
+answered. alloc_mem reserves the red zone at every allocation.
+
+diff --git a/src/syscall/syscall.c b/src/syscall/syscall.c
+index 0761a26..7ba7645 100644
+--- a/src/syscall/syscall.c
++++ b/src/syscall/syscall.c
+@@ -31,6 +31,7 @@
+ #include "tracee/tracee.h"
+ #include "tracee/reg.h"
+ #include "tracee/mem.h"
++#include "tracee/seccomp.h"
+ #include "cli/note.h"
+ 
+ /**
+@@ -204,6 +205,7 @@ void translate_syscall(Tracee *tracee)
+ 		if (tracee->chain.syscalls == NULL || tracee->chain.sysnum_workaround_state == SYSNUM_WORKAROUND_PROCESS_REPLACED_CALL) {
+ 			tracee->chain.sysnum_workaround_state = SYSNUM_WORKAROUND_INACTIVE;
+ 			translate_syscall_exit(tracee);
++			translate_alarm_exit(tracee);
+ 		}
+ 		else if (tracee->chain.sysnum_workaround_state == SYSNUM_WORKAROUND_PROCESS_FAULTY_CALL) {
+ 			tracee->chain.sysnum_workaround_state = SYSNUM_WORKAROUND_PROCESS_REPLACED_CALL;
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index 61256c7..dbfa4c0 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -553,6 +553,7 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
+ 			if (tracee->sigstop == SIGSTOP_IGNORED) {
+ 				tracee->sigstop = SIGSTOP_ALLOWED;
+ 				signal = 0;
++				restore_regs_after_seccomp_fork(tracee);
+ 			}
+ 			break;
+ 
+diff --git a/src/tracee/mem.c b/src/tracee/mem.c
+index 925f4bd..d21f972 100644
+--- a/src/tracee/mem.c
++++ b/src/tracee/mem.c
+@@ -651,9 +651,10 @@ word_t alloc_mem(Tracee *tracee, ssize_t size)
+ 
+ 	/* Some ABIs specify an amount of bytes after the stack
+ 	 * pointer that shall not be used by anything but the compiler
+-	 * (for optimization purpose).  */
+-	if (stack_pointer == peek_reg(tracee, ORIGINAL, STACK_POINTER))
+-		size += RED_ZONE_SIZE;
++	 * (for optimization purpose).  It is reserved at every
++	 * allocation: at a SIGSYS stop, ORIGINAL holds the registers
++	 * of another call.  */
++	size += RED_ZONE_SIZE;
+ 
+ 	/* Sanity check. */
+ 	if (   (size > 0 && stack_pointer <= (word_t) size)
+diff --git a/src/tracee/seccomp.c b/src/tracee/seccomp.c
+index 66dfef3..eb71c02 100644
+--- a/src/tracee/seccomp.c
++++ b/src/tracee/seccomp.c
+@@ -7,6 +7,9 @@
+ #include <linux/net.h> /* SYS_SENDMMSG */
+ #include <assert.h>    /* assert(3), */
+ #include <time.h>      /* time(2), */
++#include <fcntl.h>     /* O_*, AT_FDCWD, */
++#include <stdio.h>     /* snprintf(3), */
++#include <sys/time.h>  /* struct itimerval, ITIMER_REAL, */
+ 
+ #include "extension/extension.h"
+ #include "cli/note.h"
+@@ -102,6 +105,8 @@ int handle_seccomp_event(Tracee* tracee)
+ 
+ 	/* Save regs so they can be restored at end of replaced call.  */
+ 	save_current_regs(tracee, ORIGINAL_SECCOMP_REWRITE);
++	tracee->fork_after_seccomp = false;
++	tracee->alarm_old_value = 0;
+ 
+ 	/* X86 uses orig_rax when selecting syscall,
+ 	 * however at this point we are after syscall has been rejected
+@@ -130,6 +135,87 @@ void fix_and_restart_enosys_syscall(Tracee* tracee)
+ 	handle_seccomp_event_common(tracee);
+ }
+ 
++/**
++ * Return the result of a set-id call that names the ids @ids[3] (real,
++ * effective, saved; -1 names none) by the rule setresuid(2) and
++ * setresgid(2) follow here: 0 when each id it names equals the current
++ * one, otherwise -EPERM.  @uid tells user ids from group ids.
++ */
++static word_t check_unchanged_ids(bool uid, const word_t ids[3])
++{
++	uid_t current[3];
++	int status;
++	int i;
++
++	status = uid
++		? getresuid(&current[0], &current[1], &current[2])
++		: getresgid(&current[0], &current[1], &current[2]);
++	if (status < 0)
++		return -EPERM;
++
++	for (i = 0; i < 3; i++) {
++		if ((uid_t) ids[i] != (uid_t) -1 && (uid_t) ids[i] != current[i])
++			return -EPERM;
++	}
++
++	return 0;
++}
++
++/**
++ * Restore the argument registers of @tracee, the child of a fork(2)
++ * restarted as clone(2), at its first stop.  The x86_64 system-call
++ * ABI preserves them, and the child's result is 0.
++ */
++void restore_regs_after_seccomp_fork(Tracee *tracee)
++{
++	if (!tracee->restore_regs_after_seccomp_fork)
++		return;
++	tracee->restore_regs_after_seccomp_fork = false;
++
++	if (fetch_regs(tracee) < 0)
++		return;
++
++	poke_reg(tracee, SYSARG_1, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_1));
++	poke_reg(tracee, SYSARG_2, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_2));
++	poke_reg(tracee, SYSARG_3, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_3));
++	poke_reg(tracee, SYSARG_4, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_4));
++	poke_reg(tracee, SYSARG_5, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_5));
++	poke_reg(tracee, SYSARG_6, peek_reg(tracee, ORIGINAL_SECCOMP_REWRITE, SYSARG_6));
++	poke_reg(tracee, SYSARG_RESULT, 0);
++	(void) push_specific_regs(tracee, false);
++}
++
++/**
++ * At the sysexit of the setitimer(2) an alarm(2) became, set the
++ * result to what alarm(2) returns for the old value: its seconds, plus
++ * one for 500000 microseconds or more, and 1 rather than 0 while time
++ * remains.
++ */
++void translate_alarm_exit(Tracee *tracee)
++{
++	struct itimerval old;
++	word_t address;
++	word_t result;
++
++	address = tracee->alarm_old_value;
++	if (address == 0)
++		return;
++	tracee->alarm_old_value = 0;
++
++	if (get_sysnum(tracee, CURRENT) != PR_setitimer
++	    || (long) peek_reg(tracee, CURRENT, SYSARG_RESULT) < 0)
++		return;
++
++	if (read_data(tracee, &old, address, sizeof(old)) < 0)
++		return;
++
++	result = old.it_value.tv_sec;
++	if ((result == 0 && old.it_value.tv_usec != 0) || old.it_value.tv_usec >= 500000)
++		result++;
++
++	poke_reg(tracee, SYSARG_RESULT, result);
++}
++
+ static int handle_seccomp_event_common(Tracee *tracee)
+ {
+ 	int ret;
+@@ -472,6 +558,18 @@ static int handle_seccomp_event_common(Tracee *tracee)
+ 		break;
+ 
+ 	case PR_dup2:
++		/* dup3(2) refuses equal descriptors, where dup2(2)
++		 * returns the descriptor if it is open.  */
++		if (peek_reg(tracee, CURRENT, SYSARG_1) == peek_reg(tracee, CURRENT, SYSARG_2)) {
++			char link[PATH_MAX];
++			char path[64];
++			int fd = (int) peek_reg(tracee, CURRENT, SYSARG_1);
++
++			snprintf(path, sizeof(path), "/proc/%d/fd/%d", tracee->pid, fd);
++			set_result_after_seccomp(tracee,
++				readlinkat(AT_FDCWD, path, link, sizeof(link)) >= 0 ? (word_t) fd : (word_t) -EBADF);
++			break;
++		}
+ 		set_sysnum(tracee, PR_dup3);
+ 		poke_reg(tracee, SYSARG_3, 0);
+ 		restart_syscall_after_seccomp(tracee);
+@@ -626,6 +724,145 @@ static int handle_seccomp_event_common(Tracee *tracee)
+ 		break;
+ 	}
+ 
++	case PR_fork:
++		/* The parent's argument registers are restored at its
++		 * sysexit, and the child's at its first stop.  */
++		set_sysnum(tracee, PR_clone);
++		poke_reg(tracee, SYSARG_1, SIGCHLD);
++		poke_reg(tracee, SYSARG_2, 0);
++		poke_reg(tracee, SYSARG_3, 0);
++		poke_reg(tracee, SYSARG_4, 0);
++		poke_reg(tracee, SYSARG_5, 0);
++		tracee->fork_after_seccomp = true;
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_mknod:
++		set_sysnum(tracee, PR_mknodat);
++		poke_reg(tracee, SYSARG_4, peek_reg(tracee, CURRENT, SYSARG_3));
++		poke_reg(tracee, SYSARG_3, peek_reg(tracee, CURRENT, SYSARG_2));
++		poke_reg(tracee, SYSARG_2, peek_reg(tracee, CURRENT, SYSARG_1));
++		poke_reg(tracee, SYSARG_1, AT_FDCWD);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_creat:
++		set_sysnum(tracee, PR_openat);
++		poke_reg(tracee, SYSARG_4, peek_reg(tracee, CURRENT, SYSARG_2));
++		poke_reg(tracee, SYSARG_3, O_CREAT | O_WRONLY | O_TRUNC);
++		poke_reg(tracee, SYSARG_2, peek_reg(tracee, CURRENT, SYSARG_1));
++		poke_reg(tracee, SYSARG_1, AT_FDCWD);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_pause:
++		set_sysnum(tracee, PR_ppoll);
++		poke_reg(tracee, SYSARG_1, 0);
++		poke_reg(tracee, SYSARG_2, 0);
++		poke_reg(tracee, SYSARG_3, 0);
++		poke_reg(tracee, SYSARG_4, 0);
++		poke_reg(tracee, SYSARG_5, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_alarm:
++	{
++		struct itimerval value = {
++			.it_value = { .tv_sec = (unsigned int) peek_reg(tracee, CURRENT, SYSARG_1) }
++		};
++		word_t new_value = alloc_mem(tracee, sizeof(value));
++		word_t old_value = alloc_mem(tracee, sizeof(value));
++
++		if (new_value == 0 || old_value == 0
++		    || write_data(tracee, new_value, &value, sizeof(value)) < 0) {
++			set_result_after_seccomp(tracee, -EFAULT);
++			break;
++		}
++		set_sysnum(tracee, PR_setitimer);
++		poke_reg(tracee, SYSARG_1, ITIMER_REAL);
++		poke_reg(tracee, SYSARG_2, new_value);
++		poke_reg(tracee, SYSARG_3, old_value);
++		tracee->alarm_old_value = old_value;
++		restart_syscall_after_seccomp(tracee);
++		break;
++	}
++
++	case PR_epoll_create:
++		if ((int) peek_reg(tracee, CURRENT, SYSARG_1) <= 0) {
++			set_result_after_seccomp(tracee, -EINVAL);
++			break;
++		}
++		set_sysnum(tracee, PR_epoll_create1);
++		poke_reg(tracee, SYSARG_1, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_inotify_init:
++		set_sysnum(tracee, PR_inotify_init1);
++		poke_reg(tracee, SYSARG_1, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_signalfd:
++		set_sysnum(tracee, PR_signalfd4);
++		poke_reg(tracee, SYSARG_4, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_eventfd:
++		set_sysnum(tracee, PR_eventfd2);
++		poke_reg(tracee, SYSARG_2, 0);
++		restart_syscall_after_seccomp(tracee);
++		break;
++
++	case PR_setuid:
++	case PR_setgid:
++	case PR_setreuid:
++	case PR_setregid:
++	{
++		word_t ids[3];
++
++		ids[0] = peek_reg(tracee, CURRENT, SYSARG_1);
++		if (sysnum == PR_setuid || sysnum == PR_setgid) {
++			ids[1] = ids[0];
++			ids[2] = ids[0];
++		}
++		else {
++			ids[1] = peek_reg(tracee, CURRENT, SYSARG_2);
++			ids[2] = (word_t) -1;
++		}
++		set_result_after_seccomp(tracee,
++			check_unchanged_ids(sysnum == PR_setuid || sysnum == PR_setreuid, ids));
++		break;
++	}
++
++	case PR_setfsuid:
++		set_result_after_seccomp(tracee, geteuid());
++		break;
++
++	case PR_setfsgid:
++		set_result_after_seccomp(tracee, getegid());
++		break;
++
++	/* The other calls bionic's blocklist names; their callers
++	 * expect EPERM.  */
++	case PR_acct:
++	case PR_adjtimex:
++	case PR_chroot:
++	case PR_clock_adjtime:
++	case PR_clock_settime:
++	case PR_delete_module:
++	case PR_init_module:
++	case PR_reboot:
++	case PR_setdomainname:
++	case PR_sethostname:
++	case PR_settimeofday:
++	case PR_swapoff:
++	case PR_swapon:
++	case PR_syslog:
++		set_result_after_seccomp(tracee, -EPERM);
++		break;
++
+ 	case PR_set_robust_list:
+ 	default:
+ 		/* Set errno to -ENOSYS */
+diff --git a/src/tracee/seccomp.h b/src/tracee/seccomp.h
+index 61d9c1c..e60b4a9 100644
+--- a/src/tracee/seccomp.h
++++ b/src/tracee/seccomp.h
+@@ -20,3 +20,5 @@ void restart_syscall_after_seccomp(Tracee* tracee);
+ void set_result_after_seccomp(Tracee *tracee, word_t result);
+ int handle_seccomp_event(Tracee* tracee);
+ void fix_and_restart_enosys_syscall(Tracee* tracee);
++void restore_regs_after_seccomp_fork(Tracee *tracee);
++void translate_alarm_exit(Tracee *tracee);
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index 8a98bf2..12db0c4 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -36,6 +36,7 @@
+ #include "tracee/tracee.h"
+ #include "tracee/reg.h"
+ #include "tracee/mem.h"
++#include "tracee/seccomp.h"
+ #include "path/binding.h"
+ #include "syscall/sysnum.h"
+ #include "tracee/event.h"
+@@ -601,6 +602,16 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 
+ 	inherit_extensions(child, parent, clone_flags);
+ 
++	/* The child of a fork(2) restarted as clone(2) gets the
++	 * argument registers saved at its parent's SIGSYS stop.  */
++	if (parent->fork_after_seccomp && parent->restore_original_regs_after_seccomp_event) {
++		memcpy(&child->_regs[ORIGINAL_SECCOMP_REWRITE],
++			&parent->_regs[ORIGINAL_SECCOMP_REWRITE],
++			sizeof(child->_regs[ORIGINAL_SECCOMP_REWRITE]));
++		child->restore_regs_after_seccomp_fork = true;
++		parent->fork_after_seccomp = false;
++	}
++
+ 	/* Restart the child tracee if it was already alive but
+ 	 * stopped until that moment.  */
+ 	if (child->sigstop == SIGSTOP_PENDING) {
+@@ -625,8 +636,10 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 			child->as_ptracee.event4.proot.value   = 0;
+ 		}
+ 
+-		if (!keep_stopped)
++		if (!keep_stopped) {
++			restore_regs_after_seccomp_fork(child);
+ 			(void) restart_tracee(child, 0);
++		}
+ 	}
+ 
+ 	VERBOSE(child, 1, "vpid %" PRIu64 ": pid %d", child->vpid, child->pid);
+diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
+index f844eec..5a4b9e7 100644
+--- a/src/tracee/tracee.h
++++ b/src/tracee/tracee.h
+@@ -185,6 +185,18 @@ typedef struct tracee {
+ 	bool restore_original_regs;
+ 	bool restore_original_regs_after_seccomp_event;
+ 
++	/* True while fork(2) runs as the clone(2) a SIGSYS stop
++	 * restarted it as.  */
++	bool fork_after_seccomp;
++
++	/* True for the child of such a fork(2) until its first stop,
++	 * where its argument registers are restored.  */
++	bool restore_regs_after_seccomp_fork;
++
++	/* Address of the old value of the setitimer(2) an alarm(2)
++	 * became at its SIGSYS stop, or 0.  */
++	word_t alarm_old_value;
++
+ 	/* State for the special handling of SIGSTOP.  */
+ 	enum {
+ 		SIGSTOP_IGNORED = 0,  /* Ignore SIGSTOP (once the parent is known).  */

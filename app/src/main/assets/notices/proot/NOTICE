@@ -11,7 +11,11 @@ modifications of PRoot under the same license:
 
 - P1-loader.patch: the loader is the file beside proot, found through dladdr;
 - P2-exec-bin.patch: the --exec-bin option;
-- P5-page-size.patch: ENOEXEC for a program the kernel's page size cannot map.
+- P5-page-size.patch: ENOEXEC for a program the kernel's page size cannot map;
+- P3-exit-status.patch: the caller waits for the program's exit status, and
+  signals reach it;
+- P4-legacy-calls.patch: answers for the system calls Android's policy traps;
+- P6-linker64.patch: a program linker64 runs under proot is exec'd itself.
 
 libproot.so includes libandroid-shmem 0.7
 (https://github.com/termux/libandroid-shmem), licensed under the BSD 3-Clause
