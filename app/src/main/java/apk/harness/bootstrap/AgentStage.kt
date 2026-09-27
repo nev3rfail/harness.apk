@@ -196,9 +196,9 @@ class AgentStage(private val context: Context) {
         put("HARNESS_ROOTFS", rootfs.absolutePath)
         put("HARNESS_PREFIX", prefix.absolutePath)
         put("HARNESS_ETC", etc.absolutePath)
-        // For a proot the router does not start, which then still has a
-        // directory for its temporary files. The router's proot row keeps it, and
-        // its row for native programs sets the same directory.
+        // A proot started without the router reads its temporary directory from
+        // here. The router keeps this value for proot and sets the same one for
+        // native programs.
         put("PROOT_TMP_DIR", File(prefix, "tmp").absolutePath)
         put("HARNESS_AGENT", binary.absolutePath)
         putAll(libraryEnvironment(libraries))

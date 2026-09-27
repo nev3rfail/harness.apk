@@ -30,15 +30,48 @@ class BootstrapTest {
         File(old, "apt/archives").mkdirs()
         File(old, "apt/archives/x.deb").writeText("deb")
         File(old, "other").writeText("kept")
+        // A link inside the old cache is removed, not followed.
+        val sibling = folder.newFolder("sibling").apply { File(this, "f").writeText("kept") }
+        Files.createSymbolicLink(File(old, "apt/archives/s").toPath(), sibling.toPath())
         val cach = File(folder.root, "cach")
         Files.createSymbolicLink(cach.toPath(), old.toPath())
 
-        stageAptCache(cach)
+        stageAptCache(cach, old)
 
         assertFalse(Files.isSymbolicLink(cach.toPath()))
         assertTrue(File(cach, "apt/archives/partial").isDirectory)
         assertFalse(File(old, "apt").exists())
         assertTrue(File(old, "other").isFile)
+        assertTrue(File(sibling, "f").isFile)
+    }
+
+    @Test
+    fun `a relative cache link to the cache directory is cleaned the same way`() {
+        assumeSymlinks()
+        val old = folder.newFolder("cache")
+        File(old, "apt/archives").mkdirs()
+        val cach = File(folder.root, "cach")
+        Files.createSymbolicLink(cach.toPath(), java.nio.file.Paths.get("cache"))
+        stageAptCache(cach, old)
+        assertFalse(File(old, "apt").exists())
+        assertTrue(File(cach, "apt/archives/partial").isDirectory)
+    }
+
+    @Test
+    fun `a cache link to another directory leaves its apt alone`() {
+        assumeSymlinks()
+        val cache = folder.newFolder("cache")
+        val foreign = folder.newFolder("project")
+        File(foreign, "apt").mkdirs()
+        File(foreign, "apt/work").writeText("mine")
+        val cach = File(folder.root, "cach")
+        Files.createSymbolicLink(cach.toPath(), foreign.toPath())
+
+        stageAptCache(cach, cache)
+
+        assertEquals("mine", File(foreign, "apt/work").readText())
+        assertFalse(Files.isSymbolicLink(cach.toPath()))
+        assertTrue(File(cach, "apt/archives/partial").isDirectory)
     }
 
     @Test
@@ -46,7 +79,7 @@ class BootstrapTest {
         val cach = folder.newFolder("cach")
         File(cach, "apt/archives").mkdirs()
         File(cach, "apt/archives/x.deb").writeText("deb")
-        stageAptCache(cach)
+        stageAptCache(cach, folder.newFolder("cache"))
         assertTrue(File(cach, "apt/archives/x.deb").isFile)
         assertTrue(File(cach, "apt/archives/partial").isDirectory)
     }

@@ -204,7 +204,7 @@ class Bootstrap(private val context: Context) {
      * absolute path rather than at the prefix.
      */
     private fun configure() {
-        stageAptCache(File(data, "cach"))
+        stageAptCache(File(data, "cach"), agent.tmp)
         for (path in listOf("var/lib/apt/lists/partial", "tmp")) File(prefix, path).mkdirs()
         stageRootfsHome(File(rootfs, "home"), agent.home)
         // Ahead of the shim, which runs the relocator through it.
@@ -236,7 +236,10 @@ class Bootstrap(private val context: Context) {
 
         removeProotLeftovers(File(prefix, "tmp"))
         agent.stageEtc()
-        linkGlibcHosts(prefix, File(agent.etc, "hosts"))
+        // A convenience link, so a layout it cannot handle is logged rather
+        // than failing the install or holding back the correction.
+        runCatching { linkGlibcHosts(prefix, File(agent.etc, "hosts")) }
+            .onFailure { Log.w(TAG, "glibc's hosts was not linked", it) }
     }
 
     /**
@@ -402,15 +405,19 @@ fun removeProotLeftovers(tmp: File) {
 /**
  * Makes [dir] apt's cache: a directory in the data directory, which the system
  * does not empty under a download. A link found in its place is replaced by an
- * empty directory, and the `apt` directory in the link's target, the cache apt
- * kept there, is removed.
+ * empty directory. When that link resolves to [cache], the app's cache
+ * directory, the `apt` directory apt kept there is removed first; a link to
+ * anywhere else leaves its target alone.
  */
-fun stageAptCache(dir: File) {
+fun stageAptCache(dir: File, cache: File) {
     val path = dir.toPath()
     if (Files.isSymbolicLink(path)) {
         val target = path.parent.resolve(Files.readSymbolicLink(path))
+        val ours = runCatching { target.toRealPath() == cache.toPath().toRealPath() }.getOrDefault(false)
+        // The tree before the link, so a run that stops between the two finds
+        // the link again and repeats the step.
+        if (ours) removeTree(File(cache, "apt"))
         Files.delete(path)
-        removeTree(File(target.toFile(), "apt"))
     }
     File(dir, "apt/archives/partial").mkdirs()
 }
