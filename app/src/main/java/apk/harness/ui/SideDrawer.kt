@@ -1,5 +1,7 @@
 package apk.harness.ui
 
+import android.os.Build
+import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloat
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,8 +28,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 
 // Most of the width, so the terminal is not the thing being read, and enough
 // remainder to be an obvious way out.
@@ -103,11 +108,24 @@ fun SideDrawer(
             // way out like any other. Keeping the first row clear of the bar is
             // then the content's own job and FileTree does it; insetting here
             // as well would leave the drawer a status bar short at the top.
-            // Whether the dialog's window is itself inset is the platform's
-            // answer on the running device rather than this flag's.
             decorFitsSystemWindows = false,
         ),
     ) {
+        // A dialog without the platform's width is measured to the
+        // configuration's screen size. From Android 15, for an app targeting
+        // it, that size is the whole display, while a dialog's window is still
+        // fitted inside the system bars, so the drawer's bottom rows would lie
+        // past the window's end. The window is let over the bars to match;
+        // below Android 15 both sizes exclude the bars already.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            val window = (LocalView.current.parent as DialogWindowProvider).window
+            SideEffect {
+                window.attributes = window.attributes.apply {
+                    fitInsetsTypes = 0
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                }
+            }
+        }
         Box(modifier = Modifier.fillMaxSize()) {
             // A sibling behind the drawer rather than a parent around it: a
             // clickable ancestor answers for a tap its descendant did not
