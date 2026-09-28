@@ -68,9 +68,14 @@ class ProcTest {
     fun `a stat line is read from after its command name`() {
         val line = "41 (a (b) c) S 1 40 39 34816 44 4194560 0 0 0 0 7 3 5 2 20 0 1 0 6577951 0 0\n"
         assertEquals(
-            ProcStat(state = 'S', pgrp = 40, session = 39, tpgid = 44, cpu = 17, procStart = 6577951),
+            ProcStat(state = 'S', ppid = 1, pgrp = 40, session = 39, tpgid = 44, cpu = 17, procStart = 6577951),
             parseStat(line),
         )
+    }
+
+    @Test
+    fun `a stat line names its parent`() {
+        assertEquals(777, parseStat("900 (ld-musl-x86_64.so.1) S 777 900 900 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 12345 0 0")?.ppid)
     }
 
     @Test

@@ -5,7 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
@@ -44,7 +47,13 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                     Text(TITLE, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     IconButton(onClick = host::dismiss) { Icon(Icons.Default.Close, contentDescription = CLOSE) }
                 }
-                state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    for (turn in state.conversation.turns) {
+                        Text(turn.message, style = MaterialTheme.typography.bodyMedium)
+                        turn.items.filterIsInstance<Item.Text>().forEach { Text(it.text) }
+                    }
+                }
+                Text(state.conversation.status::class.simpleName.orEmpty(), style = MaterialTheme.typography.bodySmall)
                 if (host.inSession) Row {
                     TextButton(onClick = { host.askContext(text = true, shot = false) }) { Text(SCREEN_TEXT) }
                     TextButton(onClick = { host.askContext(text = true, shot = true) }) { Text(SCREENSHOT) }
@@ -52,6 +61,7 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(value = state.field, onValueChange = { state.field = it }, modifier = Modifier.weight(1f))
                     IconButton(onClick = host::requestMic) { Icon(Icons.Default.Mic, contentDescription = MIC) }
+                    IconButton(onClick = state::send, enabled = state.canSend) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = SEND) }
                 }
             }
         }
@@ -63,5 +73,6 @@ private val SCRIM = Color.Black.copy(alpha = 0.4f)
 private const val TITLE = "Ask Agent"
 private const val CLOSE = "Close"
 private const val MIC = "Speak"
+private const val SEND = "Send"
 private const val SCREEN_TEXT = "Screen text"
 private const val SCREENSHOT = "Screenshot"

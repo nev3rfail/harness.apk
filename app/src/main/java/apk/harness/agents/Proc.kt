@@ -47,12 +47,13 @@ data class TabIdentity(
 /**
  * The fields of `/proc/<pid>/stat` the app decides by.
  *
- * [session] is the pid of the terminal's session leader, [tpgid] the process
- * group holding the terminal in the foreground, and [cpu] the process's own
- * time plus that of its reaped children, in clock ticks.
+ * [ppid] is the parent's pid, [session] the pid of the terminal's session
+ * leader, [tpgid] the process group holding the terminal in the foreground, and
+ * [cpu] the process's own time plus that of its reaped children, in clock ticks.
  */
 data class ProcStat(
     val state: Char,
+    val ppid: Int,
     val pgrp: Int,
     val session: Int,
     val tpgid: Int,
@@ -114,6 +115,7 @@ fun parseStat(line: String): ProcStat? {
     val cpu = listOf(14, 15, 16, 17).sumOf { long(it) ?: return null }
     return ProcStat(
         state = state,
+        ppid = long(4)?.toInt() ?: return null,
         pgrp = long(5)?.toInt() ?: return null,
         session = long(6)?.toInt() ?: return null,
         tpgid = long(8)?.toInt() ?: return null,

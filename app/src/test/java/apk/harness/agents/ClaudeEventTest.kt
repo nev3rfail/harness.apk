@@ -99,7 +99,7 @@ class ClaudeEventTest {
 
     @Test
     fun `a result saying no account is signed in is signed out`() {
-        val finished = parse("""{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}""") as Finished
+        val finished = parse("""{"is_error":true,"duration_api_ms":0,"num_turns":1,"stop_reason":"stop_sequence","session_id":"cb53d4da-fbd1-40a9-b5c9-efdd3791e1f9","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"subtype":"success","api_error_status":null,"result":"Not logged in · Please run /login","type":"result","duration_ms":2651,"uuid":"73df1117-06e7-48ae-96f3-083f113d6e8b","queued_turn_count":0}""") as Finished
         assertTrue(finished.signedOut)
         assertFalse(finished.ok)
         assertEquals(listOf("Not logged in · Please run /login"), finished.errors)
