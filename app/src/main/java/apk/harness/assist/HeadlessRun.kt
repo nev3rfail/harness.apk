@@ -29,7 +29,7 @@ class HeadlessRun(
             started.complete(process)
             process ?: return@launch
             Log.i(TAG, "started")
-            launch { drain(process.inputStream) { Log.i(TAG, "out $it") } }
+            launch { drain(process.inputStream) {} }
             launch {
                 drain(process.errorStream) { line ->
                     // headless.sh names the pid of the process started, before the agent runs.

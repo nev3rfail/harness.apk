@@ -17,13 +17,9 @@ class Voice(
     private val onListening: (Boolean) -> Unit,
 ) {
     private var recognizer: SpeechRecognizer? = null
-    private var loud = 0
-    /** Whether the on-device recognizer has been replaced once for this listen (Task 16). */
-    private var retried = false
 
     fun start() {
         destroy()
-        loud = 0
         val onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
         val created = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         else SpeechRecognizer.createSpeechRecognizer(context)
@@ -45,11 +41,11 @@ class Voice(
     }
 
     private fun listener() = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { Log.i(TAG, "ready for speech") }
-        override fun onBeginningOfSpeech() { Log.i(TAG, "speech began") }
-        override fun onRmsChanged(rmsdB: Float) { if (rmsdB > 0) loud++ }
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() { Log.i(TAG, "speech ended after $loud frames above silence") }
+        override fun onEndOfSpeech() {}
         override fun onError(error: Int) { Log.i(TAG, "recognizer error $error"); onListening(false) }
         override fun onResults(results: Bundle) { first(results)?.let(onFinal); onListening(false) }
         override fun onPartialResults(partialResults: Bundle) { first(partialResults)?.let(onPartial) }

@@ -22,4 +22,7 @@ export DISABLE_AUTOUPDATER=1
 # pid, so it is the pid of the process the app started, the tracer on x86_64.
 echo "harness-pid $$" >&2
 
+# The arguments are positional by now; the agent's own children need neither.
+unset HARNESS_HEADLESS_SCRIPT HARNESS_AGENT_ARGS
+
 exec "$HARNESS_LOADER" "$HARNESS_AGENT" "$@"

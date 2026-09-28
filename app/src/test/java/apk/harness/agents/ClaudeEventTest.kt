@@ -99,7 +99,6 @@ class ClaudeEventTest {
 
     @Test
     fun `a result saying no account is signed in is signed out`() {
-        // Replaced in Task 7 by the line the emulator's signed-out run writes.
         val finished = parse("""{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}""") as Finished
         assertTrue(finished.signedOut)
         assertFalse(finished.ok)

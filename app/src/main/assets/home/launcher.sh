@@ -49,7 +49,10 @@ fi
 # A run with no terminal: nothing to keep open once the agent exits, so the
 # launcher becomes the agent and exits with it. launcher.local.sh can name
 # another headless script, as it can another HARNESS_AGENT_SCRIPT.
+# HARNESS_AGENT_ARGS splits into arguments as a tab's does below, and set -f
+# keeps the shell from also expanding them as globs.
 if [ -n "$HARNESS_HEADLESS_SCRIPT" ]; then
+    set -f
     exec "$HARNESS_HOME/$HARNESS_HEADLESS_SCRIPT" $HARNESS_AGENT_ARGS
 fi
 
@@ -60,8 +63,9 @@ fi
 # falls back to agent.sh for a caller that names none. The script is started by
 # path and routed by its shebang.
 #
-# HARNESS_AGENT_ARGS is what the app asks for on behalf of a tab -- which
-# conversation to open, which id to give a new one, where its MCP config is.
+# HARNESS_AGENT_ARGS is what the app asks for on behalf of a tab or a headless
+# run -- which conversation to open, which id to give a new one, where its MCP
+# config is, and for a headless run how it reads and writes.
 # Unquoted on purpose, so it splits into arguments; nothing the app puts there
 # carries a space. Empty for a session started outside the app, which leaves the
 # script its own defaults.

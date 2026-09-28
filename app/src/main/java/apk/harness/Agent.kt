@@ -101,7 +101,7 @@ class Agent(private val context: Context) {
      * for a home holding credentials, and git's ownership exception for a
      * vouched directory outside the home.
      */
-    fun prepare(directory: File, trusted: Boolean) {
+    fun prepare(directory: File, trusted: Boolean) = synchronized(PREPARE) {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
         runCatching { stage.stageHome() }
@@ -150,9 +150,10 @@ class Agent(private val context: Context) {
      * the agent may have deleted it since.
      */
     fun headless(directory: File, backend: AgentBackend, arguments: List<String>): Process {
-        check(stage.isStaged()) { "the agent is not staged" }
         directory.mkdirs()
+        // prepare restores a launcher that went missing, so the check follows it.
         prepare(directory, trusted = true)
+        check(stage.isStaged()) { "the agent is not staged" }
         val launch = headlessLaunch(baseEnvironment(), stage.launcher, directory, backend.headlessScript, arguments)
         return ProcessBuilder(launch.argv)
             .directory(launch.directory)
@@ -168,6 +169,9 @@ class Agent(private val context: Context) {
 
     private companion object {
         const val TAG = "Agent"
+
+        /** A tab and the panel may prepare at once; both rewrite the same config files. */
+        val PREPARE = Any()
         const val ANDROID_SHELL = "/system/bin/sh"
 
         /** The agent's own config file, in its home. `AgentStage` seeds it. */

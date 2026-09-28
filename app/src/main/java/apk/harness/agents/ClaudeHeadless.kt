@@ -64,7 +64,7 @@ private fun result(event: JSONObject): HeadlessEvent {
     return Finished(ok, text, denials, errors, signedOut = !ok && errors.any(::saysSignedOut))
 }
 
-/** Set from the signed-out run the device writes (Task 7). */
+/** Phrases in the result of a run with no account signed in. */
 private val SIGNED_OUT = listOf("Not logged in", "Please run /login")
 
 private fun saysSignedOut(message: String) = SIGNED_OUT.any { message.contains(it, ignoreCase = true) }
