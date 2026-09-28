@@ -25,9 +25,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
@@ -614,6 +615,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HarnessScreen(
     tabs: AgentTabs,
@@ -840,11 +842,14 @@ private fun HarnessScreen(
         // under the status bar and no edge is under the navigation bar. The
         // navigation bar and the keyboard are one inset taken once, the larger
         // of the two on each side, so an open keyboard is not padded twice; the
-        // toolbar's own navigation-bar padding finds it already taken.
+        // toolbar's own navigation-bar padding finds it already taken. The
+        // keyboard inset is its animation's end value, so the terminal resizes
+        // once per show or hide rather than on every frame, which would repaint
+        // the agent's screen into the scrollback each time.
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.imeAnimationTarget))
                 .statusBarsPadding(),
         ) {
             // The strips overlay the terminal's edges and are declared after
