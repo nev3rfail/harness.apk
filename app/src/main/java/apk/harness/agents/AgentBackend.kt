@@ -4,6 +4,7 @@ import apk.harness.chats.Chat
 import apk.harness.chats.Project
 import apk.harness.chats.byRecency
 import java.io.File
+import java.io.OutputStream
 
 /**
  * The agent CLIs the app can run, and what each of them needs said differently.
@@ -62,6 +63,19 @@ interface AgentBackend {
 
     /** What one line of a headless run's stdout says. */
     fun parseEvent(line: String): HeadlessEvent
+
+    /** Who receives what the panel sends, named in its disclosures. */
+    val provider: String
+
+    /**
+     * Writes one user message to [out] as one line: a text block for each of
+     * [texts] that is not empty, in order, then [images], each streamed from its
+     * file; [out] is left open.
+     */
+    fun writeMessage(out: OutputStream, texts: List<String>, images: List<HeadlessImage>)
+
+    /** The stdin line that interrupts the turn in flight, under [requestId]. */
+    fun interrupt(requestId: String): String
 
     /** Arguments that point the CLI at the MCP servers [file] describes. */
     fun mcpConfig(file: File): List<String>

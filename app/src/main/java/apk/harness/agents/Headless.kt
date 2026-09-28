@@ -27,3 +27,6 @@ sealed interface HeadlessEvent {
 
 /** A tool call the run denied, as the turn's result lists it. */
 data class Denial(val toolUseId: String, val tool: String)
+
+/** An image to send, already encoded into [file] under the cache directory. */
+data class HeadlessImage(val file: java.io.File, val mediaType: String)
