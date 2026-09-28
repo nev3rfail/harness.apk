@@ -3,4 +3,5 @@
     <string name="app_name">harness</string>
     <string name="service_running">The agent keeps running while you are elsewhere</string>
     <string name="ask_channel">An agent is asking for you</string>
+    <string name="ask_agent">Ask Agent</string>
 </resources>

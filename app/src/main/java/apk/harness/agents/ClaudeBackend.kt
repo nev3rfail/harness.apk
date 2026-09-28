@@ -43,6 +43,17 @@ object ClaudeBackend : AgentBackend {
 
     override fun start(sessionId: String): List<String> = listOf("--session-id", sessionId)
 
+    override val headlessScript: String = "headless.sh"
+
+    override fun headless(sessionId: String, resume: Boolean): List<String> =
+        listOf(
+            "-p",
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+        ) + if (resume) resume(sessionId) else start(sessionId)
+
     override fun mcpConfig(file: File): List<String> = listOf("--mcp-config", file.absolutePath)
 
     override fun switch(sessionId: String): String = "/resume $sessionId"

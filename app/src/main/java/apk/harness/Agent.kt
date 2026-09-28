@@ -2,7 +2,9 @@ package apk.harness
 
 import android.content.Context
 import android.util.Log
+import apk.harness.agents.AgentBackend
 import apk.harness.agents.TAB_VARIABLE
+import apk.harness.assist.headlessLaunch
 import apk.harness.bootstrap.AgentStage
 import apk.harness.chats.oneSpelling
 import com.ghostty.android.terminal.TerminalSession
@@ -65,6 +67,41 @@ class Agent(private val context: Context) {
         tag: String,
         trusted: Boolean,
     ): TerminalSession {
+        prepare(directory, trusted)
+        val environment = baseEnvironment()
+        if (idePort > 0) environment["CLAUDE_CODE_SSE_PORT"] = idePort.toString()
+        environment[TAB_VARIABLE] = tag
+        environment["HARNESS_AGENT_SCRIPT"] = script
+        // Word-split by the shell that reads it, which is why nothing here may
+        // carry a space. Session ids are UUIDs and paths are the app's own.
+        if (arguments.isNotEmpty()) environment["HARNESS_AGENT_ARGS"] = arguments.joinToString(" ")
+
+        if (!stage.isStaged()) {
+            // Android's own shell, which is toybox.
+            environment["SHELL"] = ANDROID_SHELL
+            return TerminalSession(
+                environment = environment,
+                cwd = directory.absolutePath,
+            )
+        }
+
+        // Run by a shell rather than executed, so nothing here depends on the
+        // launcher keeping an execute bit an editor on the device could take.
+        return TerminalSession(
+            command = ANDROID_SHELL,
+            argv = listOf(ANDROID_SHELL, stage.launcher.absolutePath),
+            environment = environment,
+            cwd = directory.absolutePath,
+        )
+    }
+
+    /**
+     * What a session in [directory] needs done first, terminal or not: the
+     * payload staged, the directory trusted when [trusted], onboarding answered
+     * for a home holding credentials, and git's ownership exception for a
+     * vouched directory outside the home.
+     */
+    fun prepare(directory: File, trusted: Boolean) {
         // Content rather than machinery, so a failure here costs the agent a
         // skill and not the operator a session.
         runCatching { stage.stageHome() }
@@ -94,36 +131,36 @@ class Agent(private val context: Context) {
         if (vouched && !folded(directory).startsWith(folded(stage.home))) {
             markSafeDirectory(File(stage.home, GIT_CONFIG_NAME), directory.absolutePath)
         }
+    }
 
-        val environment = TerminalSession.defaultEnvironment(
+    /** The environment every session starts from, a tab's or a headless run's. */
+    private fun baseEnvironment(): MutableMap<String, String> =
+        TerminalSession.defaultEnvironment(
             home = stage.home.absolutePath,
             tmp = stage.tmp.absolutePath,
-        ).toMutableMap()
-        environment += stage.environment()
-        if (idePort > 0) environment["CLAUDE_CODE_SSE_PORT"] = idePort.toString()
-        environment[TAB_VARIABLE] = tag
-        environment["HARNESS_AGENT_SCRIPT"] = script
-        // Word-split by the shell that reads it, which is why nothing here may
-        // carry a space. Session ids are UUIDs and paths are the app's own.
-        if (arguments.isNotEmpty()) environment["HARNESS_AGENT_ARGS"] = arguments.joinToString(" ")
+        ).toMutableMap().apply { putAll(stage.environment()) }
 
-        if (!stage.isStaged()) {
-            // Android's own shell, which is toybox.
-            environment["SHELL"] = ANDROID_SHELL
-            return TerminalSession(
-                environment = environment,
-                cwd = directory.absolutePath,
-            )
-        }
-
-        // Run by a shell rather than executed, so nothing here depends on the
-        // launcher keeping an execute bit an editor on the device could take.
-        return TerminalSession(
-            command = ANDROID_SHELL,
-            argv = listOf(ANDROID_SHELL, stage.launcher.absolutePath),
-            environment = environment,
-            cwd = directory.absolutePath,
-        )
+    /**
+     * A run of [backend] with no terminal in [directory], taking its messages on
+     * stdin, through the launcher a tab uses.
+     *
+     * Choosing the app as the assistant is the operator vouching for the
+     * assistant's directory, so it is prepared as trusted. The directory is made
+     * when it is missing: the seed tree brings it on install, and the operator or
+     * the agent may have deleted it since.
+     */
+    fun headless(directory: File, backend: AgentBackend, arguments: List<String>): Process {
+        check(stage.isStaged()) { "the agent is not staged" }
+        directory.mkdirs()
+        prepare(directory, trusted = true)
+        val launch = headlessLaunch(baseEnvironment(), stage.launcher, directory, backend.headlessScript, arguments)
+        return ProcessBuilder(launch.argv)
+            .directory(launch.directory)
+            .apply {
+                environment().clear()
+                environment().putAll(launch.environment)
+            }
+            .start()
     }
 
     /** One directory under one name, so a home reached by either is the home. */

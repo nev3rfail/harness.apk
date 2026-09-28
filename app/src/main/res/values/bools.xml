@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The assistant role requires a recognition service beside its voice
+         interaction service. On Android 11 picking the assistant also makes that
+         service the device's speech recognizer, so it is enabled and forwards.
+         values-v31 disables it. -->
+    <bool name="forwarding_recognizer">true</bool>
+</resources>

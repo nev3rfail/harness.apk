@@ -227,8 +227,10 @@ class AgentStage(private val context: Context) {
 
         // App-owned like the launcher and rewritten on every start. A device
         // that wants another invocation or shell sets HARNESS_AGENT_SCRIPT or
-        // SHELL in launcher.local.sh.
-        val SCRIPTS = listOf("agent.sh", "shell.sh")
+        // SHELL in launcher.local.sh. The headless script, the panel's run with
+        // no terminal, is rewritten the same way, and HARNESS_HEADLESS_SCRIPT
+        // names another.
+        val SCRIPTS = listOf("agent.sh", "shell.sh", "headless.sh")
 
         const val CONFIG_NAME = ".claude.json"
         const val ONBOARDED = """{"hasCompletedOnboarding":true}"""

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Class names in full: Android 11 builds ComponentName(package, value) from
+     what is written here, and a leading dot does not survive that. The package
+     is each channel's own application id. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="apk.harness.assist.PanelSessionService"
+    android:recognitionService="apk.harness.assist.ForwardingRecognitionService"
+    android:supportsAssist="true" />

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- From API 31 the role needs the recognitionService attribute set and does
+         nothing with it, so the component it names is disabled here. -->
+    <bool name="forwarding_recognizer">false</bool>
+</resources>
