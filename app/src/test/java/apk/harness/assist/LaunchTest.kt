@@ -4,6 +4,7 @@ import apk.harness.agents.ClaudeBackend
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class LaunchTest {
@@ -56,5 +57,14 @@ class LaunchTest {
     @Test(expected = IllegalArgumentException::class)
     fun `an argument holding a space is refused`() {
         headlessLaunch(base, launcher, directory, "headless.sh", listOf("-p", "two words"))
+    }
+
+    @Test
+    fun `an argument holding a glob character is refused`() {
+        for (argument in listOf("a*", "a?", "[a]")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                headlessLaunch(base, launcher, directory, "headless.sh", listOf("-p", argument))
+            }
+        }
     }
 }

@@ -1,6 +1,8 @@
 package apk.harness.assist
 
 import android.os.Bundle
+import android.util.Log
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,9 +17,12 @@ object Assistant {
     /**
      * Where every run's process is read, written and stopped. A hidden session
      * or a finished activity ends its own scope; a stop it asked for carries on
-     * here.
+     * here. A failure in one job is logged and leaves the others running.
      */
-    val runs = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val runs = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            CoroutineExceptionHandler { _, failure -> Log.e(TAG, "a run's job failed", failure) },
+    )
 
     /** The answer [MicActivity] brings back, taken and cleared by the panel that asked. */
     val mic = MutableStateFlow<MicAnswer?>(null)

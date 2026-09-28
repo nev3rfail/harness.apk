@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import apk.harness.ui.HarnessTheme
 
-/** The panel in an activity, for ASSIST and, in plan 097, text and shares. */
+/** The panel in an activity, for ASSIST. */
 class AskActivity : ComponentActivity(), PanelHost {
     override val inSession = false
     private var state by mutableStateOf<PanelState?>(null)

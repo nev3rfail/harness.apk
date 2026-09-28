@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Choreographer
 import android.view.View
@@ -43,6 +45,8 @@ class PanelSession(context: Context) :
 
     private var state by mutableStateOf<PanelState?>(null)
     private var content: View? = null
+    // Not the view's own queue: a view that is detached by then never runs it.
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -71,6 +75,7 @@ class PanelSession(context: Context) :
 
     override fun onHide() {
         Log.i(TAG, "hide")
+        endContext()
         state?.dismiss()
         state = null
         registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -78,14 +83,13 @@ class PanelSession(context: Context) :
     }
 
     override fun onDestroy() {
+        main.removeCallbacksAndMessages(null)
+        endContext()
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         super.onDestroy()
     }
 
-    override fun onBackPressed() {
-        Log.i(TAG, "back reached the session")
-        super.onBackPressed()
-    }
+    override fun onBackPressed() = dismiss()
 
     override fun dismiss() = hide()
 
@@ -102,7 +106,7 @@ class PanelSession(context: Context) :
             Choreographer.getInstance().postFrameCallback {
                 Assistant.service?.setDisabledShowContext(0)
                 Assistant.service?.showSession(Assistant.requestArgs(), flags)
-                content?.postDelayed(::endContext, 2_000)
+                main.postDelayed(::endContext, CONTEXT_WAIT)
             }
         }
     }
@@ -114,13 +118,13 @@ class PanelSession(context: Context) :
 
     override fun onHandleAssist(assist: AssistState) {
         val structure = assist.assistStructure
-        Log.i(TAG, "assist focused=${assist.isFocused} structure=${structure != null} windows=${structure?.windowNodeCount} url=${assist.assistContent?.webUri}")
+        Log.i(TAG, "assist focused=${assist.isFocused} structure=${structure != null} windows=${structure?.windowNodeCount}")
     }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
         Log.i(TAG, "screenshot ${screenshot?.width}x${screenshot?.height}")
         screenshot ?: return
-        // The image the next message carries; Task 13 scales and encodes it.
+        // The image the next message carries.
         val file = File(context.cacheDir, "assist/screenshot.png").apply { parentFile?.mkdirs() }
         file.outputStream().use { screenshot.copy(Bitmap.Config.ARGB_8888, false).compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
@@ -134,3 +138,5 @@ class PanelSession(context: Context) :
         }
     }
 }
+
+private const val CONTEXT_WAIT = 2_000L
