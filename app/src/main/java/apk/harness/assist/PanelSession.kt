@@ -1,8 +1,10 @@
 package apk.harness.assist
 
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
@@ -19,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -74,10 +77,18 @@ class PanelSession(context: Context) :
 
     private class Parked(val summon: Int, val at: Long, val file: File?, val apply: (PanelState) -> Unit)
 
+    /** The screen going off hides a shown panel, as the lock screen does where one is set. */
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (visible) hide()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         saved.performRestore(null)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        ContextCompat.registerReceiver(context, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
         lifecycleScope.launch {
             Assistant.mic.collect { answer ->
                 when (answer) {
@@ -209,6 +220,7 @@ class PanelSession(context: Context) :
     }
 
     override fun onDestroy() {
+        context.unregisterReceiver(screenOff)
         main.removeCallbacksAndMessages(null)
         endContext()
         // An encode that lands after this finds its summon over and deletes its file.
