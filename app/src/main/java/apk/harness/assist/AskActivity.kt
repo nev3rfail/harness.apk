@@ -2,7 +2,10 @@ package apk.harness.assist
 
 import android.Manifest
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -12,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.ui.HarnessTheme
 
@@ -25,10 +29,16 @@ class AskActivity : ComponentActivity(), PanelHost {
         else state?.micBlocked = !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
     }
 
+    /** The screen going off ends the panel, as the lock screen does where one is set. */
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = end()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent { HarnessTheme { state?.let { AskPanel(it, this) } } }
+        ContextCompat.registerReceiver(this, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStart() {
@@ -71,6 +81,7 @@ class AskActivity : ComponentActivity(), PanelHost {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(screenOff)
         // A recreation the configChanges do not absorb hands the panel and its
         // run to the new instance; any other end stops it.
         if (isChangingConfigurations) Assistant.recreated = state
@@ -81,7 +92,11 @@ class AskActivity : ComponentActivity(), PanelHost {
 
     override fun onStop() {
         super.onStop()
-        if (isChangingConfigurations) return
+        if (!isChangingConfigurations) end()
+    }
+
+    /** Ends the panel as a hide does: an escalation reaches its stop, anything else is dismissed. */
+    private fun end() {
         state?.let { if (it.escalating) it.run?.hidden() else it.dismiss() }
         state = null
         finish()
