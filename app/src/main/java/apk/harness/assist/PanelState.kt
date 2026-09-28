@@ -96,7 +96,33 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     fun openLink(host: PanelHost, url: String) = startOutside(host,
         Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
-    fun escalate(host: PanelHost) {}
+    /**
+     * Stops the run so its transcript ends on a closed turn, opens the tab on
+     * it, then dismisses. A panel that sent nothing opens a tab with no session.
+     */
+    fun escalate(host: PanelHost) {
+        if (escalating || gate != Gate.Open) return
+        escalating = true
+        voice?.destroy()
+        val directory = File(Agent(app).home, ASSISTANT_DIRECTORY)
+        var opened = false
+        // begin() makes the run before the panel is drawn with the gate open.
+        run!!.stop(
+            StopKind.Escalate,
+            sent,
+            onOpen = { session -> opened = host.start(openTab(app, directory, session)) },
+            // Nothing took the tab: the panel stays and says so, on a new run
+            // that resumes the conversation, since this one has been stopped.
+            onDismiss = {
+                if (opened) host.dismiss()
+                else {
+                    escalating = false
+                    notice = NOTHING_OPENS
+                    begin(app)
+                }
+            },
+        )
+    }
 
     fun dismiss() {
         run?.stop(StopKind.Dismiss, sent)
