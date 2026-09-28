@@ -51,13 +51,14 @@ class HeadlessRun(
 
     /** Writes one message after the process is up; the image files go once written. */
     fun send(texts: List<String>, images: List<HeadlessImage>) {
-        inFlight = true
         interruptSent = false
         Assistant.runs.launch {
             lock.withLock {
                 val process = running()
-                if (process == null) inFlight = false
-                else {
+                if (process != null) {
+                    // Set after the process is the current one, so the exit of
+                    // one that ended before this send does not clear it.
+                    inFlight = true
                     runCatching { backend.writeMessage(process.outputStream, texts, images) }
                         .onFailure { failure ->
                             // Part of a line may be on stdin, so the process is
@@ -75,8 +76,6 @@ class HeadlessRun(
 
     /** Starts the stop of [kind]; a dismiss asked for during an escalation hides it. */
     fun stop(kind: StopKind, sent: Boolean, onOpen: (String?) -> Unit = {}, onDismiss: () -> Unit = {}) {
-        // Not behind the write lock: a dismiss closes stdin under a write in
-        // progress rather than waiting for it.
         val begin = synchronized(this) {
             if (stopping != null) {
                 // A dismiss during a stop is a hide: the tab is not opened after it.
@@ -142,10 +141,13 @@ class HeadlessRun(
                 reader.join()
                 errors.join()
             }
-            val current = process === started
-            if (current) inFlight = false
-            if (synchronized(this@HeadlessRun) { stopping != null }) feed(StopEvent.Exited)
-            else if (current) main { onExit(code, synchronized(tail) { tail.toList() }) }
+            // A process the run has replaced says nothing about the current one.
+            if (process !== started) return@launch
+            inFlight = false
+            if (synchronized(this@HeadlessRun) { stopping != null }) {
+                feed(StopEvent.Exited)
+                killSurvivors()
+            } else main { onExit(code, synchronized(tail) { tail.toList() }) }
         }
         return started
     }
@@ -163,12 +165,14 @@ class HeadlessRun(
     private fun drainErrors(process: Process) {
         var named = false
         drain(process.errorStream) { line ->
-            // headless.sh names the started process's pid before the agent runs;
-            // only its first such line counts.
-            if (!named) pidOf(line)?.let {
+            // headless.sh names the started process's pid on its first line,
+            // before the agent runs; no later line is read as a pid.
+            if (!named) {
                 named = true
-                if (this.process === process) pid = it
-                return@drain
+                pidOf(line)?.let {
+                    if (this.process === process) pid = it
+                    return@drain
+                }
             }
             remember(line)
         }
@@ -224,9 +228,13 @@ class HeadlessRun(
             // dismiss closes it at once, on a coroutine of its own: stdin is a
             // synchronized stream, so the close waits behind a write blocked on
             // a full pipe, and the signals and the kill timer must not.
-            StopAction.CloseStdin ->
+            StopAction.CloseStdin -> {
+                // The agent may exit on the close, and its tools' processes
+                // then have no parent to be found under.
+                witness(descendantsNow())
                 if (kind == StopKind.Escalate) Assistant.runs.launch { lock.withLock { runCatching { process?.outputStream?.close() } } }
                 else Assistant.runs.launch { runCatching { process?.outputStream?.close() } }
+            }
             // destroy() closes stdin too, so it runs on a coroutine of its own as well.
             StopAction.Terminate -> {
                 signalChildren(SIGTERM)
@@ -234,6 +242,7 @@ class HeadlessRun(
             }
             StopAction.Kill -> {
                 signalChildren(android.os.Process.SIGNAL_KILL)
+                killSurvivors()
                 Assistant.runs.launch { process?.destroyForcibly() }
             }
             is StopAction.After -> Assistant.runs.launch {
@@ -267,11 +276,36 @@ class HeadlessRun(
      * agent itself. A tool's own processes are the agent's descendants.
      */
     private fun signalChildren(signal: Int) {
-        val parent = pid ?: return
-        if (process?.isAlive != true) return
+        val found = descendantsNow()
+        witness(found)
+        found.keys.forEach { android.os.Process.sendSignal(it, signal) }
+    }
+
+    /** Every descendant of the started process while it is alive, pid to start time. */
+    private fun descendantsNow(): Map<Int, Long> {
+        val parent = pid ?: return emptyMap()
+        if (process?.isAlive != true) return emptyMap()
         val table = ProcTable()
-        val parents = table.pids().mapNotNull { child -> table.stat(child)?.let { child to it.ppid } }.toMap()
-        descendants(parent, parents).forEach { android.os.Process.sendSignal(it, signal) }
+        val stats = table.pids().mapNotNull { child -> table.stat(child)?.let { child to it } }.toMap()
+        return descendants(parent, stats.mapValues { it.value.ppid }).associateWith { stats.getValue(it).procStart }
+    }
+
+    /**
+     * The descendants seen during this stop, pid to start time. A tool's
+     * process outlives the agent once it is reparented, so the stop ends it by
+     * this list rather than by the tree.
+     */
+    private val seen = HashMap<Int, Long>()
+
+    private fun witness(found: Map<Int, Long>) = synchronized(seen) { seen.putAll(found) }
+
+    /** SIGKILL to every process [seen] that is still the one seen: same pid, same start time. */
+    private fun killSurvivors() {
+        val table = ProcTable()
+        val survivors = synchronized(seen) { seen.toMap().also { seen.clear() } }
+        survivors.forEach { (child, start) ->
+            if (table.stat(child)?.procStart == start) android.os.Process.sendSignal(child, android.os.Process.SIGNAL_KILL)
+        }
     }
 
     /**

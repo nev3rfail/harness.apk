@@ -74,6 +74,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     }
 
     fun listenIfGranted() {
+        if (gate != Gate.Open || escalating) return
         if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice?.start()
     }
 

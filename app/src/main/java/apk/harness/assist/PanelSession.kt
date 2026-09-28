@@ -74,11 +74,12 @@ class PanelSession(context: Context) :
                 override fun onViewAttachedToWindow(view: View) {}
 
                 // A window removed while the session is shown ends with no onHide;
-                // that is a dismiss.
+                // that is a dismiss, made here since the hide may never reach onHide.
                 override fun onViewDetachedFromWindow(view: View) {
                     if (!visible) return
                     Log.i(TAG, "the window went while shown")
-                    dismiss()
+                    drop()
+                    hide()
                 }
             })
             content = this
@@ -90,14 +91,17 @@ class PanelSession(context: Context) :
         Log.i(TAG, "show flags=$showFlags own=${args?.getBoolean(Assistant.PANEL_REQUEST)}")
         val show = classifyShow(
             locked = keyguard.isKeyguardLocked,
-            shown = visible && state != null,
+            shown = panelShown(visible, state?.gate),
             ownRequest = args?.getBoolean(Assistant.PANEL_REQUEST) == true,
             staged = Bootstrap(context).isInstalled(),
         )
         when (show) {
             Show.Locked -> { state?.dismiss(); state = PanelState.locked() }
             Show.NotStaged -> state = PanelState.notStaged(context)
-            Show.Fresh -> state = PanelState().also { it.begin(context); it.listenIfGranted() }
+            Show.Fresh -> {
+                drop()
+                state = PanelState().also { it.begin(context); it.listenIfGranted() }
+            }
             Show.Listen -> state?.listenIfGranted()
             Show.OwnReShow -> {}
         }
@@ -108,19 +112,17 @@ class PanelSession(context: Context) :
     override fun onHide() {
         Log.i(TAG, "hide")
         visible = false
-        val current = state
         val handedOver = handingOver
         main.removeCallbacks(expire)
         endContext()
         // The lock screen, home, back, the scrim and the close control all end
         // here; a hide the panel made for itself hands the panel over instead.
-        when {
-            handedOver -> handingOver = false
-            current?.escalating == true -> current.run?.hidden()
-            else -> current?.dismiss()
+        if (handedOver) handingOver = false
+        else {
+            drop()
+            // Screenshots waiting to be sent go with the panel.
+            File(context.cacheDir, ASSIST_CACHE).deleteRecursively()
         }
-        // Screenshots waiting to be sent go with the panel.
-        if (!handedOver) File(context.cacheDir, ASSIST_CACHE).deleteRecursively()
         state = null
         window.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -130,6 +132,10 @@ class PanelSession(context: Context) :
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
         endContext()
+        if (state != null) {
+            drop()
+            File(context.cacheDir, ASSIST_CACHE).deleteRecursively()
+        }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         super.onDestroy()
     }
@@ -147,6 +153,13 @@ class PanelSession(context: Context) :
     }
 
     override fun dismiss() = hide()
+
+    /** Ends the panel's state: a hide during an escalation reaches its stop, else the run is dismissed. */
+    private fun drop() {
+        val current = state ?: return
+        state = null
+        if (current.escalating) current.run?.hidden() else current.dismiss()
+    }
 
     override fun start(intent: Intent): Boolean =
         runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
@@ -167,9 +180,14 @@ class PanelSession(context: Context) :
         current.request = ContextRequest(text, shot)
         val flags = SHOW_WITH_ASSIST or if (shot) SHOW_WITH_SCREENSHOT else 0
         content?.visibility = View.INVISIBLE
+        // A frame after the panel has gone or been replaced asks nothing, and
+        // draws whatever panel is there again.
+        val stale = { !visible || state !== current }
         // Two frames: the first draws the panel invisible, the second follows it.
         Choreographer.getInstance().postFrameCallback {
+            if (stale()) { endContext(); return@postFrameCallback }
             Choreographer.getInstance().postFrameCallback {
+                if (stale()) { endContext(); return@postFrameCallback }
                 Assistant.service?.setDisabledShowContext(0)
                 Assistant.service?.showSession(Assistant.requestArgs(), flags)
                 main.removeCallbacks(expire)

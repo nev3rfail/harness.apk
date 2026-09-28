@@ -28,6 +28,16 @@ class ShowTest {
     }
 
     @Test
+    fun `a summon over a locked or unstaged panel still up opens a fresh one`() {
+        for (gate in listOf(PanelState.Gate.Locked, PanelState.Gate.NotStaged, null)) {
+            val shown = panelShown(visible = true, gate = gate)
+            assertEquals(Show.Fresh, classifyShow(locked = false, shown = shown, ownRequest = false, staged = true))
+        }
+        assertEquals(Show.Listen, classifyShow(locked = false, shown = panelShown(true, PanelState.Gate.Open), ownRequest = false, staged = true))
+        assertEquals(Show.Fresh, classifyShow(locked = false, shown = panelShown(false, PanelState.Gate.Open), ownRequest = false, staged = true))
+    }
+
+    @Test
     fun `the panel's own re-show takes what it asked for`() {
         assertEquals(Show.OwnReShow, classifyShow(locked = false, shown = true, ownRequest = true, staged = true))
         assertEquals(Show.OwnReShow, classifyShow(locked = false, shown = false, ownRequest = true, staged = true))
