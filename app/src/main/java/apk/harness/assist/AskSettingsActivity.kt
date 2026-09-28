@@ -42,8 +42,11 @@ class AskSettingsActivity : ComponentActivity() {
     /** Android 11: the forwarder needs the app's own microphone for other apps' voice input. */
     private var otherAppsMic by mutableStateOf(false)
     private var micDisclosing by mutableStateOf(false)
-    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+    /** The microphone denied for good: only the app's settings can grant it now. */
+    private var micBlocked by mutableStateOf(false)
+    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         otherAppsMic = asksMicForOtherApps(this)
+        micBlocked = !granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,6 +60,7 @@ class AskSettingsActivity : ComponentActivity() {
                             BackHandler { micDisclosing = false }
                             MicDisclosure(
                                 provider = BACKENDS.first().provider,
+                                otherApps = true,
                                 onContinue = {
                                     micDisclosing = false
                                     micPermission.launch(Manifest.permission.RECORD_AUDIO)
@@ -96,7 +100,11 @@ class AskSettingsActivity : ComponentActivity() {
             runCatching { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
                 .recoverCatching { startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) }
         }
-        if (otherAppsMic) Action(OTHER_APPS_MIC) { micDisclosing = true }
+        if (otherAppsMic && micBlocked) Action(MIC_BLOCKED) {
+            runCatching {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+            }
+        } else if (otherAppsMic) Action(OTHER_APPS_MIC) { micDisclosing = true }
         HorizontalDivider()
         Text(SCREEN_CONTEXT, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
         Choice(ASK_EACH_TIME, settings.screenContext == ScreenContext.Ask) {

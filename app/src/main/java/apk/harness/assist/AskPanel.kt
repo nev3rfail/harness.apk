@@ -80,7 +80,7 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                             override fun openUri(uri: String) = state.openLink(host, uri)
                         },
                     ) {
-                        when (state.disclosure) {
+                        when (val shown = state.disclosure) {
                             is Disclosing.Screen -> ScreenDisclosure(
                                 provider = BACKENDS.first().provider,
                                 always = false,
@@ -88,8 +88,9 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                                 onNotNow = { state.disclosure = null },
                                 openPolicy = { url -> state.openLink(host, url) },
                             )
-                            Disclosing.Mic -> MicDisclosure(
+                            is Disclosing.Mic -> MicDisclosure(
                                 provider = BACKENDS.first().provider,
+                                otherApps = shown.otherApps,
                                 onContinue = { state.micContinue(host) },
                                 onNotNow = { state.disclosure = null },
                             )
@@ -141,10 +142,14 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = SEND)
         }
     }
+    state.voiceProblem?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     state.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-    if (state.otherAppsMic) Row(verticalAlignment = Alignment.CenterVertically) {
+    if (state.micBlocked) Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(MIC_BLOCKED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = { state.openAppSettings(host) }) { Text(OPEN_SETTINGS) }
+    } else if (state.otherAppsMic) Row(verticalAlignment = Alignment.CenterVertically) {
         Text(OTHER_APPS_MIC, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-        TextButton(onClick = { state.disclosure = Disclosing.Mic }) { Text(ALLOW_MIC) }
+        TextButton(onClick = { state.disclosure = Disclosing.Mic(otherApps = true) }) { Text(ALLOW_MIC) }
     }
     if (state.escalating) Text(OPENING, modifier = Modifier.padding(vertical = 8.dp))
     else TextButton(onClick = { state.escalate(host) }) { Text(CONTINUE) }
@@ -208,3 +213,5 @@ private const val SCREENSHOT = "Screenshot"
 private const val NOTHING_CAME = "Nothing came from the screen."
 internal const val OTHER_APPS_MIC = "Voice input in other apps needs the microphone"
 private const val ALLOW_MIC = "Allow"
+internal const val MIC_BLOCKED = "The microphone is turned off for Ask Agent in the app's settings"
+internal const val OPEN_SETTINGS = "Settings"

@@ -166,8 +166,12 @@ fun SideDrawer(
                 Box(
                     modifier = Modifier
                         // The window runs into a side cutout in landscape; the
-                        // drawer's rows stay beside it.
-                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                        // drawer's rows stay beside one on the side it is anchored to.
+                        .windowInsetsPadding(
+                            WindowInsets.displayCutout.only(
+                                if (side == DrawerSide.Right) WindowInsetsSides.Right else WindowInsetsSides.Left
+                            )
+                        )
                         .fillMaxWidth(DrawerWidthFraction)
                         .fillMaxHeight()
                         // The panel stays composed and hit-testable for the

@@ -52,13 +52,13 @@ class Voice(
         onListening(true)
     }
 
-    private fun create(onDevice: Boolean): Pair<SpeechRecognizer, Boolean>? = when {
-        Build.VERSION.SDK_INT >= 31 && onDevice && SpeechRecognizer.isOnDeviceRecognitionAvailable(context) ->
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context) to true
-        Build.VERSION.SDK_INT >= 31 -> SpeechRecognizer.createSpeechRecognizer(context) to false
-        // On Android 11 the device default may be this app's own forwarder.
-        else -> forwardTarget(recognizerCandidates(context))?.let { SpeechRecognizer.createSpeechRecognizer(context, it.component()) to false }
-    }
+    private fun create(onDevice: Boolean): Pair<SpeechRecognizer, Boolean>? =
+        when (recognizerKind(Build.VERSION.SDK_INT, onDevice) { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }) {
+            RecognizerKind.OnDevice -> SpeechRecognizer.createOnDeviceSpeechRecognizer(context) to true
+            RecognizerKind.Default -> SpeechRecognizer.createSpeechRecognizer(context) to false
+            RecognizerKind.Forward ->
+                forwardTarget(recognizerCandidates(context))?.let { SpeechRecognizer.createSpeechRecognizer(context, it.component()) to false }
+        }
 
     // The recognizer picks online or offline itself: asked for offline with no
     // language pack, the default one fails as the on-device one does.
@@ -75,15 +75,17 @@ class Voice(
         override fun onError(error: Int) {
             Log.i(TAG, "recognizer error $error")
             val noLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED
-            if (onDevice && !retried && noLanguage) {
+            if (retriesOnline(onDevice, retried, noLanguage)) {
                 retried = true
                 listen(onDevice = false)
                 return
             }
+            destroy()
             onListening(false)
-            if (error != SpeechRecognizer.ERROR_NO_MATCH) onProblem("The speech recognizer could not hear that (error $error).")
+            if (error != SpeechRecognizer.ERROR_NO_MATCH) onProblem(STOPPED.format(error))
         }
         override fun onResults(results: Bundle) {
+            destroy()
             onListening(false)
             first(results)?.let(onFinal)
         }
@@ -96,5 +98,6 @@ class Voice(
 
     private companion object {
         const val NO_RECOGNIZER = "No speech recognizer on this phone."
+        const val STOPPED = "The speech recognizer stopped (error %d)."
     }
 }

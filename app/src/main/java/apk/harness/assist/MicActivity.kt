@@ -11,7 +11,8 @@ class MicActivity : ComponentActivity() {
 
     private val ask = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         answered = true
-        Assistant.mic.value = MicAnswer.Answered(granted)
+        val blocked = !granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        Assistant.mic.value = MicAnswer.Answered(granted, blocked)
         // The session hid for the dialog; granted or not, it comes back with its panel.
         if (MIC_DIALOG_UNDER_SESSION) Assistant.service?.showSession(Assistant.requestArgs(), 0)
         finishAndRemoveTask()
@@ -19,7 +20,10 @@ class MicActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) ask.launch(Manifest.permission.RECORD_AUDIO)
+        if (savedInstanceState == null) {
+            Assistant.mic.value = MicAnswer.Started
+            ask.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     override fun onStop() {

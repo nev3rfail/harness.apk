@@ -3,13 +3,21 @@ package apk.harness.assist
 /** A hide the panel makes itself, for context or for the microphone. */
 enum class HandoverKind { Context, Mic }
 
-data class Handover(val kind: HandoverKind, val generation: Int = 0, val micFinished: Boolean = false)
+data class Handover(
+    val kind: HandoverKind,
+    val generation: Int = 0,
+    val micStarted: Boolean = false,
+    val micFinished: Boolean = false,
+)
 
 sealed interface HandoverEvent {
     data object ReShown : HandoverEvent
+    data object MicStarted : HandoverEvent
     data object MicFinished : HandoverEvent
     data object MicStopped : HandoverEvent
     data object ShowFailed : HandoverEvent
+    /** A summon of the operator's own while the panel is handed over. */
+    data object Superseded : HandoverEvent
     data class Timer(val generation: Int) : HandoverEvent
 }
 
@@ -22,23 +30,25 @@ sealed interface HandoverOutcome {
 
 const val HANDOVER_WAIT = 2_000L
 
-/** A context handover waits 2 s from its request; a mic one waits for MicActivity first. */
-fun beginHandover(kind: HandoverKind): Pair<Handover, HandoverOutcome> = when (kind) {
-    HandoverKind.Context -> Handover(kind, generation = 1) to HandoverOutcome.After(HANDOVER_WAIT, 1)
-    HandoverKind.Mic -> Handover(kind) to HandoverOutcome.Wait
-}
+/**
+ * A handover waits 2 s from its start: a context one for the re-show, a mic one
+ * for MicActivity to start, and then for as long as the activity runs.
+ */
+fun beginHandover(kind: HandoverKind): Pair<Handover, HandoverOutcome> =
+    Handover(kind, generation = 1) to HandoverOutcome.After(HANDOVER_WAIT, 1)
 
 /** The next step of a handover; a null state means it has ended. */
 fun handover(state: Handover, event: HandoverEvent): Pair<Handover?, HandoverOutcome> = when (event) {
     HandoverEvent.ReShown -> null to HandoverOutcome.Keep
-    HandoverEvent.MicStopped, HandoverEvent.ShowFailed -> null to HandoverOutcome.Dismiss
+    HandoverEvent.MicStopped, HandoverEvent.ShowFailed, HandoverEvent.Superseded -> null to HandoverOutcome.Dismiss
+    HandoverEvent.MicStarted -> state.copy(micStarted = true) to HandoverOutcome.Wait
     HandoverEvent.MicFinished ->
         if (state.kind == HandoverKind.Mic && !state.micFinished) {
             val next = state.copy(micFinished = true, generation = state.generation + 1)
             next to HandoverOutcome.After(HANDOVER_WAIT, next.generation)
         } else state to HandoverOutcome.Wait
     is HandoverEvent.Timer ->
-        if (event.generation == state.generation && (state.kind == HandoverKind.Context || state.micFinished)) {
+        if (event.generation == state.generation && (state.kind == HandoverKind.Context || !state.micStarted || state.micFinished)) {
             null to HandoverOutcome.Dismiss
         } else state to HandoverOutcome.Wait
 }

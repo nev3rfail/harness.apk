@@ -44,4 +44,24 @@ class ForwardTest {
         assertEquals(false, asksMicForOtherApps(api = 30, roleHeld = false, granted = false))
         assertEquals(false, asksMicForOtherApps(api = 31, roleHeld = true, granted = false))
     }
+
+    @Test
+    fun `the on-device recognizer is used from Android 12 where it is wanted and available`() {
+        assertEquals(RecognizerKind.OnDevice, recognizerKind(api = 31, onDevice = true) { true })
+        assertEquals(RecognizerKind.Default, recognizerKind(api = 35, onDevice = true) { false })
+        assertEquals(RecognizerKind.Default, recognizerKind(api = 35, onDevice = false) { true })
+    }
+
+    @Test
+    fun `Android 11 forwards whatever is wanted, and never asks about the on-device one`() {
+        assertEquals(RecognizerKind.Forward, recognizerKind(api = 30, onDevice = true) { error("not on API 30") })
+    }
+
+    @Test
+    fun `only an on-device listen lacking the language is retried, once`() {
+        assertEquals(true, retriesOnline(onDevice = true, retried = false, noLanguage = true))
+        assertEquals(false, retriesOnline(onDevice = true, retried = true, noLanguage = true))
+        assertEquals(false, retriesOnline(onDevice = false, retried = false, noLanguage = true))
+        assertEquals(false, retriesOnline(onDevice = true, retried = false, noLanguage = false))
+    }
 }
