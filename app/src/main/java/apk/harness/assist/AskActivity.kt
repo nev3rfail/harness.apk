@@ -27,11 +27,11 @@ class AskActivity : ComponentActivity(), PanelHost {
 
     override fun onStart() {
         super.onStart()
+        // The panel of the instance a recreation replaced, with its run.
+        if (state == null) state = Assistant.recreated.also { Assistant.recreated = null }
         // At start, not creation: an activity created behind the lock screen is
         // not left locked, and one shown while locked starts nothing.
-        val current = state
-        if (current != null && current.gate == PanelState.Gate.Open) return
-        openPanel()
+        show(summoned = false)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -39,16 +39,38 @@ class AskActivity : ComponentActivity(), PanelHost {
         // A new intent during an escalation is ignored until it ends.
         if (state?.escalating == true) return
         setIntent(intent)
-        state?.dismiss()
-        openPanel()
+        // A second summon keeps the conversation and listens, as in the session.
+        show(summoned = true)
     }
 
-    private fun openPanel() {
-        state = when (classifyShow(keyguard.isKeyguardLocked, shown = false, ownRequest = false, staged = Bootstrap(this).isInstalled())) {
+    /** [summoned]: a new intent reached the activity on screen, so an open panel listens. */
+    private fun show(summoned: Boolean) {
+        val current = state
+        val show = classifyShow(
+            keyguard.isKeyguardLocked,
+            shown = panelShown(current != null, current?.gate),
+            ownRequest = false,
+            staged = Bootstrap(this).isInstalled(),
+        )
+        if (show == Show.Listen) {
+            if (summoned && intent?.action == Intent.ACTION_ASSIST) current?.listenIfGranted()
+            return
+        }
+        current?.dismiss()
+        state = when (show) {
             Show.Locked -> PanelState.locked()
             Show.NotStaged -> PanelState.notStaged(this)
             else -> PanelState().also { it.begin(this); if (intent?.action == Intent.ACTION_ASSIST) it.listenIfGranted() }
         }
+    }
+
+    override fun onDestroy() {
+        // A recreation the configChanges do not absorb hands the panel and its
+        // run to the new instance; any other end stops it.
+        if (isChangingConfigurations) Assistant.recreated = state
+        else state?.let { if (it.escalating) it.run?.hidden() else it.dismiss() }
+        state = null
+        super.onDestroy()
     }
 
     override fun onStop() {

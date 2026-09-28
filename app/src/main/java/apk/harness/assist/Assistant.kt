@@ -27,6 +27,9 @@ object Assistant {
     /** The answer [MicActivity] brings back, taken and cleared by the panel that asked. */
     val mic = MutableStateFlow<MicAnswer?>(null)
 
+    /** [AskActivity]'s panel across a recreation, main thread only. */
+    var recreated: PanelState? = null
+
     /** Marks a show the panel asked for itself. */
     const val PANEL_REQUEST = "apk.harness.panel.REQUEST"
 
