@@ -54,6 +54,8 @@ object ClaudeBackend : AgentBackend {
             "--include-partial-messages",
         ) + if (resume) resume(sessionId) else start(sessionId)
 
+    override fun parseEvent(line: String): HeadlessEvent = parseClaudeEvent(line)
+
     override fun mcpConfig(file: File): List<String> = listOf("--mcp-config", file.absolutePath)
 
     override fun switch(sessionId: String): String = "/resume $sessionId"
@@ -123,7 +125,7 @@ fun rosterEntry(record: JSONObject): RunningSession? {
  * about a value that is not a string, and the disagreement is between the
  * device runtime and the test classpath.
  */
-private fun JSONObject.string(key: String): String? =
+internal fun JSONObject.string(key: String): String? =
     (opt(key) as? String)?.takeIf { it.isNotEmpty() }
 
 /**

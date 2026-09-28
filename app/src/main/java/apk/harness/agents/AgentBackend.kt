@@ -60,6 +60,9 @@ interface AgentBackend {
      */
     fun headless(sessionId: String, resume: Boolean): List<String>
 
+    /** What one line of a headless run's stdout says. */
+    fun parseEvent(line: String): HeadlessEvent
+
     /** Arguments that point the CLI at the MCP servers [file] describes. */
     fun mcpConfig(file: File): List<String>
 
