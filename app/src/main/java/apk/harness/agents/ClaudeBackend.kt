@@ -62,7 +62,7 @@ object ClaudeBackend : AgentBackend {
     override fun writeMessage(out: OutputStream, texts: List<String>, images: List<HeadlessImage>) =
         writeClaudeMessage(out, texts, images)
 
-    override fun interrupt(requestId: String): String = claudeInterrupt(requestId)
+    override fun writeInterrupt(out: OutputStream, requestId: String) = writeClaudeInterrupt(out, requestId)
 
     override fun mcpConfig(file: File): List<String> = listOf("--mcp-config", file.absolutePath)
 

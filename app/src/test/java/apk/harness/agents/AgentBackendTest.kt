@@ -33,7 +33,7 @@ class AgentBackendTest {
         override fun parseEvent(line: String) = unreached()
         override val provider: String get() = unreached()
         override fun writeMessage(out: java.io.OutputStream, texts: List<String>, images: List<HeadlessImage>) = unreached()
-        override fun interrupt(requestId: String) = unreached()
+        override fun writeInterrupt(out: java.io.OutputStream, requestId: String) = unreached()
         override fun mcpConfig(file: File) = unreached()
         override fun switch(sessionId: String) = unreached()
         override fun promptText(viewport: String) = unreached()

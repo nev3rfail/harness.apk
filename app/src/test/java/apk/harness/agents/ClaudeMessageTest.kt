@@ -1,11 +1,13 @@
 package apk.harness.agents
 
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.Base64
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -87,8 +89,34 @@ class ClaudeMessageTest {
     }
 
     @Test
-    fun `the interrupt is a control request under the id it is given`() {
-        val request = JSONObject(ClaudeBackend.interrupt("int-1"))
+    fun `an image file that cannot be read throws with nothing written`() {
+        val a = folder.newFile("a.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val sink = Sink()
+        assertThrows(java.io.IOException::class.java) {
+            ClaudeBackend.writeMessage(sink, listOf("x"), listOf(HeadlessImage(a, "image/jpeg"), HeadlessImage(File(folder.root, "gone.jpg"), "image/jpeg")))
+        }
+        assertEquals(0, sink.size())
+    }
+
+    @Test
+    fun `image bytes reach the sink in chunks, not one byte at a time`() {
+        // A multiple of three: the encoder writes the padding of a remainder byte by byte.
+        val a = folder.newFile("a.jpg").apply { writeBytes(ByteArray(9_999) { it.toByte() }) }
+        val sink = object : ByteArrayOutputStream() {
+            override fun write(b: Int) = throw AssertionError("a single byte")
+        }
+        ClaudeBackend.writeMessage(sink, listOf("x"), listOf(HeadlessImage(a, "image/jpeg")))
+        assertTrue(sink.size() > 13_332)
+    }
+
+    @Test
+    fun `the interrupt is one control request line under the id it is given`() {
+        val sink = Sink()
+        ClaudeBackend.writeInterrupt(sink, "int-1")
+        assertTrue(sink.text().endsWith("\n"))
+        assertEquals(1, sink.text().count { it == '\n' })
+        assertFalse(sink.closed)
+        val request = JSONObject(sink.text().trimEnd('\n'))
         assertEquals("control_request", request.getString("type"))
         assertEquals("int-1", request.getString("request_id"))
         assertEquals("interrupt", request.getJSONObject("request").getString("subtype"))

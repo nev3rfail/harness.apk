@@ -13,10 +13,17 @@ class ClaudeEventTest {
 
     @Test
     fun `init names the conversation`() {
+        // Written by the emulator's agent in the panel's directory.
         assertEquals(
-            Started(id),
-            parse("""{"type":"system","subtype":"init","cwd":"/x","session_id":"$id","tools":[],"mcp_servers":[{"name":"broken","status":"failed","source":"project"}],"model":"m","permissionMode":"default"}"""),
+            Started("cb53d4da-fbd1-40a9-b5c9-efdd3791e1f9"),
+            parse("""{"type":"system","subtype":"init","cwd":"/data/data/dev.harness/files/assistant","session_id":"cb53d4da-fbd1-40a9-b5c9-efdd3791e1f9","tools":["Task","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit","EnterWorktree","ExitWorktree","NotebookEdit","Read","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskOutput","TaskStop","ToolSearch","WebFetch","WebSearch","Workflow","Write"],"mcp_servers":[{"name":"harness","status":"failed"}],"model":"claude-opus-5[1m]","permissionMode":"default","slash_commands":["firefox-remote-debug","harness-device-build","harness-documents","harness-userland","headless-browser","self-adb","sourcing-claims","deep-research","design-sync","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","run","run-skill-generator","agents","auto-mode-setup","autocompact","clear","color","compact","config","context","effort","fast","heapdump","init","mcp","model","__remote-workflow","workflow-launch-exec","reload-skills","rename","security-review","usage","insights","recap","goal","design","design-consent","design-revoke","team-onboarding"],"terminal_slash_commands":["doctor","color"],"apiKeySource":"none","claude_code_version":"2.1.246","output_style":"default","agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"skills":["firefox-remote-debug","harness-device-build","harness-documents","harness-userland","headless-browser","self-adb","sourcing-claims","deep-research","design-sync","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","claude-api","run","run-skill-generator"],"plugins":[],"capabilities":["interrupt_receipt_v1","interrupt_cancel_queued_v1","msg_lifecycle_v1"],"analytics_disabled":false,"product_feedback_disabled":false,"uuid":"9e708845-cf69-4a9c-b6b1-e9bba124883f","memory_paths":{"auto":"/data/data/dev.harness/files/.claude/projects/-data-data-dev-harness-files-assistant/memory/"},"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}"""),
         )
+    }
+
+    @Test
+    fun `a subagent's events are ignored`() {
+        assertEquals(Ignored, parse("""{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"inner"}},"session_id":"$id","parent_tool_use_id":"toolu_9"}"""))
+        assertEquals(Ignored, parse("""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_10","name":"Read","input":{"file_path":"/x"}}]},"parent_tool_use_id":"toolu_9"}"""))
     }
 
     @Test
@@ -63,10 +70,11 @@ class ClaudeEventTest {
 
     @Test
     fun `a denial carries its tool and message`() {
-        assertEquals(
-            Denied("toolu_01", "Bash", "touch in 'e/probe.txt' needs approval."),
-            parse("""{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01","message":"touch in 'e/probe.txt' needs approval.","session_id":"$id"}"""),
-        )
+        val denied = parse("""{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01WsDJies49fCvcMhHTDEqRS","message":"touch in 'D:\\Users\\nev3rfail\\AppData\\Local\\Temp\\claude\\F--fun-harness\\73527ef8-cfc7-4eeb-bcf7-0c0d98705eca\\scratchpad\\oq-cli-run\\e\\probe.txt' needs approval. The path is inside the working directories for this session ('D:\\Users\\nev3rfail\\AppData\\Local\\Temp\\claude\\F--fun-harness\\73527ef8-cfc7-4eeb-bcf7-0c0d98705eca\\scratchpad\\oq-cli-run\\e'), and Claude Code asks before a shell command creates, changes or removes files there.","uuid":"22240ed5-a7f3-4e82-8fad-459b9cd94930","session_id":"9ef5eedb-f3b7-40b7-aa95-d1f98633af61"}""") as Denied
+        assertEquals("toolu_01WsDJies49fCvcMhHTDEqRS", denied.toolUseId)
+        assertEquals("Bash", denied.tool)
+        assertTrue(denied.message!!.startsWith("touch in '"))
+        assertTrue(denied.message!!.contains("needs approval."))
     }
 
     @Test
@@ -92,9 +100,22 @@ class ClaudeEventTest {
 
     @Test
     fun `an interrupted turn is not an error`() {
-        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":2,"stop_reason":null,"terminal_reason":"aborted_streaming","errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}""") as Finished
+        val finished = parse("""{"duration_api_ms":0,"stop_reason":null,"session_id":"2ff233d0-cb38-4eaf-b6c7-549a129713a5","total_cost_usd":0,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"aborted_streaming","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"is_error":true,"num_turns":2,"subtype":"error_during_execution","errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],"type":"result","duration_ms":15371,"uuid":"546ad117-fdf4-4907-92f8-02241fc5379e","queued_turn_count":0,"result_index":0}""") as Finished
         assertTrue(finished.ok)
         assertEquals(emptyList<String>(), finished.errors)
+    }
+
+    @Test
+    fun `a turn ended with only diagnostics is an interrupted one`() {
+        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}""") as Finished
+        assertTrue(finished.ok)
+    }
+
+    @Test
+    fun `a failure that names nothing still says it failed`() {
+        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true}""") as Finished
+        assertFalse(finished.ok)
+        assertEquals(listOf("error_during_execution"), finished.errors)
     }
 
     @Test

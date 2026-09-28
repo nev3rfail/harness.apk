@@ -28,7 +28,7 @@ fun imageBudget(sent: List<Long>, adding: List<Long>): ImageSplit {
     var count = sent.size
     val blocks = ArrayList<Int>()
     for ((index, size) in adding.withIndex()) {
-        if (blocks.size == MESSAGE_IMAGES || count == IMAGE_COUNT || total + size > IMAGE_BUDGET) {
+        if (blocks.size >= MESSAGE_IMAGES || count >= IMAGE_COUNT || total + size > IMAGE_BUDGET) {
             return ImageSplit(blocks, (index until adding.size).toList())
         }
         blocks += index

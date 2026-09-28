@@ -64,6 +64,7 @@ fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAct
     }
     return when (event) {
         StopEvent.Begin -> when {
+            state.phase != StopState.Phase.Idle -> none
             !state.alive -> finish(state)
             state.kind == StopKind.Dismiss -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.CloseStdin, StopAction.Terminate)
             state.turnInFlight -> next(state, StopState.Phase.Interrupting, INTERRUPT_WAIT, StopAction.Interrupt)
@@ -77,11 +78,21 @@ fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAct
             StopState.Phase.Terminating -> finish(state, StopAction.Kill)
             else -> none
         }
-        StopEvent.Hidden -> if (state.kind == StopKind.Escalate) {
-            next(state.copy(kind = StopKind.Dismiss), StopState.Phase.Terminating, KILL_WAIT, StopAction.CloseStdin, StopAction.Terminate)
-        } else none
+        StopEvent.Hidden -> if (state.kind == StopKind.Dismiss) none else hide(state.copy(kind = StopKind.Dismiss))
         StopEvent.Settled, StopEvent.Back -> none
     }
+}
+
+/**
+ * An escalation turned into a dismiss by a hide, given only what its phase has
+ * not done yet. Before Begin it waits for Begin, which then runs the dismiss.
+ */
+private fun hide(state: StopState): Pair<StopState, List<StopAction>> = when (state.phase) {
+    StopState.Phase.Idle -> state to emptyList()
+    StopState.Phase.Interrupting -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.CloseStdin, StopAction.Terminate)
+    StopState.Phase.Draining -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.Terminate)
+    // SIGTERM is sent and its SIGKILL timer is running.
+    else -> state to emptyList()
 }
 
 private fun drain(state: StopState) = next(state, StopState.Phase.Draining, EXIT_WAIT, StopAction.CloseStdin)

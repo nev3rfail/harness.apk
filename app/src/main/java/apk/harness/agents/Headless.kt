@@ -1,5 +1,7 @@
 package apk.harness.agents
 
+import java.io.File
+
 /** What one stdout line of a headless run says, as the panel needs it. */
 sealed interface HeadlessEvent {
     /** The run names its conversation; written at the start of every turn. */
@@ -29,4 +31,4 @@ sealed interface HeadlessEvent {
 data class Denial(val toolUseId: String, val tool: String)
 
 /** An image to send, already encoded into [file] under the cache directory. */
-data class HeadlessImage(val file: java.io.File, val mediaType: String)
+data class HeadlessImage(val file: File, val mediaType: String)
