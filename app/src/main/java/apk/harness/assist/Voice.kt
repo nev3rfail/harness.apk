@@ -47,7 +47,7 @@ class Voice(
         Log.i(TAG, "listening, on device: $usedOnDevice")
         recognizer = created
         created.setRecognitionListener(listener(usedOnDevice))
-        created.startListening(intent(preferOffline = !usedOnDevice))
+        created.startListening(intent())
         onProblem(null)
         onListening(true)
     }
@@ -60,10 +60,11 @@ class Voice(
         else -> forwardTarget(recognizerCandidates(context))?.let { SpeechRecognizer.createSpeechRecognizer(context, it.component()) to false }
     }
 
-    private fun intent(preferOffline: Boolean) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+    // The recognizer picks online or offline itself: asked for offline with no
+    // language pack, the default one fails as the on-device one does.
+    private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        .apply { if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true) }
 
     private fun listener(onDevice: Boolean) = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
