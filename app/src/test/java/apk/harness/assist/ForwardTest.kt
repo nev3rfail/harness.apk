@@ -36,4 +36,12 @@ class ForwardTest {
     fun `no candidates is none`() {
         assertNull(forwardTarget(emptyList()))
     }
+
+    @Test
+    fun `the microphone is asked for other apps only on Android 11, as the assistant, without the grant`() {
+        assertEquals(true, asksMicForOtherApps(api = 30, roleHeld = true, granted = false))
+        assertEquals(false, asksMicForOtherApps(api = 30, roleHeld = true, granted = true))
+        assertEquals(false, asksMicForOtherApps(api = 30, roleHeld = false, granted = false))
+        assertEquals(false, asksMicForOtherApps(api = 31, roleHeld = true, granted = false))
+    }
 }

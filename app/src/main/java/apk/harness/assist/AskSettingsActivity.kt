@@ -1,5 +1,6 @@
 package apk.harness.assist
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.Intent
 import android.net.Uri
@@ -8,6 +9,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +39,12 @@ class AskSettingsActivity : ComponentActivity() {
     private var settings by mutableStateOf(AssistantSettings())
     /** "Always" chosen without consent: the disclosure is drawn in place of the section. */
     private var disclosing by mutableStateOf(false)
+    /** Android 11: the forwarder needs the app's own microphone for other apps' voice input. */
+    private var otherAppsMic by mutableStateOf(false)
+    private var micDisclosing by mutableStateOf(false)
+    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        otherAppsMic = asksMicForOtherApps(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,7 +53,17 @@ class AskSettingsActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     Column(Modifier.safeDrawingPadding().padding(16.dp)) {
                         Text(TITLE, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
-                        if (disclosing) {
+                        if (micDisclosing) {
+                            BackHandler { micDisclosing = false }
+                            MicDisclosure(
+                                provider = BACKENDS.first().provider,
+                                onContinue = {
+                                    micDisclosing = false
+                                    micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                                onNotNow = { micDisclosing = false },
+                            )
+                        } else if (disclosing) {
                             BackHandler { disclosing = false }
                             ScreenDisclosure(
                                 provider = BACKENDS.first().provider,
@@ -69,6 +87,7 @@ class AskSettingsActivity : ComponentActivity() {
         val roles = getSystemService(RoleManager::class.java)
         held = roles.isRoleAvailable(RoleManager.ROLE_ASSISTANT) && roles.isRoleHeld(RoleManager.ROLE_ASSISTANT)
         settings = Assistant.settings(this)
+        otherAppsMic = asksMicForOtherApps(this)
     }
 
     @Composable
@@ -77,6 +96,7 @@ class AskSettingsActivity : ComponentActivity() {
             runCatching { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
                 .recoverCatching { startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)) }
         }
+        if (otherAppsMic) Action(OTHER_APPS_MIC) { micDisclosing = true }
         HorizontalDivider()
         Text(SCREEN_CONTEXT, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
         Choice(ASK_EACH_TIME, settings.screenContext == ScreenContext.Ask) {
