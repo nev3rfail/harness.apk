@@ -133,6 +133,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Exported with no filter, so the system's and an OEM's gear on the
+             assistant entry can start it by component. -->
+        <activity
+            android:name=".assist.AskSettingsActivity"
+            android:exported="true"
+            android:label="@string/ask_agent"
+            android:theme="@style/Theme.Harness" />
+
         <activity
             android:name=".assist.MicActivity"
             android:excludeFromRecents="true"
