@@ -80,15 +80,21 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                             override fun openUri(uri: String) = state.openLink(host, uri)
                         },
                     ) {
-                        val disclosing = state.disclosure
-                        if (disclosing is Disclosing.Screen) ScreenDisclosure(
-                            provider = BACKENDS.first().provider,
-                            always = false,
-                            onAllow = { state.allow(host) },
-                            onNotNow = { state.disclosure = null },
-                            openPolicy = { url -> state.openLink(host, url) },
-                        )
-                        else Body(state, host, Modifier.weight(1f, fill = false))
+                        when (state.disclosure) {
+                            is Disclosing.Screen -> ScreenDisclosure(
+                                provider = BACKENDS.first().provider,
+                                always = false,
+                                onAllow = { state.allow(host) },
+                                onNotNow = { state.disclosure = null },
+                                openPolicy = { url -> state.openLink(host, url) },
+                            )
+                            Disclosing.Mic -> MicDisclosure(
+                                provider = BACKENDS.first().provider,
+                                onContinue = { state.micContinue(host) },
+                                onNotNow = { state.disclosure = null },
+                            )
+                            null -> Body(state, host, Modifier.weight(1f, fill = false))
+                        }
                     }
                 }
             }
@@ -136,6 +142,10 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
         }
     }
     state.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    if (state.otherAppsMic) Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(OTHER_APPS_MIC, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = { state.disclosure = Disclosing.Mic }) { Text(ALLOW_MIC) }
+    }
     if (state.escalating) Text(OPENING, modifier = Modifier.padding(vertical = 8.dp))
     else TextButton(onClick = { state.escalate(host) }) { Text(CONTINUE) }
 }
@@ -196,3 +206,5 @@ private const val OPENING = "Opening in a tab…"
 private const val SCREEN_TEXT = "Screen text"
 private const val SCREENSHOT = "Screenshot"
 private const val NOTHING_CAME = "Nothing came from the screen."
+internal const val OTHER_APPS_MIC = "Voice input in other apps needs the microphone"
+private const val ALLOW_MIC = "Allow"

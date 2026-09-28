@@ -1,10 +1,8 @@
 package apk.harness.assist
 
-import android.Manifest
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +22,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
@@ -67,12 +66,32 @@ class PanelSession(context: Context) :
      */
     private val early = ArrayList<Parked>()
 
+    /** A grant MicActivity brought back before the handed-over panel was claimed. */
+    private var grantWaiting = false
+
     private class Parked(val summon: Int, val at: Long, val file: File?, val apply: (PanelState) -> Unit)
 
     override fun onCreate() {
         super.onCreate()
         saved.performRestore(null)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleScope.launch {
+            Assistant.mic.collect { answer ->
+                when (answer) {
+                    is MicAnswer.Answered -> {
+                        Assistant.handoverEvent(HandoverEvent.MicFinished)
+                        if (answer.granted) {
+                            // A handed-over panel listens once its re-show has claimed it.
+                            val current = state
+                            if (current != null) current.micGranted() else grantWaiting = true
+                        }
+                    }
+                    MicAnswer.Stopped -> Assistant.handoverEvent(HandoverEvent.MicStopped)
+                    null -> return@collect
+                }
+                Assistant.mic.value = null
+            }
+        }
     }
 
     override fun onCreateContentView(): View {
@@ -113,10 +132,24 @@ class PanelSession(context: Context) :
             Show.NotStaged -> state = PanelState.notStaged(context)
             Show.Fresh -> {
                 drop()
+                grantWaiting = false
                 state = PanelState().also { it.begin(context); it.listenIfGranted() }
             }
             Show.Listen -> state?.listenIfGranted()
-            Show.OwnReShow -> {}
+            Show.OwnReShow -> if (state == null) {
+                // The re-show after a handover takes its panel back; with none
+                // left to take, the session has nothing to draw.
+                val claimed = Assistant.claim()
+                state = claimed
+                if (claimed == null) {
+                    hide()
+                    return
+                }
+                if (grantWaiting) {
+                    grantWaiting = false
+                    claimed.micGranted()
+                }
+            }
         }
         val current = state
         val parked = early.toList()
@@ -315,12 +348,22 @@ class PanelSession(context: Context) :
         }
     }
 
+    /**
+     * A session cannot ask for permissions, so MicActivity asks. It is started
+     * while shown, since a hidden session can start nothing; the permission
+     * dialog lands under the session window, so the session then hides as a
+     * handover and MicActivity's answer re-shows it.
+     */
     override fun requestMic() {
-        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            state?.voice?.start()
-        } else {
-            // A session cannot ask for permissions, and a hidden one can start nothing.
-            startAssistantActivity(Intent(context, MicActivity::class.java))
+        // A fresh task each time, so nothing an earlier request left behind answers for this one.
+        startAssistantActivity(
+            Intent(context, MicActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
+        if (MIC_DIALOG_UNDER_SESSION) {
+            val current = state ?: return
+            Assistant.handOver(current, HandoverKind.Mic)
+            handingOver = true
+            hide()
         }
     }
 }

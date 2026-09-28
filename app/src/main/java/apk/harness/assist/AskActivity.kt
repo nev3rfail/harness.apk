@@ -1,5 +1,6 @@
 package apk.harness.assist
 
+import android.Manifest
 import android.app.KeyguardManager
 import android.content.Intent
 import android.os.Bundle
@@ -7,6 +8,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -18,6 +20,9 @@ class AskActivity : ComponentActivity(), PanelHost {
     override val inSession = false
     private var state by mutableStateOf<PanelState?>(null)
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
+    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) state?.micGranted()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -96,5 +101,6 @@ class AskActivity : ComponentActivity(), PanelHost {
     }
 
     override fun askContext(text: Boolean, shot: Boolean) {}
-    override fun requestMic() {}
+    // The dialog pauses the activity and does not stop it, so onStop's dismiss does not fire.
+    override fun requestMic() = micPermission.launch(Manifest.permission.RECORD_AUDIO)
 }

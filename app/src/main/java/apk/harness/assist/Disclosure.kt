@@ -46,6 +46,19 @@ fun ScreenDisclosure(provider: String, always: Boolean, onAllow: () -> Unit, onN
     }
 }
 
+/** The microphone disclosure, shown before the permission is asked for. */
+@Composable
+fun MicDisclosure(provider: String, onContinue: () -> Unit, onNotNow: () -> Unit) {
+    ObscuredTouchesFiltered()
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+        Text("$MIC_BODY$provider$MIC_BODY_END", modifier = Modifier.padding(vertical = 8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onNotNow) { Text(NOT_NOW) }
+            TextButton(onClick = onContinue) { Text(CONTINUE) }
+        }
+    }
+}
+
 /**
  * While a disclosure is drawn, its window drops touches that reach it through
  * another app's window drawn over it, so a consent cannot be tapped through an
@@ -72,3 +85,7 @@ private const val SCREEN_ALWAYS = "Ask Agent reads it every time you open it."
 private const val PRIVACY_POLICY = "Privacy policy"
 private const val NOT_NOW = "Not now"
 private const val ALLOW = "Allow"
+private const val CONTINUE = "Continue"
+private const val MIC_BODY = "Ask Agent turns what you say into text using the phone's speech recognizer, which may " +
+    "be an online service. The text is sent to "
+private const val MIC_BODY_END = " as your message."

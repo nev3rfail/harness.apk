@@ -11,3 +11,9 @@ fun forwardTarget(candidates: List<RecognizerCandidate>): RecognizerCandidate? {
     val real = candidates.filter { it.className != FORWARDER_CLASS }.sortedBy { it.packageName }
     return real.firstOrNull { it.system } ?: real.firstOrNull()
 }
+
+/**
+ * Whether the app asks for the microphone on behalf of other apps' voice input:
+ * on Android 11 the assistant's forwarder is refused without the app's own grant.
+ */
+fun asksMicForOtherApps(api: Int, roleHeld: Boolean, granted: Boolean): Boolean = api == 30 && roleHeld && !granted

@@ -12,7 +12,9 @@ class MicActivity : ComponentActivity() {
     private val ask = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         answered = true
         Assistant.mic.value = MicAnswer.Answered(granted)
-        finish()
+        // The session hid for the dialog; granted or not, it comes back with its panel.
+        if (MIC_DIALOG_UNDER_SESSION) Assistant.service?.showSession(Assistant.requestArgs(), 0)
+        finishAndRemoveTask()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -24,7 +26,9 @@ class MicActivity : ComponentActivity() {
         super.onStop()
         if (!answered && !isChangingConfigurations) {
             Assistant.mic.value = MicAnswer.Stopped
-            finish()
+            // With the task: a permission dialog left in it would take the next
+            // request's start, and its answer would reach no one.
+            finishAndRemoveTask()
         }
     }
 }

@@ -40,6 +40,8 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var nothingCame by mutableStateOf(false)
     /** A disclosure drawn in place of the thread. */
     var disclosure by mutableStateOf<Disclosing?>(null)
+    /** Android 11, the app the assistant without the microphone: other apps' voice input needs the grant. */
+    var otherAppsMic by mutableStateOf(false)
     /** Whether a message went to the agent, so the conversation has a transcript to open. */
     var sent = false
         private set
@@ -68,7 +70,14 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             onExit = { code, stderr -> conversation = threaded(conversation, ThreadEvent.Exited(code, stderr)) },
         ).also { it.begin() }
         voice?.destroy()
-        voice = Voice(app, onPartial = { field = it }, onFinal = { field = it; send() }, onListening = { listening = it })
+        voice = Voice(
+            app,
+            onPartial = { field = it },
+            onFinal = { field = it; send() },
+            onProblem = { notice = it },
+            onListening = { listening = it },
+        )
+        otherAppsMic = asksMicForOtherApps(app)
     }
 
     // `this.field`: a bare `field` in a getter is the backing field.
@@ -196,13 +205,25 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         if (app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice?.start()
     }
 
-    /** The mic button: stops a listen, starts one, or asks the host for the permission. */
+    /** The mic button: stops a listen, starts one, or shows the mic disclosure before the request. */
     fun mic(host: PanelHost) {
         when {
             listening -> voice?.stop()
             app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> voice?.start()
-            else -> host.requestMic()
+            else -> disclosure = Disclosing.Mic
         }
+    }
+
+    /** "Continue" on the mic disclosure: the host asks for the permission. */
+    fun micContinue(host: PanelHost) {
+        disclosure = null
+        host.requestMic()
+    }
+
+    /** The microphone granted: the line for other apps goes, and the panel listens. */
+    fun micGranted() {
+        otherAppsMic = false
+        voice?.start()
     }
 
     /** Start, then dismiss, so the panel does not sit above what it opened. */
