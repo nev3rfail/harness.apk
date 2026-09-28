@@ -31,6 +31,9 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.ui.HarnessTheme
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The panel in the voice interaction window. That window is a plain Dialog, and
@@ -55,6 +58,11 @@ class PanelSession(context: Context) :
     private val keyguard by lazy { context.getSystemService(KeyguardManager::class.java) }
     // Not the view's own queue: a view that is detached by then never runs it.
     private val main = Handler(Looper.getMainLooper())
+    /**
+     * With "Always", what a summon delivered before its show made the panel,
+     * applied to it at that show.
+     */
+    private val early = ArrayList<(PanelState) -> Unit>()
 
     override fun onCreate() {
         super.onCreate()
@@ -105,6 +113,14 @@ class PanelSession(context: Context) :
             Show.Listen -> state?.listenIfGranted()
             Show.OwnReShow -> {}
         }
+        val current = state
+        if ((show == Show.Fresh || show == Show.Listen) && current != null && always()) {
+            // Both chips start on; what this summon delivers is taken with no request.
+            current.screenText = true
+            current.screenshot = true
+            early.forEach { it(current) }
+        }
+        early.clear()
         visible = true
         registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
@@ -141,8 +157,7 @@ class PanelSession(context: Context) :
     }
 
     override fun onBackPressed() {
-        if (state?.escalating == true) return
-        dismiss()
+        state?.back(this) ?: dismiss()
     }
 
     /** Esc from a hardware keyboard is back; left to the window, it removes it without a hide. */
@@ -188,7 +203,7 @@ class PanelSession(context: Context) :
             if (stale()) { endContext(); return@postFrameCallback }
             Choreographer.getInstance().postFrameCallback {
                 if (stale()) { endContext(); return@postFrameCallback }
-                Assistant.service?.setDisabledShowContext(0)
+                Assistant.service?.setDisabledShowContext(Assistant.disabled(context) and flags.inv())
                 Assistant.service?.showSession(Assistant.requestArgs(), flags)
                 main.removeCallbacks(expire)
                 main.postDelayed(expire, CONTEXT_WAIT)
@@ -220,25 +235,57 @@ class PanelSession(context: Context) :
         return outcome.take
     }
 
+    /** The flags back at the setting's own value, so "Always" is kept, and the panel drawn again. */
     private fun endContext() {
-        Assistant.service?.setDisabledShowContext(SHOW_WITH_ASSIST or SHOW_WITH_SCREENSHOT)
+        Assistant.service?.setDisabledShowContext(Assistant.disabled(context))
         content?.visibility = View.VISIBLE
+    }
+
+    private fun always(): Boolean = Assistant.settings(context).let { it.consented && it.screenContext == ScreenContext.Always }
+
+    /**
+     * [apply] to the panel a delivery is for: the current one, or with
+     * "Always" and no panel yet, the one this summon's show makes.
+     */
+    private fun toPanel(apply: (PanelState) -> Unit) {
+        val current = state
+        if (current != null) apply(current) else early += apply
     }
 
     override fun onHandleAssist(assist: AssistState) {
         val structure = assist.assistStructure
         Log.i(TAG, "assist focused=${assist.isFocused} structure=${structure != null} windows=${structure?.windowNodeCount}")
         if (!assist.isFocused) return
-        Log.i(TAG, "assist taken=${delivered(Delivery.Structure)}")
+        val taken = delivered(Delivery.Structure) || always()
+        Log.i(TAG, "assist taken=$taken")
+        if (!taken) return
+        val flat = structure?.let { flattenScreen(screenNodes(it), assist.assistContent?.webUri?.toString()) }
+        val text = flat?.takeIf { it.isNotEmpty() }?.let { Attachment.ScreenText(appLabel(context, structure), it) }
+        Log.i(TAG, "screen text of ${flat?.length ?: 0} characters")
+        toPanel { it.screenTextCame(text) }
     }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
-        val taken = delivered(Delivery.Screenshot)
+        val taken = delivered(Delivery.Screenshot) || always()
         Log.i(TAG, "screenshot ${screenshot?.width}x${screenshot?.height} taken=$taken")
-        if (!taken || screenshot == null) return
-        // The image the next message carries.
-        val file = File(context.cacheDir, "$ASSIST_CACHE/screenshot.png").apply { parentFile?.mkdirs() }
-        file.outputStream().use { screenshot.copy(Bitmap.Config.ARGB_8888, false).compress(Bitmap.CompressFormat.PNG, 100, it) }
+        if (!taken) return
+        if (screenshot == null) {
+            toPanel { it.screenshotCame(null) }
+            return
+        }
+        val asked = state
+        Assistant.runs.launch {
+            val encoded = encodeScreenshot(context, screenshot)
+            withContext(Dispatchers.Main) {
+                // A panel dismissed or replaced during the encode does not take it.
+                val current = state
+                when {
+                    current == null && asked == null -> early += { it.screenshotCame(encoded) }
+                    current != null && (current === asked || asked == null) -> current.screenshotCame(encoded)
+                    else -> encoded.file.delete()
+                }
+            }
+        }
     }
 
     override fun requestMic() {
