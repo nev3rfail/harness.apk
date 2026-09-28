@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import apk.harness.agents.BACKENDS
 import apk.harness.ui.MarkdownDocument
 
 /** What the panel asks of whatever hosts it: the session window or AskActivity. */
@@ -44,7 +45,7 @@ interface PanelHost {
 @Composable
 fun AskPanel(state: PanelState, host: PanelHost) {
     // Only an activity has a back dispatcher; the session hears back in onBackPressed.
-    if (!host.inSession) BackHandler { if (!state.escalating) host.dismiss() }
+    if (!host.inSession) BackHandler { state.back(host) }
     val inFlight = state.conversation.inFlight
     LaunchedEffect(inFlight) { host.keepScreenOn(inFlight) }
 
@@ -52,7 +53,7 @@ fun AskPanel(state: PanelState, host: PanelHost) {
         val sheet = maxHeight * SHEET_SHARE
         Box(
             Modifier.fillMaxSize().background(SCRIM)
-                .clickable(remember { MutableInteractionSource() }, indication = null) { if (!state.escalating) host.dismiss() },
+                .clickable(remember { MutableInteractionSource() }, indication = null) { state.back(host) },
         )
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = sheet),
@@ -78,7 +79,17 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                         LocalUriHandler provides object : UriHandler {
                             override fun openUri(uri: String) = state.openLink(host, uri)
                         },
-                    ) { Body(state, host, Modifier.weight(1f, fill = false)) }
+                    ) {
+                        val disclosing = state.disclosure
+                        if (disclosing is Disclosing.Screen) ScreenDisclosure(
+                            provider = BACKENDS.first().provider,
+                            always = false,
+                            onAllow = { state.allow(host) },
+                            onNotNow = { state.disclosure = null },
+                            openPolicy = { url -> state.openLink(host, url) },
+                        )
+                        else Body(state, host, Modifier.weight(1f, fill = false))
+                    }
                 }
             }
         }
@@ -98,6 +109,14 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
         }
     }
     StatusLine(state, host)
+    if (host.inSession) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = state.screenText, onClick = { state.chip(host, text = true, shot = false) }, label = { Text(SCREEN_TEXT) })
+            FilterChip(selected = state.screenshot, onClick = { state.chip(host, text = false, shot = true) }, label = { Text(SCREENSHOT) })
+        }
+        if (state.nothingCame) Text(NOTHING_CAME, style = MaterialTheme.typography.bodySmall)
+    }
+    state.attachments.forEach { Text(it.line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = state.field,
@@ -174,3 +193,6 @@ private const val THINKING = "Thinking…"
 private const val NEEDS_APPROVAL = "Needs your approval:"
 private const val CONTINUE = "Continue in a tab"
 private const val OPENING = "Opening in a tab…"
+private const val SCREEN_TEXT = "Screen text"
+private const val SCREENSHOT = "Screenshot"
+private const val NOTHING_CAME = "Nothing came from the screen."
