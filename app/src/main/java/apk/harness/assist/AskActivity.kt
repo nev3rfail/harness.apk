@@ -55,7 +55,8 @@ class AskActivity : ComponentActivity(), PanelHost {
         // A new intent during an escalation is ignored until it ends.
         if (state?.escalating == true) return
         setIntent(intent)
-        // A second summon keeps the conversation and listens, as in the session.
+        // A second summon keeps the conversation and listens, as in the session;
+        // a share replaces the panel with one holding it.
         show(summoned = true)
     }
 
@@ -68,7 +69,7 @@ class AskActivity : ComponentActivity(), PanelHost {
             ownRequest = false,
             staged = Bootstrap(this).isInstalled(),
         )
-        if (show == Show.Listen) {
+        if (show == Show.Listen && !(summoned && intent?.action in SHARE_ACTIONS)) {
             if (summoned && intent?.action == Intent.ACTION_ASSIST) current?.listenIfGranted()
             return
         }
@@ -78,7 +79,10 @@ class AskActivity : ComponentActivity(), PanelHost {
             Show.NotStaged -> PanelState.notStaged(this)
             else -> PanelState().also { it.begin(this); if (intent?.action == Intent.ACTION_ASSIST) it.listenIfGranted() }
         }
+        if (intent?.action in SHARE_ACTIONS) handed = handedOf(intent, contentResolver)
     }
+
+    private var handed: Handed? = null
 
     override fun onDestroy() {
         unregisterReceiver(screenOff)
