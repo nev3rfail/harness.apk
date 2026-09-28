@@ -206,6 +206,10 @@ jobs:
           set -euo pipefail
           # The Play release is the one that must carry the policy link.
           [ -n "$PRIVACY_POLICY_URL" ] || { echo "PRIVACY_POLICY_URL is not set"; exit 1; }
+          case "$PRIVACY_POLICY_URL" in
+            https://*) ;;
+            *) echo "PRIVACY_POLICY_URL is not an https:// URL"; exit 1 ;;
+          esac
           ./gradlew :app:bundlePlay \
               -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true \
               -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE" \

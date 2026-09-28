@@ -89,4 +89,11 @@ class HandoverTest {
         }
         assertEquals(ContextOutcome(take = false, close = false), timeOut(null).second)
     }
+
+    @Test
+    fun `a parked delivery applies only to the show of its own summon within the context wait`() {
+        assertEquals(true, parkedApplies(parkedIn = 3, generation = 3, parkedAt = 1_000, now = 2_999))
+        assertEquals(false, parkedApplies(parkedIn = 3, generation = 3, parkedAt = 1_000, now = 3_000))
+        assertEquals(false, parkedApplies(parkedIn = 2, generation = 3, parkedAt = 1_000, now = 1_001))
+    }
 }

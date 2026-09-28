@@ -93,8 +93,21 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         run?.send(listOfNotNull(screen, text.takeIf { it.isNotBlank() }), shots.map { HeadlessImage(it.file, "image/jpeg") })
     }
 
-    /** A chip asks for this summon's screen context, after the disclosure when there is no consent. */
+    /**
+     * A chip asks for this summon's screen context, after the disclosure when
+     * there is no consent. A selected chip is turned off, with what it attached.
+     */
     fun chip(host: PanelHost, text: Boolean, shot: Boolean) {
+        if (text && screenText) {
+            screenText = false
+            attachments = attachments.filterNot { it is Attachment.ScreenText }
+            return
+        }
+        if (shot && screenshot) {
+            screenshot = false
+            attachments = dropScreenshot()
+            return
+        }
         if (!Assistant.settings(app).consented) {
             disclosure = Disclosing.Screen(text, shot)
             return
@@ -122,8 +135,27 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         }
     }
 
-    /** The screen text a summon delivered, or null when nothing came. */
+    /** The request closed by its wait: a chip it left with nothing attached goes off. */
+    fun requestEnded() {
+        if (screenText && attachments.none { it is Attachment.ScreenText }) {
+            screenText = false
+            nothingCame = true
+        }
+        if (screenshot && attachments.none { it is Attachment.Screenshot }) {
+            screenshot = false
+            nothingCame = true
+        }
+    }
+
+    /** [attachments] without the screenshot, its file deleted. */
+    private fun dropScreenshot(): List<Attachment> {
+        attachments.filterIsInstance<Attachment.Screenshot>().forEach { it.file.delete() }
+        return attachments.filterNot { it is Attachment.Screenshot }
+    }
+
+    /** The screen text a summon delivered, or null when nothing came. Only an open panel takes it. */
     fun screenTextCame(attachment: Attachment.ScreenText?) {
+        if (gate != Gate.Open) return
         if (attachment == null) {
             nothingCame = true
             screenText = false
@@ -136,14 +168,16 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
 
     /**
      * The screenshot a summon delivered, or null when nothing came. One the
-     * conversation has no room for is deleted, and the panel says so.
+     * conversation has no room for is deleted, and the panel says so. Only an
+     * open panel takes it.
      */
     fun screenshotCame(attachment: Attachment.Screenshot?) {
         when {
+            gate != Gate.Open -> attachment?.file?.delete()
             attachment == null -> {
                 nothingCame = true
                 screenshot = false
-                attachments = attachments.filterNot { it is Attachment.Screenshot }
+                attachments = dropScreenshot()
             }
             !screenshotFits(sentImages, base64Size(attachment.bytes)) -> {
                 attachment.file.delete()
@@ -152,8 +186,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             }
             else -> {
                 screenshot = true
-                attachments.filterIsInstance<Attachment.Screenshot>().forEach { it.file.delete() }
-                attachments = replacing(attachments, attachment)
+                attachments = replacing(dropScreenshot(), attachment)
             }
         }
     }

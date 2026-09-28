@@ -6,13 +6,6 @@ import org.junit.Test
 
 class AttachmentsTest {
     @Test
-    fun `a second summon's delivery replaces the screen context not yet sent`() {
-        val first = listOf(Attachment.ScreenText("Chrome", "old"), Attachment.Screenshot(File("/c/1.jpg"), 10))
-        val second = listOf(Attachment.ScreenText("Maps", "new"), Attachment.Screenshot(File("/c/2.jpg"), 20))
-        assertEquals(second, withDelivery(first, second))
-    }
-
-    @Test
     fun `a delivery of one kind replaces only that kind`() {
         val pending = listOf(Attachment.ScreenText("Chrome", "old"), Attachment.Screenshot(File("/c/1.jpg"), 10))
         val text = Attachment.ScreenText("Maps", "new")

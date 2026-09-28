@@ -85,5 +85,15 @@ fun deliver(request: ContextRequest?, delivery: Delivery): Pair<ContextRequest?,
 fun timeOut(request: ContextRequest?): Pair<ContextRequest?, ContextOutcome> =
     request?.copy(open = false) to ContextOutcome(take = false, close = request?.open == true)
 
+/** How long a context request, and a delivery parked for a show, wait. */
+const val CONTEXT_WAIT = 2_000L
+
+/**
+ * Whether a delivery parked before a show, in summon [parkedIn] at [parkedAt],
+ * goes to the panel that show makes: the same summon, within [CONTEXT_WAIT].
+ */
+fun parkedApplies(parkedIn: Int, generation: Int, parkedAt: Long, now: Long): Boolean =
+    parkedIn == generation && now - parkedAt < CONTEXT_WAIT
+
 /** Whether the microphone permission dialog lands under the session window, so the mic hands the panel over. */
 const val MIC_DIALOG_UNDER_SESSION = true
