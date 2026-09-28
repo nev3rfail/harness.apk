@@ -61,8 +61,11 @@ interface AgentBackend {
      */
     fun headless(sessionId: String, resume: Boolean): List<String>
 
-    /** What one line of a headless run's stdout says. */
-    fun parseEvent(line: String): HeadlessEvent
+    /**
+     * What one line of a headless run's stdout says. [interruptSent] is whether
+     * the run interrupted the turn this line belongs to.
+     */
+    fun parseEvent(line: String, interruptSent: Boolean): HeadlessEvent
 
     /** Who receives what the panel sends, named in its disclosures. */
     val provider: String

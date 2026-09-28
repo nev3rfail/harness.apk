@@ -8,8 +8,11 @@ import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** One line of Claude Code's `--output-format stream-json`. */
-fun parseClaudeEvent(line: String): HeadlessEvent {
+/**
+ * One line of Claude Code's `--output-format stream-json`. [interruptSent] is
+ * whether the run interrupted the turn this line belongs to.
+ */
+fun parseClaudeEvent(line: String, interruptSent: Boolean = false): HeadlessEvent {
     val event = runCatching { JSONObject(line) }.getOrNull() ?: return Malformed
     // A subagent's own events name the tool call that started it; the panel
     // shows only the main conversation.
@@ -18,7 +21,7 @@ fun parseClaudeEvent(line: String): HeadlessEvent {
         "system" -> system(event)
         "stream_event" -> stream(event.optJSONObject("event"))
         "assistant" -> toolUse(event)
-        "result" -> result(event)
+        "result" -> result(event, interruptSent)
         else -> Ignored
     }
 }
@@ -52,13 +55,14 @@ private fun toolUse(event: JSONObject): HeadlessEvent {
     return ToolUse(block.string("name") ?: "", shortInput(block.optJSONObject("input")))
 }
 
-private fun result(event: JSONObject): HeadlessEvent {
+private fun result(event: JSONObject, interruptSent: Boolean): HeadlessEvent {
     val text = event.string("result")
     val listed = strings(event.optJSONArray("errors"))
     // The panel's own interrupt ends a turn one of these ways; it is not an
-    // error. The diagnostic lines are all such a result lists.
+    // error. The diagnostic lines are all such a result lists, and count only
+    // after an interrupt the run sent.
     val interrupted = event.string("terminal_reason") == "aborted_streaming" ||
-        event.string("subtype") == "error_during_execution" &&
+        interruptSent && event.string("subtype") == "error_during_execution" &&
         listed.isNotEmpty() && listed.all { it.startsWith("[ede_diagnostic]") }
     val ok = event.opt("is_error") != true || interrupted
     val errors = when {

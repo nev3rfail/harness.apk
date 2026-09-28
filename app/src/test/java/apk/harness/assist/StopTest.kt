@@ -20,14 +20,14 @@ class StopTest {
     private val dismiss = StopState(StopKind.Dismiss, alive = true, turnInFlight = true, sessionId = id)
 
     @Test
-    fun `a dismiss closes stdin and sends SIGTERM at once, and SIGKILL at 2 s`() {
-        assertEquals(listOf(CloseStdin, Terminate, After(2_000, 1)), run(dismiss, StopEvent.Begin))
-        assertEquals(listOf(CloseStdin, Terminate, After(2_000, 1), Kill), run(dismiss, StopEvent.Begin, StopEvent.Timer(1)))
+    fun `a dismiss sends SIGTERM and closes stdin at once, and SIGKILL at 2 s`() {
+        assertEquals(listOf(Terminate, CloseStdin, After(2_000, 1)), run(dismiss, StopEvent.Begin))
+        assertEquals(listOf(Terminate, CloseStdin, After(2_000, 1), Kill), run(dismiss, StopEvent.Begin, StopEvent.Timer(1)))
     }
 
     @Test
     fun `a dismissed process that exits is not killed`() {
-        assertEquals(listOf(CloseStdin, Terminate, After(2_000, 1)), run(dismiss, StopEvent.Begin, StopEvent.Exited, StopEvent.Timer(1)))
+        assertEquals(listOf(Terminate, CloseStdin, After(2_000, 1)), run(dismiss, StopEvent.Begin, StopEvent.Exited, StopEvent.Timer(1)))
     }
 
     @Test
@@ -98,7 +98,7 @@ class StopTest {
     @Test
     fun `a hide during the interrupt closes stdin and sends SIGTERM`() {
         assertEquals(
-            listOf(Interrupt, After(4_000, 1), CloseStdin, Terminate, After(2_000, 2), Kill),
+            listOf(Interrupt, After(4_000, 1), Terminate, CloseStdin, After(2_000, 2), Kill),
             run(escalate(inFlight = true), StopEvent.Begin, StopEvent.Hidden, StopEvent.Timer(1), StopEvent.Timer(2)),
         )
     }
@@ -114,7 +114,7 @@ class StopTest {
     @Test
     fun `a hide before the stop begins makes it a dismiss`() {
         assertEquals(
-            listOf(CloseStdin, Terminate, After(2_000, 1)),
+            listOf(Terminate, CloseStdin, After(2_000, 1)),
             run(escalate(), StopEvent.Hidden, StopEvent.Begin),
         )
     }

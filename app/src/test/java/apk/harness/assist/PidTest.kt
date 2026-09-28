@@ -17,4 +17,12 @@ class PidTest {
         assertNull(pidOf("harness-pid"))
         assertNull(pidOf("harness-pid x"))
     }
+
+    @Test
+    fun `every descendant of the started process is found, grandchildren too`() {
+        // pid to ppid: 10 started 11 and 12; 11 started 13, which started 14; 20 is not ours.
+        val parents = mapOf(11 to 10, 12 to 10, 13 to 11, 14 to 13, 20 to 1, 10 to 1)
+        assertEquals(setOf(11, 12, 13, 14), descendants(10, parents).toSet())
+        assertEquals(emptyList<Int>(), descendants(14, parents))
+    }
 }

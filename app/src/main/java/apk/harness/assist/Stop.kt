@@ -47,7 +47,7 @@ const val EXIT_WAIT = 3_000L
 const val KILL_WAIT = 2_000L
 
 /**
- * The next step of a stop. A dismiss closes stdin and sends SIGTERM at once and
+ * The next step of a stop. A dismiss sends SIGTERM and closes stdin at once, and
  * SIGKILL at 2 s. An escalation ends the transcript on a closed turn -- the turn
  * in flight interrupted and given 4 s for its result, stdin closed and 3 s to
  * exit, SIGTERM and 2 s, SIGKILL -- waits for the roster to let the
@@ -66,7 +66,7 @@ fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAct
         StopEvent.Begin -> when {
             state.phase != StopState.Phase.Idle -> none
             !state.alive -> finish(state)
-            state.kind == StopKind.Dismiss -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.CloseStdin, StopAction.Terminate)
+            state.kind == StopKind.Dismiss -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.Terminate, StopAction.CloseStdin)
             state.turnInFlight -> next(state, StopState.Phase.Interrupting, INTERRUPT_WAIT, StopAction.Interrupt)
             else -> drain(state)
         }
@@ -89,7 +89,7 @@ fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAct
  */
 private fun hide(state: StopState): Pair<StopState, List<StopAction>> = when (state.phase) {
     StopState.Phase.Idle -> state to emptyList()
-    StopState.Phase.Interrupting -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.CloseStdin, StopAction.Terminate)
+    StopState.Phase.Interrupting -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.Terminate, StopAction.CloseStdin)
     StopState.Phase.Draining -> next(state, StopState.Phase.Terminating, KILL_WAIT, StopAction.Terminate)
     // SIGTERM is sent and its SIGKILL timer is running.
     else -> state to emptyList()

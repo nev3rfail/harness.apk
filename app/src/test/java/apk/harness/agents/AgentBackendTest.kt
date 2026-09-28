@@ -30,7 +30,7 @@ class AgentBackendTest {
         override fun start(sessionId: String) = unreached()
         override val headlessScript: String get() = unreached()
         override fun headless(sessionId: String, resume: Boolean) = unreached()
-        override fun parseEvent(line: String) = unreached()
+        override fun parseEvent(line: String, interruptSent: Boolean) = unreached()
         override val provider: String get() = unreached()
         override fun writeMessage(out: java.io.OutputStream, texts: List<String>, images: List<HeadlessImage>) = unreached()
         override fun writeInterrupt(out: java.io.OutputStream, requestId: String) = unreached()
