@@ -97,4 +97,31 @@ class PanelStateTest {
         assertTrue(state.screenText)
         assertFalse(state.nothingCame)
     }
+
+    @Test
+    fun `under Always an open request alone decides, so a chip turned off takes nothing`() {
+        val state = PanelState()
+        // Screen text turned off, Screenshot turned off and on: the request is for the screenshot only.
+        state.request = ContextRequest(text = false, shot = true)
+        assertFalse(state.takeDelivery(Delivery.Structure, always = true).take)
+        assertTrue(state.takeDelivery(Delivery.Screenshot, always = true).take)
+    }
+
+    @Test
+    fun `under Always with no open request every delivery is taken`() {
+        val state = PanelState()
+        assertTrue(state.takeDelivery(Delivery.Structure, always = true).take)
+        assertFalse(state.takeDelivery(Delivery.Structure, always = false).take)
+    }
+
+    @Test
+    fun `a delivery that comes clears what said nothing came`() {
+        val state = PanelState()
+        state.screenshotCame(null)
+        state.screenTextCame(Attachment.ScreenText("Chrome", "text"))
+        assertFalse(state.nothingCame)
+        state.screenTextCame(null)
+        state.screenshotCame(shot("1.jpg"))
+        assertFalse(state.nothingCame)
+    }
 }

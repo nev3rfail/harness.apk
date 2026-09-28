@@ -31,6 +31,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.ui.HarnessTheme
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -162,6 +163,9 @@ class PanelSession(context: Context) :
             parked.forEach {
                 if (parkedApplies(it.summon, summon, it.at, now)) it.apply(current) else it.file?.delete()
             }
+            // What has not come by the wait turns its chip off, as for a request.
+            main.removeCallbacks(alwaysEnded)
+            main.postDelayed(alwaysEnded, CONTEXT_WAIT)
         } else parked.forEach { it.file?.delete() }
         visible = true
         registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
@@ -174,6 +178,7 @@ class PanelSession(context: Context) :
         discardParked()
         val handedOver = handingOver
         main.removeCallbacks(expire)
+        main.removeCallbacks(alwaysEnded)
         endContext()
         // The lock screen, home, back, the scrim and the close control all end
         // here; a hide the panel made for itself hands the panel over instead.
@@ -192,6 +197,8 @@ class PanelSession(context: Context) :
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
         endContext()
+        // An encode that lands after this finds its summon over and deletes its file.
+        summon++
         discardParked()
         if (state != null) {
             drop()
@@ -267,20 +274,26 @@ class PanelSession(context: Context) :
         }
     }
 
+    /** The wait after an "Always" summon; a request opened since then keeps its own. */
+    private val alwaysEnded = Runnable {
+        val current = state ?: return@Runnable
+        if (current.request?.open != true) current.requestEnded()
+    }
+
     private fun discardParked() {
         early.forEach { it.file?.delete() }
         early.clear()
     }
 
     /**
-     * [delivery] through this summon's request: true when it is to be taken.
-     * The platform delivers on every summon, and once, right after an install,
-     * with context no one asked for.
+     * Whether [delivery] is to be taken: through this summon's open request,
+     * else with "Always". The platform delivers on every summon, and once,
+     * right after an install, with context no one asked for. With no panel yet,
+     * "Always" parks it for the show.
      */
-    private fun delivered(delivery: Delivery): Boolean {
-        val current = state ?: return false
-        val (next, outcome) = deliver(current.request, delivery)
-        current.request = next
+    private fun taken(delivery: Delivery): Boolean {
+        val current = state ?: return always()
+        val outcome = current.takeDelivery(delivery, always())
         if (outcome.close) {
             main.removeCallbacks(expire)
             endContext()
@@ -309,7 +322,7 @@ class PanelSession(context: Context) :
         val structure = assist.assistStructure
         Log.i(TAG, "assist focused=${assist.isFocused} structure=${structure != null} windows=${structure?.windowNodeCount}")
         if (!assist.isFocused) return
-        val taken = delivered(Delivery.Structure) || always()
+        val taken = taken(Delivery.Structure)
         Log.i(TAG, "assist taken=$taken")
         if (!taken) return
         val flat = structure?.let { flattenScreen(screenNodes(it), assist.assistContent?.webUri?.toString()) }
@@ -319,7 +332,7 @@ class PanelSession(context: Context) :
     }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
-        val taken = delivered(Delivery.Screenshot) || always()
+        val taken = taken(Delivery.Screenshot)
         Log.i(TAG, "screenshot ${screenshot?.width}x${screenshot?.height} taken=$taken")
         if (!taken) return
         if (screenshot == null) {
@@ -331,9 +344,13 @@ class PanelSession(context: Context) :
         val deliveredAt = SystemClock.uptimeMillis()
         Assistant.runs.launch {
             // An encode that fails is a screenshot that did not come.
-            val encoded = runCatching { encodeScreenshot(context, screenshot) }
-                .onFailure { Log.w(TAG, "the screenshot was not encoded", it) }
-                .getOrNull()
+            val encoded = try {
+                encodeScreenshot(context, screenshot)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                Log.w(TAG, "the screenshot was not encoded", failure)
+                null
+            }
             withContext(Dispatchers.Main) {
                 // A panel dismissed or replaced during the encode does not take it.
                 val current = state

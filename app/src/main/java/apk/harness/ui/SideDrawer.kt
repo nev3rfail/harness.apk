@@ -12,12 +12,16 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -119,7 +123,7 @@ fun SideDrawer(
         // below Android 15 both sizes exclude the bars already.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
             val window = (LocalView.current.parent as DialogWindowProvider).window
-            SideEffect {
+            LaunchedEffect(window) {
                 window.attributes = window.attributes.apply {
                     fitInsetsTypes = 0
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -161,6 +165,9 @@ fun SideDrawer(
             ) {
                 Box(
                     modifier = Modifier
+                        // The window runs into a side cutout in landscape; the
+                        // drawer's rows stay beside it.
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .fillMaxWidth(DrawerWidthFraction)
                         .fillMaxHeight()
                         // The panel stays composed and hit-testable for the
