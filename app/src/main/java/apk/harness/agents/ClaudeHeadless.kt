@@ -1,6 +1,9 @@
 package apk.harness.agents
 
 import apk.harness.agents.HeadlessEvent.*
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -85,3 +88,43 @@ private fun strings(array: JSONArray?): List<String> =
 
 private fun objects(array: JSONArray?): List<JSONObject> =
     (0 until (array?.length() ?: 0)).mapNotNull { array!!.optJSONObject(it) }
+
+/**
+ * One `user` message on [out], streamed: the JSON around each image, and the
+ * image's bytes through a base64 encoder over a view of [out] that never closes
+ * it, so no message is held whole in memory. An empty text writes no block,
+ * which the API refuses.
+ */
+fun writeClaudeMessage(out: OutputStream, texts: List<String>, images: List<HeadlessImage>) {
+    fun put(s: String) = out.write(s.toByteArray(Charsets.UTF_8))
+    put("""{"type":"user","message":{"role":"user","content":[""")
+    var first = true
+    fun separate() { if (!first) put(","); first = false }
+    for (text in texts) {
+        if (text.isEmpty()) continue
+        separate()
+        put("""{"type":"text","text":${JSONObject.quote(text)}}""")
+    }
+    for (image in images) {
+        separate()
+        put("""{"type":"image","source":{"type":"base64","media_type":${JSONObject.quote(image.mediaType)},"data":"""")
+        // Closing the encoder writes its padding; the view keeps out open.
+        Base64.getEncoder().wrap(Unclosed(out)).use { encoder -> image.file.inputStream().use { it.copyTo(encoder) } }
+        put("\"}}")
+    }
+    put("""]},"parent_tool_use_id":null}""" + "\n")
+    out.flush()
+}
+
+fun claudeInterrupt(requestId: String): String =
+    JSONObject()
+        .put("type", "control_request")
+        .put("request_id", requestId)
+        .put("request", JSONObject().put("subtype", "interrupt"))
+        .toString()
+
+/** [out] with a close that only flushes, and chunks passed straight through. */
+private class Unclosed(out: OutputStream) : FilterOutputStream(out) {
+    override fun write(b: ByteArray, off: Int, len: Int) = out.write(b, off, len)
+    override fun close() = out.flush()
+}

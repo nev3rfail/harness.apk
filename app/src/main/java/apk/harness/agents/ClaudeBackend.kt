@@ -3,6 +3,7 @@ package apk.harness.agents
 import apk.harness.chats.Project
 import apk.harness.chats.flatten
 import java.io.File
+import java.io.OutputStream
 import org.json.JSONObject
 
 /**
@@ -55,6 +56,13 @@ object ClaudeBackend : AgentBackend {
         ) + if (resume) resume(sessionId) else start(sessionId)
 
     override fun parseEvent(line: String): HeadlessEvent = parseClaudeEvent(line)
+
+    override val provider: String = "Anthropic"
+
+    override fun writeMessage(out: OutputStream, texts: List<String>, images: List<HeadlessImage>) =
+        writeClaudeMessage(out, texts, images)
+
+    override fun interrupt(requestId: String): String = claudeInterrupt(requestId)
 
     override fun mcpConfig(file: File): List<String> = listOf("--mcp-config", file.absolutePath)
 
