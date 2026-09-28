@@ -55,7 +55,7 @@ object ClaudeBackend : AgentBackend {
             "--include-partial-messages",
         ) + if (resume) resume(sessionId) else start(sessionId)
 
-    override fun parseEvent(line: String): HeadlessEvent = parseClaudeEvent(line)
+    override fun parseEvent(line: String, interruptSent: Boolean): HeadlessEvent = parseClaudeEvent(line, interruptSent)
 
     override val provider: String = "Anthropic"
 

@@ -9,7 +9,7 @@ import org.junit.Test
 class ClaudeEventTest {
 
     private val id = "2ff233d0-cb38-4eaf-b6c7-549a129713a5"
-    private fun parse(line: String) = ClaudeBackend.parseEvent(line)
+    private fun parse(line: String, interruptSent: Boolean = false) = ClaudeBackend.parseEvent(line, interruptSent)
 
     @Test
     fun `init names the conversation`() {
@@ -70,8 +70,8 @@ class ClaudeEventTest {
 
     @Test
     fun `a denial carries its tool and message`() {
-        val denied = parse("""{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01WsDJies49fCvcMhHTDEqRS","message":"touch in 'D:\\Users\\nev3rfail\\AppData\\Local\\Temp\\claude\\F--fun-harness\\73527ef8-cfc7-4eeb-bcf7-0c0d98705eca\\scratchpad\\oq-cli-run\\e\\probe.txt' needs approval. The path is inside the working directories for this session ('D:\\Users\\nev3rfail\\AppData\\Local\\Temp\\claude\\F--fun-harness\\73527ef8-cfc7-4eeb-bcf7-0c0d98705eca\\scratchpad\\oq-cli-run\\e'), and Claude Code asks before a shell command creates, changes or removes files there.","uuid":"22240ed5-a7f3-4e82-8fad-459b9cd94930","session_id":"9ef5eedb-f3b7-40b7-aa95-d1f98633af61"}""") as Denied
-        assertEquals("toolu_01WsDJies49fCvcMhHTDEqRS", denied.toolUseId)
+        val denied = parse("""{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01","message":"touch in '/work/probe.txt' needs approval. The path is inside the working directories for this session ('/work'), and Claude Code asks before a shell command creates, changes or removes files there.","uuid":"00000000-0000-4000-8000-000000000001","session_id":"$id"}""") as Denied
+        assertEquals("toolu_01", denied.toolUseId)
         assertEquals("Bash", denied.tool)
         assertTrue(denied.message!!.startsWith("touch in '"))
         assertTrue(denied.message!!.contains("needs approval."))
@@ -106,9 +106,15 @@ class ClaudeEventTest {
     }
 
     @Test
-    fun `a turn ended with only diagnostics is an interrupted one`() {
-        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}""") as Finished
+    fun `a turn ended with only diagnostics after the panel's interrupt is an interrupted one`() {
+        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}""", interruptSent = true) as Finished
         assertTrue(finished.ok)
+    }
+
+    @Test
+    fun `a turn ended with only diagnostics and no interrupt is an error`() {
+        val finished = parse("""{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}""") as Finished
+        assertFalse(finished.ok)
     }
 
     @Test

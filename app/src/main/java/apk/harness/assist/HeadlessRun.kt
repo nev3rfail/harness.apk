@@ -36,6 +36,8 @@ class HeadlessRun(
     private val tail = ArrayDeque<String>()
     @Volatile private var process: Process? = null
     @Volatile private var inFlight = false
+    /** Whether the stop interrupted the turn in flight, so its result reads as interrupted. */
+    @Volatile private var interruptSent = false
     /** The started process's pid, from headless.sh's first stderr line. */
     @Volatile var pid: Int? = null
         private set
@@ -50,10 +52,12 @@ class HeadlessRun(
     /** Writes one message after the process is up; the image files go once written. */
     fun send(texts: List<String>, images: List<HeadlessImage>) {
         inFlight = true
+        interruptSent = false
         Assistant.runs.launch {
             lock.withLock {
                 val process = running()
-                if (process != null) {
+                if (process == null) inFlight = false
+                else {
                     runCatching { backend.writeMessage(process.outputStream, texts, images) }
                         .onFailure { failure ->
                             // Part of a line may be on stdin, so the process is
@@ -74,7 +78,11 @@ class HeadlessRun(
         // Not behind the write lock: a dismiss closes stdin under a write in
         // progress rather than waiting for it.
         val begin = synchronized(this) {
-            if (stopping != null) return@synchronized false
+            if (stopping != null) {
+                // A dismiss during a stop is a hide: the tab is not opened after it.
+                if (kind == StopKind.Dismiss) hiddenDuringStop = true
+                return@synchronized false
+            }
             this.onOpen = onOpen
             this.onDismiss = onDismiss
             stopping = StopState(kind, alive = process?.isAlive == true, turnInFlight = inFlight, sessionId = sessionId.takeIf { sent })
@@ -93,13 +101,19 @@ class HeadlessRun(
 
     /** Home or the lock screen hid the panel during an escalation. */
     fun hidden() {
-        hiddenDuringStop = true
+        synchronized(this) {
+            if (stopping == null) return
+            hiddenDuringStop = true
+        }
         Assistant.runs.launch { feed(StopEvent.Hidden) }
     }
 
     private suspend fun running(): Process? {
-        process?.takeIf { it.isAlive }?.let { return it }
+        // A process being stopped takes no more messages.
         if (synchronized(this) { stopping != null }) return null
+        process?.takeIf { it.isAlive }?.let { return it }
+        pid = null
+        synchronized(tail) { tail.clear() }
         val started = runCatching { startProcess(backend.headless(sessionId, backend.hasTranscript(home, sessionId))) }
             .onFailure { failure ->
                 Log.w(TAG, "the agent did not start", failure)
@@ -117,19 +131,27 @@ class HeadlessRun(
             return null
         }
         val reader = Assistant.runs.launch { read(started) }
-        Assistant.runs.launch { drainErrors(started) }
+        val errors = Assistant.runs.launch { drainErrors(started) }
         Assistant.runs.launch {
             val code = runInterruptible { started.waitFor() }
-            reader.join()
-            inFlight = false
+            // A descendant still holding the pipes keeps a read blocked past the
+            // exit; closing them ends it.
+            if (withTimeoutOrNull(READ_WAIT) { reader.join(); errors.join() } == null) {
+                runCatching { started.inputStream.close() }
+                runCatching { started.errorStream.close() }
+                reader.join()
+                errors.join()
+            }
+            val current = process === started
+            if (current) inFlight = false
             if (synchronized(this@HeadlessRun) { stopping != null }) feed(StopEvent.Exited)
-            else main { onExit(code, synchronized(tail) { tail.toList() }) }
+            else if (current) main { onExit(code, synchronized(tail) { tail.toList() }) }
         }
         return started
     }
 
     private fun read(process: Process) = drain(process.inputStream) { line ->
-        val event = backend.parseEvent(line)
+        val event = backend.parseEvent(line, interruptSent)
         if (event == HeadlessEvent.Malformed) Log.w(TAG, "a line of ${line.length} characters is not an event")
         if (event is HeadlessEvent.Finished) {
             inFlight = false
@@ -138,14 +160,18 @@ class HeadlessRun(
         main { onEvent(event) }
     }
 
-    private fun drainErrors(process: Process) = drain(process.errorStream) { line ->
-        // headless.sh names the started process's pid before the agent runs.
-        val named = pidOf(line)
-        if (named != null) {
-            pid = named
-            return@drain
+    private fun drainErrors(process: Process) {
+        var named = false
+        drain(process.errorStream) { line ->
+            // headless.sh names the started process's pid before the agent runs;
+            // only its first such line counts.
+            if (!named) pidOf(line)?.let {
+                named = true
+                if (this.process === process) pid = it
+                return@drain
+            }
+            remember(line)
         }
-        remember(line)
     }
 
     private fun remember(line: String) = synchronized(tail) {
@@ -187,22 +213,28 @@ class HeadlessRun(
             StopAction.Interrupt -> Assistant.runs.launch {
                 lock.withLock {
                     runCatching {
-                        process?.outputStream?.let { backend.writeInterrupt(it, UUID.randomUUID().toString()) }
+                        process?.outputStream?.let {
+                            interruptSent = true
+                            backend.writeInterrupt(it, UUID.randomUUID().toString())
+                        }
                     }
                 }
             }
-            // An escalation closes stdin after the message being written; a
-            // dismiss closes it at once, under a write in progress.
+            // An escalation closes stdin after the message being written. A
+            // dismiss closes it at once, on a coroutine of its own: stdin is a
+            // synchronized stream, so the close waits behind a write blocked on
+            // a full pipe, and the signals and the kill timer must not.
             StopAction.CloseStdin ->
                 if (kind == StopKind.Escalate) Assistant.runs.launch { lock.withLock { runCatching { process?.outputStream?.close() } } }
-                else runCatching { process?.outputStream?.close() }
+                else Assistant.runs.launch { runCatching { process?.outputStream?.close() } }
+            // destroy() closes stdin too, so it runs on a coroutine of its own as well.
             StopAction.Terminate -> {
                 signalChildren(SIGTERM)
-                process?.destroy()
+                Assistant.runs.launch { process?.destroy() }
             }
             StopAction.Kill -> {
                 signalChildren(android.os.Process.SIGNAL_KILL)
-                process?.destroyForcibly()
+                Assistant.runs.launch { process?.destroyForcibly() }
             }
             is StopAction.After -> Assistant.runs.launch {
                 delay(action.millis)
@@ -228,15 +260,18 @@ class HeadlessRun(
     }
 
     /**
-     * [signal] to every child of the started process. Under the x86_64 tracer
-     * the started process is the tracer and the agent its child: a signal to the
+     * [signal] to every descendant of the started process while it is alive, so
+     * the pid it named is not one reused since. Under the x86_64 tracer the
+     * started process is the tracer and the agent its child: a signal to the
      * tracer kills the agent through `PTRACE_O_EXITKILL` and never reaches the
-     * agent itself.
+     * agent itself. A tool's own processes are the agent's descendants.
      */
     private fun signalChildren(signal: Int) {
         val parent = pid ?: return
+        if (process?.isAlive != true) return
         val table = ProcTable()
-        table.pids().filter { table.stat(it)?.ppid == parent }.forEach { android.os.Process.sendSignal(it, signal) }
+        val parents = table.pids().mapNotNull { child -> table.stat(child)?.let { child to it.ppid } }.toMap()
+        descendants(parent, parents).forEach { android.os.Process.sendSignal(it, signal) }
     }
 
     /**
@@ -258,6 +293,8 @@ class HeadlessRun(
     private companion object {
         const val STDERR_LINES = 20
         const val SETTLE_WAIT = 1_000L
+        /** How long the readers may outlast the exit before their pipes are closed. */
+        const val READ_WAIT = 1_000L
         /** `android.os.Process` names SIGNAL_KILL and SIGNAL_QUIT only. */
         const val SIGTERM = 15
     }
@@ -266,3 +303,14 @@ class HeadlessRun(
 /** The pid in the `harness-pid <n>` line headless.sh writes to stderr first, or null. */
 internal fun pidOf(line: String): Int? =
     line.takeIf { it.startsWith("harness-pid ") }?.removePrefix("harness-pid ")?.trim()?.toIntOrNull()
+
+/** Every process under [parent] in [parents] (pid to parent pid), at any depth. */
+internal fun descendants(parent: Int, parents: Map<Int, Int>): List<Int> {
+    val children = parents.entries.groupBy({ it.value }, { it.key })
+    val found = LinkedHashSet<Int>()
+    val queue = ArrayDeque(listOf(parent))
+    while (queue.isNotEmpty()) {
+        children[queue.removeFirst()]?.forEach { if (it != parent && found.add(it)) queue.addLast(it) }
+    }
+    return found.toList()
+}

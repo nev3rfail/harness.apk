@@ -17,8 +17,8 @@ data class HeadlessLaunch(
  *
  * The launcher splits `HARNESS_AGENT_ARGS` on whitespace, so an argument
  * holding any is refused rather than split, and one holding a glob character
- * is refused rather than left to a shell that might expand it. A tab's own variables are left
- * out: the run belongs to no tab and attaches to no editor.
+ * is refused rather than left to a shell that might expand it. A tab's own
+ * variables are left out: the run belongs to no tab and attaches to no editor.
  */
 fun headlessLaunch(
     environment: Map<String, String>,
