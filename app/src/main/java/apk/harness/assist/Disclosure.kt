@@ -11,7 +11,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import apk.harness.BuildConfig
 
@@ -28,6 +30,7 @@ sealed interface Disclosing {
  */
 @Composable
 fun ScreenDisclosure(provider: String, always: Boolean, onAllow: () -> Unit, onNotNow: () -> Unit, openPolicy: ((String) -> Unit)?) {
+    ObscuredTouchesFiltered()
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
         Text(SCREEN_TITLE, style = MaterialTheme.typography.titleMedium)
         Text(
@@ -40,6 +43,21 @@ fun ScreenDisclosure(provider: String, always: Boolean, onAllow: () -> Unit, onN
             TextButton(onClick = onNotNow) { Text(NOT_NOW) }
             TextButton(onClick = onAllow) { Text(ALLOW) }
         }
+    }
+}
+
+/**
+ * While a disclosure is drawn, its window drops touches that reach it through
+ * another app's window drawn over it, so a consent cannot be tapped through an
+ * overlay.
+ */
+@Composable
+private fun ObscuredTouchesFiltered() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val before = view.filterTouchesWhenObscured
+        view.filterTouchesWhenObscured = true
+        onDispose { view.filterTouchesWhenObscured = before }
     }
 }
 

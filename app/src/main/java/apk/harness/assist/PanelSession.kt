@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.KeyEvent
@@ -58,11 +59,15 @@ class PanelSession(context: Context) :
     private val keyguard by lazy { context.getSystemService(KeyguardManager::class.java) }
     // Not the view's own queue: a view that is detached by then never runs it.
     private val main = Handler(Looper.getMainLooper())
+    /** Counts hides, so a delivery parked before a show is known to be this summon's. */
+    private var summon = 0
     /**
      * With "Always", what a summon delivered before its show made the panel,
      * applied to it at that show.
      */
-    private val early = ArrayList<(PanelState) -> Unit>()
+    private val early = ArrayList<Parked>()
+
+    private class Parked(val summon: Int, val at: Long, val file: File?, val apply: (PanelState) -> Unit)
 
     override fun onCreate() {
         super.onCreate()
@@ -104,7 +109,7 @@ class PanelSession(context: Context) :
             staged = Bootstrap(context).isInstalled(),
         )
         when (show) {
-            Show.Locked -> { state?.dismiss(); state = PanelState.locked() }
+            Show.Locked -> { drop(); state = PanelState.locked() }
             Show.NotStaged -> state = PanelState.notStaged(context)
             Show.Fresh -> {
                 drop()
@@ -114,13 +119,17 @@ class PanelSession(context: Context) :
             Show.OwnReShow -> {}
         }
         val current = state
+        val parked = early.toList()
+        early.clear()
         if ((show == Show.Fresh || show == Show.Listen) && current != null && always()) {
             // Both chips start on; what this summon delivers is taken with no request.
             current.screenText = true
             current.screenshot = true
-            early.forEach { it(current) }
-        }
-        early.clear()
+            val now = SystemClock.uptimeMillis()
+            parked.forEach {
+                if (parkedApplies(it.summon, summon, it.at, now)) it.apply(current) else it.file?.delete()
+            }
+        } else parked.forEach { it.file?.delete() }
         visible = true
         registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
@@ -128,6 +137,8 @@ class PanelSession(context: Context) :
     override fun onHide() {
         Log.i(TAG, "hide")
         visible = false
+        summon++
+        discardParked()
         val handedOver = handingOver
         main.removeCallbacks(expire)
         endContext()
@@ -148,6 +159,7 @@ class PanelSession(context: Context) :
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
         endContext()
+        discardParked()
         if (state != null) {
             drop()
             File(context.cacheDir, ASSIST_CACHE).deleteRecursively()
@@ -216,7 +228,15 @@ class PanelSession(context: Context) :
         val current = state
         val (next, outcome) = timeOut(current?.request)
         current?.request = next
-        if (outcome.close) endContext()
+        if (outcome.close) {
+            endContext()
+            current?.requestEnded()
+        }
+    }
+
+    private fun discardParked() {
+        early.forEach { it.file?.delete() }
+        early.clear()
     }
 
     /**
@@ -247,9 +267,9 @@ class PanelSession(context: Context) :
      * [apply] to the panel a delivery is for: the current one, or with
      * "Always" and no panel yet, the one this summon's show makes.
      */
-    private fun toPanel(apply: (PanelState) -> Unit) {
+    private fun toPanel(file: File?, apply: (PanelState) -> Unit) {
         val current = state
-        if (current != null) apply(current) else early += apply
+        if (current != null) apply(current) else early += Parked(summon, SystemClock.uptimeMillis(), file, apply)
     }
 
     override fun onHandleAssist(assist: AssistState) {
@@ -262,7 +282,7 @@ class PanelSession(context: Context) :
         val flat = structure?.let { flattenScreen(screenNodes(it), assist.assistContent?.webUri?.toString()) }
         val text = flat?.takeIf { it.isNotEmpty() }?.let { Attachment.ScreenText(appLabel(context, structure), it) }
         Log.i(TAG, "screen text of ${flat?.length ?: 0} characters")
-        toPanel { it.screenTextCame(text) }
+        toPanel(null) { it.screenTextCame(text) }
     }
 
     override fun onHandleScreenshot(screenshot: Bitmap?) {
@@ -270,19 +290,26 @@ class PanelSession(context: Context) :
         Log.i(TAG, "screenshot ${screenshot?.width}x${screenshot?.height} taken=$taken")
         if (!taken) return
         if (screenshot == null) {
-            toPanel { it.screenshotCame(null) }
+            toPanel(null) { it.screenshotCame(null) }
             return
         }
         val asked = state
+        val askedIn = summon
+        val deliveredAt = SystemClock.uptimeMillis()
         Assistant.runs.launch {
-            val encoded = encodeScreenshot(context, screenshot)
+            // An encode that fails is a screenshot that did not come.
+            val encoded = runCatching { encodeScreenshot(context, screenshot) }
+                .onFailure { Log.w(TAG, "the screenshot was not encoded", it) }
+                .getOrNull()
             withContext(Dispatchers.Main) {
                 // A panel dismissed or replaced during the encode does not take it.
                 val current = state
                 when {
-                    current == null && asked == null -> early += { it.screenshotCame(encoded) }
+                    askedIn != summon -> encoded?.file?.delete()
+                    current == null && asked == null ->
+                        early += Parked(askedIn, deliveredAt, encoded?.file) { it.screenshotCame(encoded) }
                     current != null && (current === asked || asked == null) -> current.screenshotCame(encoded)
-                    else -> encoded.file.delete()
+                    else -> encoded?.file?.delete()
                 }
             }
         }
@@ -298,6 +325,5 @@ class PanelSession(context: Context) :
     }
 }
 
-private const val CONTEXT_WAIT = 2_000L
 /** Under the cache directory: screenshots taken for the panel. */
 private const val ASSIST_CACHE = "assist"

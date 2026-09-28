@@ -19,3 +19,4 @@ local.properties
 # The MCP enablement the app installs into the agent's home. An asset, not
 # anyone's own settings, so the usual rule against this name does not apply.
 !app/src/main/assets/seed/.claude/settings.local.json
+!app/src/main/assets/seed/assistant/.claude/settings.local.json

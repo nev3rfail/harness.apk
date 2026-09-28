@@ -29,7 +29,8 @@ android {
         // The privacy policy the app links to. Empty for local and PR builds,
         // which then draw no link; release.yml refuses a Play bundle without it.
         val privacyPolicyUrl = (findProperty("privacyPolicyUrl") as String?) ?: ""
-        buildConfigField("String", "PRIVACY_POLICY_URL", "\"$privacyPolicyUrl\"")
+        val quoted = privacyPolicyUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "PRIVACY_POLICY_URL", "\"$quoted\"")
 
         ndk {
             // An ABI with no renderer dies loading its native library, and the

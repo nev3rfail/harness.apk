@@ -20,6 +20,3 @@ sealed interface Attachment {
 fun replacing(pending: List<Attachment>, attachment: Attachment): List<Attachment> =
     pending.filterNot { it::class == attachment::class } + attachment
 
-/** [pending] with its screen context replaced by [delivery]. */
-fun withDelivery(pending: List<Attachment>, delivery: List<Attachment>): List<Attachment> =
-    pending.filterNot { it is Attachment.ScreenText || it is Attachment.Screenshot } + delivery
