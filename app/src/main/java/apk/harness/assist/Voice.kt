@@ -35,6 +35,11 @@ class Voice(
         onListening(true)
     }
 
+    fun stop() {
+        recognizer?.stopListening()
+        onListening(false)
+    }
+
     fun destroy() {
         recognizer?.destroy()
         recognizer = null
