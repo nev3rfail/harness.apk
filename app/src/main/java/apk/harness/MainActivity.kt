@@ -24,9 +24,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -598,6 +601,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HarnessScreen(
     tabs: AgentTabs,
@@ -819,8 +823,16 @@ private fun HarnessScreen(
         // The terminal stays mounted underneath: a panel is a look at something,
         // not a change of screen, and the agent keeps running behind it.
         // The status bar inset lives here, so the terminal's first line is never
-        // under the bar when the bar is showing.
-        Column(modifier = Modifier.fillMaxSize().imePadding().statusBarsPadding()) {
+        // under the bar when the bar is showing. The keyboard inset is its
+        // animation's end value, so the terminal resizes once per show or hide
+        // rather than on every frame, which would repaint the agent's screen into
+        // the scrollback each time.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.imeAnimationTarget)
+                .statusBarsPadding(),
+        ) {
             // The strips overlay the terminal's edges and are declared after
             // it, so a drag starting there reaches a strip rather than the
             // surface underneath.
