@@ -144,6 +144,18 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         }
     }
 
+    /**
+     * Whether [delivery] is taken, and whether it closed the open request.
+     * While a request is open it alone decides, so a chip turned off stays off;
+     * with none, [always] takes every delivery.
+     */
+    fun takeDelivery(delivery: Delivery, always: Boolean): ContextOutcome {
+        val open = request?.open == true
+        val (next, outcome) = deliver(request, delivery)
+        request = next
+        return outcome.copy(take = outcome.take || (!open && always))
+    }
+
     /** The request closed by its wait: a chip it left with nothing attached goes off. */
     fun requestEnded() {
         if (screenText && attachments.none { it is Attachment.ScreenText }) {
@@ -171,6 +183,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             attachments = attachments.filterNot { it is Attachment.ScreenText }
         } else {
             screenText = true
+            nothingCame = false
             attachments = replacing(attachments, attachment)
         }
     }
@@ -195,6 +208,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             }
             else -> {
                 screenshot = true
+                nothingCame = false
                 attachments = replacing(dropScreenshot(), attachment)
             }
         }

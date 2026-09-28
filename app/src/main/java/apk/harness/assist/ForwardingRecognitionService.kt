@@ -22,7 +22,7 @@ class ForwardingRecognitionService : RecognitionService() {
         drop()
         Log.i(TAG, "forwarding to ${target.packageName}")
         forwarded = SpeechRecognizer.createSpeechRecognizer(this, target.component()).apply {
-            setRecognitionListener(Relay(listener))
+            setRecognitionListener(Relay(listener, this))
             startListening(recognizerIntent)
         }
     }
@@ -35,8 +35,12 @@ class ForwardingRecognitionService : RecognitionService() {
 
     private fun drop() { forwarded?.destroy(); forwarded = null }
 
-    /** Every listener call to the matching callback; nothing is kept. */
-    private inner class Relay(private val callback: Callback) : RecognitionListener {
+    /**
+     * Every listener call of [recognizer] to the matching callback; nothing is
+     * kept. Its end destroys [recognizer] only, never a later listen's.
+     */
+    private inner class Relay(private val callback: Callback, private val recognizer: SpeechRecognizer) : RecognitionListener {
+        private fun end() { if (forwarded === recognizer) drop() }
         private fun pass(block: () -> Unit) { runCatching(block) }
         override fun onReadyForSpeech(params: Bundle?) = pass { callback.readyForSpeech(params ?: Bundle()) }
         override fun onBeginningOfSpeech() = pass { callback.beginningOfSpeech() }
@@ -44,8 +48,8 @@ class ForwardingRecognitionService : RecognitionService() {
         override fun onBufferReceived(buffer: ByteArray?) = pass { buffer?.let(callback::bufferReceived) }
         override fun onEndOfSpeech() = pass { callback.endOfSpeech() }
         override fun onPartialResults(partialResults: Bundle) = pass { callback.partialResults(partialResults) }
-        override fun onResults(results: Bundle) { pass { callback.results(results) }; drop() }
-        override fun onError(error: Int) { Log.i(TAG, "forwarded recognizer error $error"); pass { callback.error(error) }; drop() }
+        override fun onResults(results: Bundle) { pass { callback.results(results) }; end() }
+        override fun onError(error: Int) { Log.i(TAG, "forwarded recognizer error $error"); pass { callback.error(error) }; end() }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 }
