@@ -64,10 +64,10 @@ private fun result(event: JSONObject): HeadlessEvent {
     return Finished(ok, text, denials, errors, signedOut = !ok && errors.any(::saysSignedOut))
 }
 
-/** Phrases in the result of a run with no account signed in. */
-private val SIGNED_OUT = listOf("Not logged in", "Please run /login")
+/** What the result of a run with no account signed in says. */
+private const val SIGNED_OUT = "Not logged in"
 
-private fun saysSignedOut(message: String) = SIGNED_OUT.any { message.contains(it, ignoreCase = true) }
+private fun saysSignedOut(message: String) = message.contains(SIGNED_OUT, ignoreCase = true)
 
 // The field a person would name the call by, for the tools that have one;
 // otherwise the input's first text.

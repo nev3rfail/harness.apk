@@ -13,7 +13,10 @@ import java.util.UUID
 /** One panel's state. A plain holder: the session provides no ViewModelStoreOwner. */
 class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var field by mutableStateOf("")
-    var status by mutableStateOf<String?>(null)
+    var conversation by mutableStateOf(Conversation())
+    /** Whether a message went to the agent, so the conversation has a transcript to open. */
+    var sent = false
+        private set
     var run: HeadlessRun? = null
         private set
     var voice: Voice? = null
@@ -24,16 +27,35 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         val app = context.applicationContext
         val agent = Agent(app)
         val backend = BACKENDS.first()
-        run = HeadlessRun(backend, agent.home, sessionId) { arguments ->
-            // Restages the resolver files MainActivity otherwise stages at its start.
-            Bootstrap(app).start()
-            agent.headless(File(agent.home, ASSISTANT_DIRECTORY), backend, arguments)
-        }.also { it.begin() }
+        run = HeadlessRun(
+            backend = backend,
+            home = agent.home,
+            sessionId = sessionId,
+            startProcess = { arguments ->
+                // Restages the resolver files MainActivity otherwise stages at its start.
+                Bootstrap(app).start()
+                agent.headless(File(agent.home, ASSISTANT_DIRECTORY), backend, arguments)
+            },
+            onEvent = { conversation = thread(conversation, ThreadEvent.Agent(it)) },
+            onExit = { code, stderr -> conversation = thread(conversation, ThreadEvent.Exited(code, stderr)) },
+        ).also { it.begin() }
         voice = Voice(app, onPartial = { field = it }, onFinal = { field = it }, onListening = {})
     }
 
+    // `this.field`: a bare `field` in a getter is the backing field.
+    val canSend: Boolean get() = !conversation.inFlight && this.field.isNotBlank()
+
+    fun send() {
+        if (!canSend) return
+        val text = field
+        conversation = thread(conversation, ThreadEvent.Sent(text, emptyList()))
+        field = ""
+        sent = true
+        run?.send(listOf(text), emptyList())
+    }
+
     fun dismiss() {
-        run?.dismiss()
+        run?.stop(StopKind.Dismiss, sent)
         voice?.destroy()
     }
 }
