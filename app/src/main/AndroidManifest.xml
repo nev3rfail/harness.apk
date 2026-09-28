@@ -151,8 +151,9 @@
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
         <!-- Enabled on Android 11 only, where picking the app as the assistant
-             also makes this the device's speech recognizer: other apps' speech
-             recognition then passes through it. -->
+             also makes this the device's speech recognizer: while the app is
+             the assistant, other apps' speech recognition passes through it, to
+             the first system recognizer on the device. -->
         <service
             android:name=".assist.ForwardingRecognitionService"
             android:enabled="@bool/forwarding_recognizer"
