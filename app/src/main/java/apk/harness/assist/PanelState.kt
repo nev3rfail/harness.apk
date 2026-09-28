@@ -36,8 +36,8 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
                 Bootstrap(app).start()
                 agent.headless(File(agent.home, ASSISTANT_DIRECTORY), backend, arguments)
             },
-            onEvent = { conversation = thread(conversation, ThreadEvent.Agent(it)) },
-            onExit = { code, stderr -> conversation = thread(conversation, ThreadEvent.Exited(code, stderr)) },
+            onEvent = { conversation = threaded(conversation, ThreadEvent.Agent(it)) },
+            onExit = { code, stderr -> conversation = threaded(conversation, ThreadEvent.Exited(code, stderr)) },
         ).also { it.begin() }
         voice = Voice(app, onPartial = { field = it }, onFinal = { field = it }, onListening = {})
     }
@@ -48,7 +48,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     fun send() {
         if (!canSend) return
         val text = field
-        conversation = thread(conversation, ThreadEvent.Sent(text, emptyList()))
+        conversation = threaded(conversation, ThreadEvent.Sent(text, emptyList()))
         field = ""
         sent = true
         run?.send(listOf(text), emptyList())

@@ -74,8 +74,8 @@ interface AgentBackend {
      */
     fun writeMessage(out: OutputStream, texts: List<String>, images: List<HeadlessImage>)
 
-    /** The stdin line that interrupts the turn in flight, under [requestId]. */
-    fun interrupt(requestId: String): String
+    /** Writes to [out] the line that interrupts the turn in flight, under [requestId]; [out] is left open. */
+    fun writeInterrupt(out: OutputStream, requestId: String)
 
     /** Arguments that point the CLI at the MCP servers [file] describes. */
     fun mcpConfig(file: File): List<String>

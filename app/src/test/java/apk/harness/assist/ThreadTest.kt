@@ -10,7 +10,7 @@ import org.junit.Test
 class ThreadTest {
 
     private fun fold(vararg events: ThreadEvent, from: Conversation = Conversation()) =
-        events.fold(from, ::thread)
+        events.fold(from, ::threaded)
 
     private fun agent(event: HeadlessEvent) = ThreadEvent.Agent(event)
     private val sent = ThreadEvent.Sent("q", emptyList())
@@ -56,6 +56,13 @@ class ThreadTest {
     }
 
     @Test
+    fun `denials with no id are each kept`() {
+        val finished = ok.copy(denials = listOf(Denial("", "Write")))
+        val turn = fold(sent, agent(Denied("", "Bash", null)), agent(finished)).turns.single()
+        assertEquals(listOf(Item.Denied("", "Bash"), Item.Denied("", "Write")), turn.items.filterIsInstance<Item.Denied>())
+    }
+
+    @Test
     fun `an error result then an exit shows the errors, not stopped`() {
         val error = Finished(ok = false, text = null, denials = emptyList(), errors = listOf("e1", "e2"), signedOut = false)
         assertEquals(Status.Errors(listOf("e1", "e2")), fold(sent, agent(error), ThreadEvent.Exited(1, listOf("x"))).status)
@@ -77,7 +84,7 @@ class ThreadTest {
     @Test
     fun `a send after a stop starts again`() {
         val stopped = fold(sent, ThreadEvent.Exited(1, emptyList()))
-        assertEquals(Status.Starting, thread(stopped, sent).status)
+        assertEquals(Status.Starting, threaded(stopped, sent).status)
     }
 
     @Test
@@ -85,7 +92,7 @@ class ThreadTest {
         val open = fold(sent, agent(Thinking), agent(Retrying(2))).turns.single()
         assertTrue(open.thinking)
         assertEquals(2, open.retrying)
-        val speaking = thread(fold(sent, agent(Thinking), agent(Retrying(2))), agent(TextDelta(0, "a"))).turns.single()
+        val speaking = threaded(fold(sent, agent(Thinking), agent(Retrying(2))), agent(TextDelta(0, "a"))).turns.single()
         assertEquals(false, speaking.thinking)
         assertEquals(null, speaking.retrying)
     }

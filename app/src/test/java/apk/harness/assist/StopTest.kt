@@ -88,11 +88,48 @@ class StopTest {
     }
 
     @Test
-    fun `a hide mid-sequence switches to the dismiss stop and opens nothing`() {
+    fun `a hide while stdin drains sends SIGTERM, not a second close, and opens nothing`() {
         assertEquals(
-            listOf(CloseStdin, After(3_000, 1), CloseStdin, Terminate, After(2_000, 2), Kill),
+            listOf(CloseStdin, After(3_000, 1), Terminate, After(2_000, 2), Kill),
             run(escalate(), StopEvent.Begin, StopEvent.Hidden, StopEvent.Timer(1), StopEvent.Timer(2)),
         )
+    }
+
+    @Test
+    fun `a hide during the interrupt closes stdin and sends SIGTERM`() {
+        assertEquals(
+            listOf(Interrupt, After(4_000, 1), CloseStdin, Terminate, After(2_000, 2), Kill),
+            run(escalate(inFlight = true), StopEvent.Begin, StopEvent.Hidden, StopEvent.Timer(1), StopEvent.Timer(2)),
+        )
+    }
+
+    @Test
+    fun `a hide after SIGTERM keeps its timer and opens nothing`() {
+        assertEquals(
+            listOf(CloseStdin, After(3_000, 1), Terminate, After(2_000, 2), Kill),
+            run(escalate(), StopEvent.Begin, StopEvent.Timer(1), StopEvent.Hidden, StopEvent.Timer(2)),
+        )
+    }
+
+    @Test
+    fun `a hide before the stop begins makes it a dismiss`() {
+        assertEquals(
+            listOf(CloseStdin, Terminate, After(2_000, 1)),
+            run(escalate(), StopEvent.Hidden, StopEvent.Begin),
+        )
+    }
+
+    @Test
+    fun `an exit during the interrupt goes to the roster wait`() {
+        assertEquals(
+            listOf(Interrupt, After(4_000, 1), Settle(id), Open(id), Dismiss),
+            run(escalate(inFlight = true), StopEvent.Begin, StopEvent.Exited, StopEvent.Settled),
+        )
+    }
+
+    @Test
+    fun `a second begin does nothing`() {
+        assertEquals(listOf(CloseStdin, After(3_000, 1)), run(escalate(), StopEvent.Begin, StopEvent.Begin))
     }
 
     @Test

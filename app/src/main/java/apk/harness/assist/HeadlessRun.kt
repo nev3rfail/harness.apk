@@ -55,7 +55,14 @@ class HeadlessRun(
                 val process = running()
                 if (process != null) {
                     runCatching { backend.writeMessage(process.outputStream, texts, images) }
-                        .onFailure { Log.w(TAG, "the message did not reach the agent", it) }
+                        .onFailure { failure ->
+                            // Part of a line may be on stdin, so the process is
+                            // ended and the next send starts another. Its exit
+                            // shows the failure with the rest of stderr.
+                            Log.w(TAG, "the message did not reach the agent", failure)
+                            remember("the message did not reach the agent: ${failure.message ?: failure}")
+                            process.destroyForcibly()
+                        }
                 }
                 images.forEach { it.file.delete() }
             }
@@ -138,10 +145,12 @@ class HeadlessRun(
             pid = named
             return@drain
         }
-        synchronized(tail) {
-            tail.addLast(line)
-            if (tail.size > STDERR_LINES) tail.removeFirst()
-        }
+        remember(line)
+    }
+
+    private fun remember(line: String) = synchronized(tail) {
+        tail.addLast(line)
+        if (tail.size > STDERR_LINES) tail.removeFirst()
     }
 
     /**
@@ -178,10 +187,7 @@ class HeadlessRun(
             StopAction.Interrupt -> Assistant.runs.launch {
                 lock.withLock {
                     runCatching {
-                        process?.outputStream?.apply {
-                            write((backend.interrupt(UUID.randomUUID().toString()) + "\n").toByteArray())
-                            flush()
-                        }
+                        process?.outputStream?.let { backend.writeInterrupt(it, UUID.randomUUID().toString()) }
                     }
                 }
             }

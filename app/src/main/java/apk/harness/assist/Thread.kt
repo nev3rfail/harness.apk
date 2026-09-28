@@ -43,7 +43,7 @@ sealed interface ThreadEvent {
 }
 
 /** [conversation] with [event] folded in. */
-fun thread(conversation: Conversation, event: ThreadEvent): Conversation = when (event) {
+fun threaded(conversation: Conversation, event: ThreadEvent): Conversation = when (event) {
     is ThreadEvent.Sent -> conversation.copy(
         turns = conversation.turns + Turn(event.message, event.attachments),
         // Until the agent's next line: a send before it is up waits on stdin,
@@ -103,6 +103,8 @@ private fun finish(turn: Turn, event: HeadlessEvent.Finished): Turn {
         .copy(done = true, thinking = false, retrying = null)
 }
 
+// A denial with an id is shown once, whether the event or the result named it;
+// one with no id is its own.
 private fun Turn.withDenial(id: String, tool: String): Turn =
-    if (items.any { it is Item.Denied && it.toolUseId == id }) this
+    if (id.isNotEmpty() && items.any { it is Item.Denied && it.toolUseId == id }) this
     else copy(items = items + Item.Denied(id, tool))

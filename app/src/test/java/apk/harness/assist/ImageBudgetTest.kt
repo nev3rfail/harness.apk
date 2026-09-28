@@ -48,6 +48,11 @@ class ImageBudgetTest {
     }
 
     @Test
+    fun `a conversation already past a hundred images takes no more blocks`() {
+        assertEquals(ImageSplit(emptyList(), listOf(0)), imageBudget(List(101) { 10L }, listOf(10)))
+    }
+
+    @Test
     fun `an always screenshot on a later summon at the budget is refused`() {
         val sent = listOf(10 * mb, 10 * mb - 100)
         assertTrue(screenshotFits(sent, 100))
