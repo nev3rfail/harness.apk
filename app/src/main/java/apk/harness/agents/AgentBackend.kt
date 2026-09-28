@@ -50,6 +50,16 @@ interface AgentBackend {
     /** Arguments that begin a conversation under an id the app chose. */
     fun start(sessionId: String): List<String>
 
+    /** The script under `HARNESS_HOME` the launcher runs for a run with no terminal. */
+    val headlessScript: String
+
+    /**
+     * Arguments for a run with no terminal that takes its messages on stdin and
+     * writes its events on stdout: [sessionId] resumed when [resume], else begun
+     * under that id.
+     */
+    fun headless(sessionId: String, resume: Boolean): List<String>
+
     /** Arguments that point the CLI at the MCP servers [file] describes. */
     fun mcpConfig(file: File): List<String>
 

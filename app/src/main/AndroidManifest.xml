@@ -23,6 +23,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
+    <!-- The panel's microphone, asked for from its mic button after the panel's
+         own disclosure, never from a summon. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -76,6 +80,65 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- The assistant role. The service wins where both it and AskActivity
+             qualify; the activity serves OEMs and launchers that honour only
+             Settings.Secure.ASSISTANT, and anything else that fires ASSIST. -->
+        <service
+            android:name=".assist.AssistantService"
+            android:exported="true"
+            android:label="@string/ask_agent"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".assist.PanelSessionService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!-- Enabled on Android 11 only, where picking the app as the assistant
+             also makes this the device's speech recognizer: other apps' speech
+             recognition then passes through it. -->
+        <service
+            android:name=".assist.ForwardingRecognitionService"
+            android:enabled="@bool/forwarding_recognizer"
+            android:exported="true"
+            android:label="@string/ask_agent">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <!-- configChanges is MainActivity's list, for the reason given there: a
+             recreation would end the panel's run. -->
+        <activity
+            android:name=".assist.AskActivity"
+            android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density|layoutDirection|colorMode|grammaticalGender|fontScale|fontWeightAdjustment"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="@string/ask_agent"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Harness.Ask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".assist.MicActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Harness.Ask" />
 
         <service
             android:name=".AgentService"

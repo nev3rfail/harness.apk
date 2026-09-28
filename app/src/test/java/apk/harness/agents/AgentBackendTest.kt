@@ -28,6 +28,8 @@ class AgentBackendTest {
         override fun parseRecord(text: String) = unreached()
         override fun resume(sessionId: String) = unreached()
         override fun start(sessionId: String) = unreached()
+        override val headlessScript: String get() = unreached()
+        override fun headless(sessionId: String, resume: Boolean) = unreached()
         override fun mcpConfig(file: File) = unreached()
         override fun switch(sessionId: String) = unreached()
         override fun promptText(viewport: String) = unreached()

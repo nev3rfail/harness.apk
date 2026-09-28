@@ -41,6 +41,13 @@ fi
 # a device says it wants none.
 [ -f "$HARNESS_HOME/launcher.local.sh" ] && . "$HARNESS_HOME/launcher.local.sh"
 
+# A run with no terminal: nothing to keep open once the agent exits, so the
+# launcher becomes the agent and exits with it. launcher.local.sh can name
+# another headless script, as it can another HARNESS_AGENT_SCRIPT.
+if [ -n "$HARNESS_HEADLESS_SCRIPT" ]; then
+    exec "$HARNESS_HOME/$HARNESS_HEADLESS_SCRIPT" $HARNESS_AGENT_ARGS
+fi
+
 # Run the agent rather than become it: exec would take the pty down on its exit.
 #
 # HARNESS_AGENT_SCRIPT names the script that starts the agent, so a backend

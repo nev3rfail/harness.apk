@@ -41,6 +41,9 @@ class AgentStage(private val context: Context) {
     val etc: File = File(stage, "etc")
     val launcher: File = File(home, LAUNCHER)
 
+    /** The panel's run with no terminal, which the launcher execs by path. */
+    private val headless: File = File(home, HEADLESS)
+
     private val abi: String = Build.SUPPORTED_ABIS.first()
 
     /** The staged loader, or null on an architecture the app carries none for. */
@@ -116,9 +119,10 @@ class AgentStage(private val context: Context) {
      * APK, which changes on every install including a reinstall of the same
      * version.
      *
-     * A missing launcher also brings the copy forward, whatever the stamp says,
-     * because deleting a staged file is how a device asks for the shipped one
-     * back and the launcher is the file a session cannot start without. The
+     * A missing launcher or headless script also brings the copy forward,
+     * whatever the stamp says, because deleting a staged file is how a device
+     * asks for the shipped one back and a session or a panel run cannot start
+     * without it. The
      * operator-owned scripts follow the same rule ahead of the stamp, each
      * written when it is absent, so deleting one restores it on the next
      * session start.
@@ -131,20 +135,23 @@ class AgentStage(private val context: Context) {
         // can take it off a file the stamp otherwise considers current. Losing
         // it that way would put the app back to downloading the agent again.
         // Owner only, like the scripts. False on a device that has no launcher
-        // yet, which the copy below answers.
+        // yet, which the copy below answers. The headless script is execed by
+        // path as well, so it keeps its bit the same way.
         launcher.setExecutable(true, true)
+        headless.setExecutable(true, true)
 
         // Ahead of the guard, because a current stamp says the app's own
         // statements are staged and says nothing about a script the device
         // deleted. One stat per script when both are there.
         stageScripts(SCRIPTS, { context.assets.open(it) }, home)
 
-        if (!payloadDue(payload, installed) && launcher.isFile) return
+        if (!payloadDue(payload, installed) && launcher.isFile && headless.isFile) return
 
         home.mkdirs()
         copyTree(HOME_TREE, overwrite = true)
         copyTree(SEED_TREE, overwrite = false)
         launcher.setExecutable(true, true)
+        headless.setExecutable(true, true)
 
         // Last, for the reason the version stamp is written last: a run that
         // failed halfway would otherwise report a staged payload.
@@ -228,6 +235,11 @@ class AgentStage(private val context: Context) {
         // of its own goes in launcher.local.sh, which the launcher sources and
         // nothing writes.
         const val LAUNCHER = "launcher.sh"
+
+        // App-owned beside the launcher: the panel reads its argument contract
+        // and its first stderr line. HARNESS_HEADLESS_SCRIPT in
+        // launcher.local.sh names another.
+        const val HEADLESS = "headless.sh"
 
         // Operator-owned: the invocation and the shell are what a device is
         // expected to change, and an edit to either stands until it is deleted.
