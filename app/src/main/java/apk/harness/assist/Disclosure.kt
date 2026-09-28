@@ -21,7 +21,8 @@ import apk.harness.BuildConfig
 sealed interface Disclosing {
     /** A chip waiting on screen consent. */
     data class Screen(val text: Boolean, val shot: Boolean) : Disclosing
-    data object Mic : Disclosing
+    /** The mic disclosure; [otherApps] when reached from the line about other apps' voice input. */
+    data class Mic(val otherApps: Boolean) : Disclosing
 }
 
 /**
@@ -46,12 +47,18 @@ fun ScreenDisclosure(provider: String, always: Boolean, onAllow: () -> Unit, onN
     }
 }
 
-/** The microphone disclosure, shown before the permission is asked for. */
+/**
+ * The microphone disclosure, shown before the permission is asked for.
+ * [otherApps] adds why other apps' voice input needs it.
+ */
 @Composable
-fun MicDisclosure(provider: String, onContinue: () -> Unit, onNotNow: () -> Unit) {
+fun MicDisclosure(provider: String, otherApps: Boolean, onContinue: () -> Unit, onNotNow: () -> Unit) {
     ObscuredTouchesFiltered()
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
-        Text("$MIC_BODY$provider$MIC_BODY_END", modifier = Modifier.padding(vertical = 8.dp))
+        Text(
+            "$MIC_BODY$provider$MIC_BODY_END" + if (otherApps) " $MIC_OTHER_APPS" else "",
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = onNotNow) { Text(NOT_NOW) }
             TextButton(onClick = onContinue) { Text(CONTINUE) }
@@ -89,3 +96,4 @@ private const val CONTINUE = "Continue"
 private const val MIC_BODY = "Ask Agent turns what you say into text using the phone's speech recognizer, which may " +
     "be an online service. The text is sent to "
 private const val MIC_BODY_END = " as your message."
+private const val MIC_OTHER_APPS = "Voice input in other apps on this phone goes through Ask Agent, and needs the microphone too."

@@ -90,7 +90,10 @@ object Assistant {
 }
 
 sealed interface MicAnswer {
-    data class Answered(val granted: Boolean) : MicAnswer
+    /** MicActivity is up, and its dialog on the way. */
+    data object Started : MicAnswer
+    /** [blocked]: denied, and the system will not ask again. */
+    data class Answered(val granted: Boolean, val blocked: Boolean) : MicAnswer
     data object Stopped : MicAnswer
 }
 

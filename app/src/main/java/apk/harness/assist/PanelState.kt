@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -25,8 +26,14 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var gate by mutableStateOf(Gate.Open)
     var escalating by mutableStateOf(false)
     var listening by mutableStateOf(false)
-    /** One line under the field: a recognizer error, a start that found no app. */
+    /** One line under the field: a start that found no app, a screenshot with no room. */
     var notice by mutableStateOf<String?>(null)
+    /** The recognizer's own line under the field, cleared by the next listen. */
+    var voiceProblem by mutableStateOf<String?>(null)
+    /** The microphone denied for good: only the app's settings can grant it now. */
+    var micBlocked by mutableStateOf(false)
+    /** Whether a grant from the mic disclosure starts a listen; one for other apps' voice input does not. */
+    private var listenOnGrant = true
     /** This summon's open request for screen context; a delivery outside one is dropped. */
     var request: ContextRequest? = null
     /** The chips: screen context asked for, or attached, for the next message. */
@@ -40,7 +47,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var nothingCame by mutableStateOf(false)
     /** A disclosure drawn in place of the thread. */
     var disclosure by mutableStateOf<Disclosing?>(null)
-    /** Android 11, the app the assistant without the microphone: other apps' voice input needs the grant. */
+    /** On Android 11, while the app is the assistant without the microphone: other apps' voice input needs the grant. */
     var otherAppsMic by mutableStateOf(false)
     /** Whether a message went to the agent, so the conversation has a transcript to open. */
     var sent = false
@@ -74,7 +81,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             app,
             onPartial = { field = it },
             onFinal = { field = it; send() },
-            onProblem = { notice = it },
+            onProblem = { voiceProblem = it },
             onListening = { listening = it },
         )
         otherAppsMic = asksMicForOtherApps(app)
@@ -93,6 +100,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         conversation = threaded(conversation, ThreadEvent.Sent(text, attachments.map { it.line }))
         field = ""
         notice = null
+        voiceProblem = null
         sent = true
         sentImages = sentImages + shots.map { base64Size(it.bytes) }
         attachments = emptyList()
@@ -224,20 +232,32 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         when {
             listening -> voice?.stop()
             app.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> voice?.start()
-            else -> disclosure = Disclosing.Mic
+            else -> disclosure = Disclosing.Mic(otherApps = false)
         }
     }
 
     /** "Continue" on the mic disclosure: the host asks for the permission. */
     fun micContinue(host: PanelHost) {
+        listenOnGrant = (disclosure as? Disclosing.Mic)?.otherApps != true
         disclosure = null
         host.requestMic()
     }
 
-    /** The microphone granted: the line for other apps goes, and the panel listens. */
+    /** The microphone granted: the line for other apps goes, and the panel listens if the mic button asked. */
     fun micGranted() {
         otherAppsMic = false
-        voice?.start()
+        micBlocked = false
+        if (listenOnGrant) voice?.start()
+    }
+
+    /** The app's own settings page, where a microphone denied for good is granted. */
+    fun openAppSettings(host: PanelHost) = startOutside(host,
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.packageName, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+    /** The operator's Android 11 grant state may have changed while the panel was away. */
+    fun refreshOtherAppsMic() {
+        if (gate == Gate.Open) otherAppsMic = asksMicForOtherApps(app)
     }
 
     /** Start, then dismiss, so the panel does not sit above what it opened. */

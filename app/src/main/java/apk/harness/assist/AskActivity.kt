@@ -22,6 +22,7 @@ class AskActivity : ComponentActivity(), PanelHost {
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) state?.micGranted()
+        else state?.micBlocked = !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

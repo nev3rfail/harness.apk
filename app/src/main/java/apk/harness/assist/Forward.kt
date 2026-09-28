@@ -17,3 +17,21 @@ fun forwardTarget(candidates: List<RecognizerCandidate>): RecognizerCandidate? {
  * on Android 11 the assistant's forwarder is refused without the app's own grant.
  */
 fun asksMicForOtherApps(api: Int, roleHeld: Boolean, granted: Boolean): Boolean = api == 30 && roleHeld && !granted
+
+/** Which recognizer the panel's listen creates. */
+enum class RecognizerKind { OnDevice, Default, Forward }
+
+/**
+ * From Android 12, the on-device recognizer when [onDevice] is wanted and
+ * [onDeviceAvailable], else the default one; on Android 11 the recognizer the
+ * forwarder would pick, since the default may be this app's own forwarder.
+ * [onDeviceAvailable] is asked only from Android 12.
+ */
+fun recognizerKind(api: Int, onDevice: Boolean, onDeviceAvailable: () -> Boolean): RecognizerKind = when {
+    api < 31 -> RecognizerKind.Forward
+    onDevice && onDeviceAvailable() -> RecognizerKind.OnDevice
+    else -> RecognizerKind.Default
+}
+
+/** Whether a listen's error starts it again on the default recognizer: once, for an on-device one lacking the language. */
+fun retriesOnline(onDevice: Boolean, retried: Boolean, noLanguage: Boolean): Boolean = onDevice && !retried && noLanguage

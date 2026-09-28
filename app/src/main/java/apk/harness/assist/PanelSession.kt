@@ -67,8 +67,10 @@ class PanelSession(context: Context) :
      */
     private val early = ArrayList<Parked>()
 
-    /** A grant MicActivity brought back before the handed-over panel was claimed. */
-    private var grantWaiting = false
+    /** The panel whose mic request MicActivity is answering. */
+    private var micAsker: PanelState? = null
+    /** The handed-over panel a grant came back for before its re-show claimed it. */
+    private var grantFor: PanelState? = null
 
     private class Parked(val summon: Int, val at: Long, val file: File?, val apply: (PanelState) -> Unit)
 
@@ -79,12 +81,18 @@ class PanelSession(context: Context) :
         lifecycleScope.launch {
             Assistant.mic.collect { answer ->
                 when (answer) {
+                    MicAnswer.Started -> Assistant.handoverEvent(HandoverEvent.MicStarted)
                     is MicAnswer.Answered -> {
                         Assistant.handoverEvent(HandoverEvent.MicFinished)
-                        if (answer.granted) {
-                            // A handed-over panel listens once its re-show has claimed it.
-                            val current = state
-                            if (current != null) current.micGranted() else grantWaiting = true
+                        // Only the panel that asked takes the answer; a handed-over
+                        // one takes a grant once its re-show has claimed it.
+                        val asker = micAsker
+                        micAsker = null
+                        if (asker != null) {
+                            asker.micBlocked = answer.blocked
+                            if (answer.granted) {
+                                if (state === asker) asker.micGranted() else if (state == null) grantFor = asker
+                            }
                         }
                     }
                     MicAnswer.Stopped -> Assistant.handoverEvent(HandoverEvent.MicStopped)
@@ -128,15 +136,18 @@ class PanelSession(context: Context) :
             ownRequest = args?.getBoolean(Assistant.PANEL_REQUEST) == true,
             staged = Bootstrap(context).isInstalled(),
         )
+        // A summon of the operator's own ends a panel handed over for the microphone.
+        if (show != Show.OwnReShow) Assistant.handoverEvent(HandoverEvent.Superseded)
         when (show) {
             Show.Locked -> { drop(); state = PanelState.locked() }
             Show.NotStaged -> state = PanelState.notStaged(context)
             Show.Fresh -> {
                 drop()
-                grantWaiting = false
+                micAsker = null
+                grantFor = null
                 state = PanelState().also { it.begin(context); it.listenIfGranted() }
             }
-            Show.Listen -> state?.listenIfGranted()
+            Show.Listen -> state?.let { it.refreshOtherAppsMic(); it.listenIfGranted() }
             Show.OwnReShow -> if (state == null) {
                 // The re-show after a handover takes its panel back; with none
                 // left to take, the session has nothing to draw.
@@ -146,10 +157,13 @@ class PanelSession(context: Context) :
                     hide()
                     return
                 }
-                if (grantWaiting) {
-                    grantWaiting = false
-                    claimed.micGranted()
-                }
+                // The hide ended any context request, and nothing more comes for
+                // it: chips with nothing attached go off, as at the end of a wait.
+                claimed.request = timeOut(claimed.request).first
+                claimed.requestEnded()
+                claimed.refreshOtherAppsMic()
+                if (grantFor === claimed) claimed.micGranted()
+                grantFor = null
             }
         }
         val current = state
@@ -343,7 +357,8 @@ class PanelSession(context: Context) :
         val askedIn = summon
         val deliveredAt = SystemClock.uptimeMillis()
         Assistant.runs.launch {
-            // An encode that fails is a screenshot that did not come.
+            // An encode that fails is a screenshot that did not come. Exceptions
+            // only: an Error such as running out of memory is not caught here.
             val encoded = try {
                 encodeScreenshot(context, screenshot)
             } catch (failure: Exception) {
@@ -372,18 +387,28 @@ class PanelSession(context: Context) :
      * handover and MicActivity's answer re-shows it.
      */
     override fun requestMic() {
+        val current = state ?: return
         // A fresh task each time, so nothing an earlier request left behind answers for this one.
-        startAssistantActivity(
-            Intent(context, MicActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
+        val started = runCatching {
+            startAssistantActivity(
+                Intent(context, MicActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            )
+        }
+        if (started.isFailure) {
+            Log.w(TAG, "the microphone request did not start", started.exceptionOrNull())
+            current.notice = MIC_NOT_ASKED
+            return
+        }
+        micAsker = current
         if (MIC_DIALOG_UNDER_SESSION) {
-            val current = state ?: return
             Assistant.handOver(current, HandoverKind.Mic)
             handingOver = true
             hide()
         }
     }
 }
+
+private const val MIC_NOT_ASKED = "The microphone could not be asked for."
 
 /** Under the cache directory: screenshots taken for the panel. */
 private const val ASSIST_CACHE = "assist"
