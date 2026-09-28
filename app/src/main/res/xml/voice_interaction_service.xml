@@ -5,4 +5,5 @@
 <voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="apk.harness.assist.PanelSessionService"
     android:recognitionService="apk.harness.assist.ForwardingRecognitionService"
+    android:settingsActivity="apk.harness.assist.AskSettingsActivity"
     android:supportsAssist="true" />

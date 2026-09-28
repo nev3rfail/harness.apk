@@ -28,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -83,6 +84,7 @@ fun SessionTree(
     onNewChat: (Project) -> Unit,
     onOpenFolder: () -> Unit,
     onDismiss: () -> Unit,
+    onAskAgent: () -> Unit,
 ) {
     val rows = remember(projects, expanded, revealed) {
         sessionRows(projects, expanded, revealed)
@@ -93,7 +95,7 @@ fun SessionTree(
         color = MaterialTheme.colorScheme.surface,
     ) {
         // The list keeps its own first row clear of the status bar.
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Header(
                 title = "Chats",
                 subtitle = summary(projects),
@@ -102,7 +104,7 @@ fun SessionTree(
             )
             HorizontalDivider()
 
-            LazyColumn(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(rows, key = { it.id }) { row ->
                     when (row) {
                         is SessionRow.ProjectRow -> ProjectEntry(
@@ -132,6 +134,8 @@ fun SessionTree(
                     }
                 }
             }
+            HorizontalDivider()
+            TextButton(onClick = onAskAgent) { Text("Ask Agent") }
         }
     }
 }

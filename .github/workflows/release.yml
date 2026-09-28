@@ -201,11 +201,15 @@ jobs:
         env:
           VERSION_NAME: ${{ needs.guard.outputs.name }}
           VERSION_CODE: ${{ needs.guard.outputs.code }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
         run: |
           set -euo pipefail
+          # The Play release is the one that must carry the policy link.
+          [ -n "$PRIVACY_POLICY_URL" ] || { echo "PRIVACY_POLICY_URL is not set"; exit 1; }
           ./gradlew :app:bundlePlay \
               -PskipNativeBuild=true -PskipLoaderBuild=true -PskipProotBuild=true \
-              -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
+              -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE" \
+              -PprivacyPolicyUrl="$PRIVACY_POLICY_URL"
 
       # Play refuses a native library with a LOAD segment aligned below 16 KB.
       - name: Every native library is 16 KB aligned

@@ -62,6 +62,7 @@ import apk.harness.agents.BACKENDS
 import apk.harness.agents.OpenTab
 import apk.harness.agents.mergedProjects
 import apk.harness.agents.withOpenTabs
+import apk.harness.assist.AskSettingsActivity
 import apk.harness.bootstrap.Bootstrap
 import apk.harness.bootstrap.BootstrapProgress
 import apk.harness.bootstrap.bothSpellings
@@ -1246,6 +1247,10 @@ private fun HarnessScreen(
                         }
                     },
                     onDismiss = close,
+                    onAskAgent = {
+                        close()
+                        context.startActivity(Intent(context, AskSettingsActivity::class.java))
+                    },
                 )
             }
         }
