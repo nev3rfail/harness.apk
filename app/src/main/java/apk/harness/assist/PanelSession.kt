@@ -147,28 +147,31 @@ class PanelSession(context: Context) :
             ownRequest = args?.getBoolean(Assistant.PANEL_REQUEST) == true,
             staged = Bootstrap(context).isInstalled(),
         )
-        // A summon of the operator's own ends a panel handed over for the microphone.
-        if (show != Show.OwnReShow) Assistant.handoverEvent(HandoverEvent.Superseded)
+        // A summon of the operator's own ends a panel handed over for the
+        // microphone, and no answer or grant from its request reaches another.
+        if (show != Show.OwnReShow) {
+            Assistant.handoverEvent(HandoverEvent.Superseded)
+            micAsker = null
+            grantFor = null
+        }
         when (show) {
             Show.Locked -> { drop(); state = PanelState.locked() }
             Show.NotStaged -> state = PanelState.notStaged(context)
             Show.Fresh -> {
                 drop()
-                micAsker = null
-                grantFor = null
                 state = PanelState().also { it.begin(context); it.listenIfGranted() }
             }
             Show.Listen -> state?.let { it.refreshOtherAppsMic(); it.listenIfGranted() }
             Show.OwnReShow -> if (state == null) {
-                // The re-show after a handover takes its panel back; with none
-                // left to take, the session has nothing to draw.
+                // The re-show after the mic handover takes its panel back; with
+                // none left to take, the session has nothing to draw.
                 val claimed = Assistant.claim()
                 state = claimed
                 if (claimed == null) {
                     hide()
                     return
                 }
-                // The hide ended any context request, and nothing more comes for
+                // The handover's hide ended any context request, and nothing more comes for
                 // it: chips with nothing attached go off, as at the end of a wait.
                 claimed.request = timeOut(claimed.request).first
                 claimed.requestEnded()
@@ -370,7 +373,7 @@ class PanelSession(context: Context) :
         val deliveredAt = SystemClock.uptimeMillis()
         Assistant.runs.launch {
             // An encode that fails is a screenshot that did not come. Exceptions
-            // only: an Error such as running out of memory is not caught here.
+            // are caught; Errors propagate.
             val encoded = try {
                 encodeScreenshot(context, screenshot)
             } catch (failure: Exception) {
@@ -413,7 +416,7 @@ class PanelSession(context: Context) :
         }
         micAsker = current
         if (MIC_DIALOG_UNDER_SESSION) {
-            Assistant.handOver(current, HandoverKind.Mic)
+            Assistant.handOver(current)
             handingOver = true
             hide()
         }

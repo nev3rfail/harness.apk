@@ -60,8 +60,7 @@ class Voice(
                 forwardTarget(recognizerCandidates(context))?.let { SpeechRecognizer.createSpeechRecognizer(context, it.component()) to false }
         }
 
-    // The recognizer picks online or offline itself: asked for offline with no
-    // language pack, the default one fails as the on-device one does.
+    // The recognizer chooses online or offline.
     private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)

@@ -44,9 +44,11 @@ class AskSettingsActivity : ComponentActivity() {
     private var micDisclosing by mutableStateOf(false)
     /** The microphone denied for good: only the app's settings can grant it now. */
     private var micBlocked by mutableStateOf(false)
+    /** Whether the app asked for the microphone before the request in flight. */
+    private var micAskedBefore = false
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         otherAppsMic = asksMicForOtherApps(this)
-        micBlocked = !granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        micBlocked = micBlocked(granted, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO), micAskedBefore)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,6 +65,7 @@ class AskSettingsActivity : ComponentActivity() {
                                 otherApps = true,
                                 onContinue = {
                                     micDisclosing = false
+                                    micAskedBefore = Assistant.askingMic(this@AskSettingsActivity)
                                     micPermission.launch(Manifest.permission.RECORD_AUDIO)
                                 },
                                 onNotNow = { micDisclosing = false },

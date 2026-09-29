@@ -22,16 +22,16 @@ class AssistantFileTest {
     }
 
     @Test
-    fun `a withdrawal disables context again`() {
-        val withdrawn = AssistantSettings(consented = true, screenContext = ScreenContext.Always).withdrawn()
-        assertEquals(AssistantSettings(consented = false, screenContext = ScreenContext.Ask), withdrawn)
+    fun `a withdrawal disables context again and keeps the microphone record`() {
+        val withdrawn = AssistantSettings(consented = true, screenContext = ScreenContext.Always, micAsked = true).withdrawn()
+        assertEquals(AssistantSettings(consented = false, screenContext = ScreenContext.Ask, micAsked = true), withdrawn)
         assertEquals(both, disabledContext(withdrawn.screenContext, withdrawn.consented))
     }
 
     @Test
     fun `the settings are read back as they were written`() {
         val file = File(folder.root, "assistant.json")
-        val settings = AssistantSettings(consented = true, screenContext = ScreenContext.Always)
+        val settings = AssistantSettings(consented = true, screenContext = ScreenContext.Always, micAsked = true)
         writeAssistant(file, settings)
         assertEquals(settings, readAssistant(file))
     }
@@ -40,6 +40,14 @@ class AssistantFileTest {
     fun `an unreadable file reads as the defaults`() {
         assertEquals(AssistantSettings(), readAssistant(File(folder.root, "absent.json")))
         assertEquals(AssistantSettings(), decodeAssistant("half a fi"))
+    }
+
+    @Test
+    fun `the microphone is blocked only when denied with no rationale after an earlier request`() {
+        assertEquals(true, micBlocked(granted = false, rationale = false, askedBefore = true))
+        assertEquals(false, micBlocked(granted = false, rationale = false, askedBefore = false))
+        assertEquals(false, micBlocked(granted = false, rationale = true, askedBefore = true))
+        assertEquals(false, micBlocked(granted = true, rationale = false, askedBefore = true))
     }
 
     @Test

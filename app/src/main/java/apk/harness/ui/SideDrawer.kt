@@ -169,7 +169,7 @@ fun SideDrawer(
                         // drawer's rows stay beside one on the side it is anchored to.
                         .windowInsetsPadding(
                             WindowInsets.displayCutout.only(
-                                if (side == DrawerSide.Right) WindowInsetsSides.Right else WindowInsetsSides.Left
+                                if (side == DrawerSide.Right) WindowInsetsSides.End else WindowInsetsSides.Start
                             )
                         )
                         .fillMaxWidth(DrawerWidthFraction)
