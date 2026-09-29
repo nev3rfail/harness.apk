@@ -48,11 +48,18 @@ private fun Uri.parts() = UriParts(scheme, authority, path, query)
 
 /**
  * [uri]'s type from `ContentResolver.getType` and its name and size from one
- * `OpenableColumns` query, on the IO dispatcher. A cancel cancels the query
- * through its signal; `getType` takes none. What the provider does not answer
+ * `OpenableColumns` query, on the IO dispatcher, or null when the provider has
+ * not answered both within [DESCRIBE_MILLIS]. What it does not answer of them
  * is null.
  */
-suspend fun describe(resolver: ContentResolver, uri: Uri): SharedStream = withContext(Dispatchers.IO) {
+suspend fun describe(resolver: ContentResolver, uri: Uri): SharedStream? =
+    answeredWithin(DESCRIBE_MILLIS, Assistant.runs) { ask(resolver, uri) }
+
+/** How long a provider has to say what a stream is. */
+const val DESCRIBE_MILLIS = 10_000L
+
+/** A cancel cancels the query through its signal; `getType` takes none. */
+private suspend fun ask(resolver: ContentResolver, uri: Uri): SharedStream = withContext(Dispatchers.IO) {
     val type = runCatching { resolver.getType(uri) }.getOrNull()
     var name: String? = null
     var size: Long? = null

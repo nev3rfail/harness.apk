@@ -143,7 +143,9 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             try {
                 // Before anything is written into the share's directories.
                 runCatching { mark.parentFile?.mkdirs(); mark.createNewFile() }
-                val described = request.streams.map { ensureActive(); describe(resolver, it.uri) }
+                val answers = request.streams.map { ensureActive(); it to describe(resolver, it.uri) }
+                val silent = answers.filter { it.second == null }.map { (stream, _) -> Refusal(stream.name ?: "shared", NO_ANSWER, null) }
+                val described = answers.mapNotNull { it.second }
                 val (images, files) = described.partition { isImage(it.type) }
                 for (image in images) {
                     if (!roomForBlocks(encoded.map { it?.bytes })) break
@@ -161,7 +163,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
                     attachments = attachments +
                         blocks.map { (stream, image) -> Attachment.Image(image.file, image.mediaType, image.bytes, safeName(stream.name)) } +
                         copied.files.map { Attachment.Document(it) }
-                    refused = refused + copied.refused
+                    refused = refused + silent + copied.refused
                     copying = 0
                     if (sendWhenReady) {
                         sendWhenReady = false
