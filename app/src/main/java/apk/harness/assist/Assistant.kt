@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,9 @@ object Assistant {
         SupervisorJob() + Dispatchers.IO +
             CoroutineExceptionHandler { _, failure -> Log.e(TAG, "a run's job failed", failure) },
     )
+
+    /** The ids of the shares a panel holds, whose directories a clear leaves alone. */
+    val sharesInUse: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** The answer [MicActivity] brings back, taken and cleared by the panel that asked. */
     val mic = MutableStateFlow<MicAnswer?>(null)

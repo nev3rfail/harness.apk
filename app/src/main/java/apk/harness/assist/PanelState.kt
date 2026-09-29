@@ -68,6 +68,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     fun begin(context: Context) {
         app = context.applicationContext
         val app = app
+        clearShares(app)
         val agent = Agent(app)
         val backend = BACKENDS.first()
         run = HeadlessRun(
@@ -105,6 +106,10 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     private var inbox: File? = null
     /** The share's directory under the cache, holding its encoded images; deleted as [inbox] is. */
     private var shareCache: File? = null
+    /** The share's id, which names its directories and keeps them from [clearShares] while the panel is up. */
+    private var shareId: String? = null
+    /** The file that marks the share as not yet sent, so a panel that never got to dismiss leaves [inbox] to the next clear. */
+    private var unsentMark: File? = null
     private var preparing: Job? = null
     /** A send tapped during the copy, made once it ends. */
     private var sendWhenReady = false
@@ -124,19 +129,20 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             notice = NOTHING_SHARED
             return
         }
+        if (request.streams.isEmpty()) return
         val resolver = context.contentResolver
-        val shares = File(context.cacheDir, SHARE_CACHE)
-        // A sent share's directory is left empty once its images are written;
-        // delete() takes only an empty one.
-        shares.listFiles()?.forEach { it.delete() }
-        val cache = File(shares, UUID.randomUUID().toString()).also { shareCache = it }
-        val box = File(File(Agent(app).home, ASSISTANT_DIRECTORY), "inbox/${UUID.randomUUID()}").also { inbox = it }
+        val id = UUID.randomUUID().toString().also { shareId = it }
+        Assistant.sharesInUse += id
+        val cache = File(shareCacheOf(app), id).also { shareCache = it }
+        val box = File(inboxOf(app), id).also { inbox = it }
+        val mark = File(unsentOf(app), id).also { unsentMark = it }
         copying = request.streams.size
-        if (copying == 0) return
         preparing = Assistant.runs.launch {
             // Declared outside the try, so a cancelled preparation deletes what it encoded.
             val encoded = ArrayList<EncodedImage?>()
             try {
+                // Before anything is written into the share's directories.
+                runCatching { mark.parentFile?.mkdirs(); mark.createNewFile() }
                 val described = request.streams.map { ensureActive(); describe(resolver, it.uri) }
                 val (images, files) = described.partition { isImage(it.type) }
                 for (image in images) {
@@ -202,6 +208,9 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         field = ""
         notice = null
         voiceProblem = null
+        // From here the share's files are the conversation's.
+        unsentMark?.let { mark -> Assistant.runs.launch { mark.delete() } }
+        unsentMark = null
         sent = true
         sentImages = sentImages + attachments.mapNotNull {
             when (it) {
@@ -427,12 +436,14 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         // files are the conversation's.
         if (!sent && inbox != null) {
             val job = preparing
-            val directories = listOfNotNull(inbox, shareCache)
+            // The mark last, so a panel gone before the delete ends leaves the rest to the next clear.
+            val directories = listOfNotNull(inbox, shareCache, unsentMark)
             job?.cancel()
             Assistant.runs.launch { directories.forEach { it.deleteRecursively() } }
             // A copy or an encode the cancel has not stopped yet may still write into them.
             job?.invokeOnCompletion { Assistant.runs.launch { directories.forEach { it.deleteRecursively() } } }
         }
+        shareId?.let { Assistant.sharesInUse -= it }
         run?.stop(StopKind.Dismiss, sent)
         voice?.destroy()
     }
@@ -448,6 +459,19 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         private const val SHARE_CACHE = "share"
         const val NOTHING_OPENS = "Nothing on this phone opens that."
         const val NO_ROOM_FOR_IMAGES = "This conversation holds as many images as it can carry."
+
+        private fun shareCacheOf(app: Context) = File(app.cacheDir, SHARE_CACHE)
+        private fun inboxOf(app: Context) = File(File(Agent(app).home, ASSISTANT_DIRECTORY), "inbox")
+        /** One empty file per share not yet sent, named by its id; outside the agent's home. */
+        private fun unsentOf(app: Context) = File(app.noBackupFilesDir, "share-unsent")
+
+        /** Clears, off the main thread, what earlier shares left that no panel holds. */
+        fun clearShares(app: Context) {
+            val unsent = unsentOf(app)
+            val inbox = inboxOf(app)
+            val cache = shareCacheOf(app)
+            Assistant.runs.launch { clearAbandoned(unsent, inbox, cache, Assistant.sharesInUse) }
+        }
 
         fun locked() = PanelState().apply { gate = Gate.Locked }
 
