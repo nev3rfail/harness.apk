@@ -67,12 +67,12 @@ fun MicDisclosure(provider: String, otherApps: Boolean, onContinue: () -> Unit, 
 }
 
 /**
- * While a disclosure is drawn, its window drops touches that reach it through
- * another app's window drawn over it, so a consent cannot be tapped through an
+ * While drawn, its view drops touches that reach it through another app's
+ * window drawn over it, so a consent or a setting cannot be tapped through an
  * overlay.
  */
 @Composable
-private fun ObscuredTouchesFiltered() {
+internal fun ObscuredTouchesFiltered() {
     val view = LocalView.current
     DisposableEffect(view) {
         val before = view.filterTouchesWhenObscured
