@@ -55,6 +55,7 @@ class AskSettingsActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             HarnessTheme {
+                ObscuredTouchesFiltered()
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     Column(Modifier.safeDrawingPadding().padding(16.dp)) {
                         Text(TITLE, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 8.dp))
