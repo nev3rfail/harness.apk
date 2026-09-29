@@ -18,7 +18,6 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -394,17 +393,20 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     }
 
     fun dismiss() {
-        // A share not sent goes with the panel: its copies, and its encoded
-        // images once the preparation has ended. Once sent, the files are the
-        // conversation's.
+        // A share not sent goes with the panel: its copies and its encoded
+        // images, now and again once the preparation has ended. Once sent, the
+        // files are the conversation's.
         if (!sent && inbox != null) {
             val job = preparing
             val box = inbox
+            val images = attachments.mapNotNull { (it as? Attachment.Image)?.file }
+            job?.cancel()
             Assistant.runs.launch {
-                job?.cancelAndJoin()
                 box?.deleteRecursively()
-                withContext(Dispatchers.Main) { attachments }.forEach { (it as? Attachment.Image)?.file?.delete() }
+                images.forEach { it.delete() }
             }
+            // A copy the cancel has not stopped yet may still write into it.
+            job?.invokeOnCompletion { box?.deleteRecursively() }
         }
         run?.stop(StopKind.Dismiss, sent)
         voice?.destroy()
