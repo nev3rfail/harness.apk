@@ -3,6 +3,7 @@ package apk.harness.assist
 /** Selected or shared text kept in full up to this many characters. */
 const val QUOTE_LIMIT = 100_000
 const val QUOTE_CUT = "[the selection was longer; the rest was cut]"
+const val SHARED_TEXT_CUT = "[the shared text was longer; the rest was cut]"
 
 /**
  * The first message of a handed-over panel: the quote as `Selected text:` and
@@ -25,5 +26,5 @@ fun cutToLimit(text: String): String {
     return text.substring(0, end)
 }
 
-/** [text], cut to [QUOTE_LIMIT] with the [QUOTE_CUT] line after it when longer. */
-fun cutWithLine(text: String): String = if (text.length > QUOTE_LIMIT) cutToLimit(text) + "\n" + QUOTE_CUT else text
+/** A share's text or subject, cut to [QUOTE_LIMIT] with the [SHARED_TEXT_CUT] line after it when longer. */
+fun cutWithLine(text: String): String = if (text.length > QUOTE_LIMIT) cutToLimit(text) + "\n" + SHARED_TEXT_CUT else text
