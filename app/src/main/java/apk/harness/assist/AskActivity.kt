@@ -1,14 +1,19 @@
 package apk.harness.assist
 
 import android.Manifest
+import android.app.ComponentCaller
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.annotation.RequiresApi
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -83,10 +88,27 @@ class AskActivity : ComponentActivity(), PanelHost {
                 panel.begin(this)
                 when (intent?.action) {
                     Intent.ACTION_ASSIST -> panel.listenIfGranted()
-                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority)))
+                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess(summoned))))
                 }
             }
         }
+    }
+
+    /**
+     * Why a stream is refused on the sender's own access, or null. The grant
+     * check the platform makes for `FLAG_GRANT_READ_URI_PERMISSION` does not
+     * ask whether the sender may read a URI this app can already open, so the
+     * app asks: from Android 15, whether the app that sent the intent in hand,
+     * [summoned] through onNewIntent or at the start, may read the URI itself.
+     */
+    private fun senderAccess(summoned: Boolean): (Uri) -> String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) callerAccess(if (summoned) currentCaller else initialCaller)
+        else { _ -> null }
+
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    private fun callerAccess(caller: ComponentCaller): (Uri) -> String? = { uri ->
+        val access = runCatching { caller.checkContentUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.getOrNull()
+        if (access == PackageManager.PERMISSION_GRANTED) null else SENDER_CANNOT_READ
     }
 
     /** Whether [authority] is one of this app's providers, exported or not. */
