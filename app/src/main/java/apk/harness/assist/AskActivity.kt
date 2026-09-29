@@ -81,12 +81,12 @@ class AskActivity : ComponentActivity(), PanelHost {
         // phone is unlocked, is checked against the app that sent it.
         setIntent(intent)
         intentCaller = caller
-        // A second summon keeps the conversation and listens, as in the session;
+        // A second summon keeps the conversation and, from the system, listens, as in the session;
         // a share replaces the panel with one holding it.
         show(summoned = true)
     }
 
-    /** [summoned]: a new intent reached the activity on screen, so an open panel listens. */
+    /** [summoned]: a new intent reached the activity on screen, so an open panel listens if the system sent it. */
     private fun show(summoned: Boolean) {
         val current = state
         val show = classifyShow(
@@ -96,7 +96,7 @@ class AskActivity : ComponentActivity(), PanelHost {
             staged = Bootstrap(this).isInstalled(),
         )
         if (show == Show.Listen && !(summoned && intent?.action in SHARE_ACTIONS)) {
-            if (summoned && intent?.action == Intent.ACTION_ASSIST) current?.listenIfGranted()
+            if (summoned && intent?.action == Intent.ACTION_ASSIST && systemSummoned()) current?.listenIfGranted()
             return
         }
         current?.dismiss()
@@ -106,11 +106,20 @@ class AskActivity : ComponentActivity(), PanelHost {
             else -> PanelState().also { panel ->
                 panel.begin(this)
                 when (intent?.action) {
-                    Intent.ACTION_ASSIST -> panel.listenIfGranted()
+                    Intent.ACTION_ASSIST -> if (systemSummoned()) panel.listenIfGranted()
                     in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess(), senderDecides = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM)))
                 }
             }
         }
+    }
+
+    /** Whether the system, not another app, delivered the ASSIST in hand; see [summonListens]. */
+    private fun systemSummoned(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return false
+        val caller = intentCaller ?: return false
+        // The system UI is the package allowed to be the status bar.
+        val systemUi = caller.`package`?.let { packageManager.checkPermission(STATUS_BAR_SERVICE, it) == PackageManager.PERMISSION_GRANTED } == true
+        return summonListens(Build.VERSION.SDK_INT, caller.uid, systemUi)
     }
 
     /**
@@ -187,3 +196,5 @@ class AskActivity : ComponentActivity(), PanelHost {
         micPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 }
+
+private const val STATUS_BAR_SERVICE = "android.permission.STATUS_BAR_SERVICE"

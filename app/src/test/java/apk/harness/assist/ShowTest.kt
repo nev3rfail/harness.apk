@@ -42,4 +42,21 @@ class ShowTest {
         assertEquals(Show.OwnReShow, classifyShow(locked = false, shown = true, ownRequest = true, staged = true))
         assertEquals(Show.OwnReShow, classifyShow(locked = false, shown = false, ownRequest = true, staged = true))
     }
+
+    @Test
+    fun `a summon listens only when the system made it, on Android 15 and later`() {
+        assertEquals(true, summonListens(sdk = 35, callerUid = 1000, callerIsSystemUi = false))
+        assertEquals(true, summonListens(sdk = 36, callerUid = 10_050, callerIsSystemUi = true))
+        // The shell, and any other app.
+        assertEquals(false, summonListens(sdk = 35, callerUid = 2000, callerIsSystemUi = false))
+        assertEquals(false, summonListens(sdk = 35, callerUid = 10_123, callerIsSystemUi = false))
+        assertEquals(false, summonListens(sdk = 35, callerUid = null, callerIsSystemUi = false))
+    }
+
+    @Test
+    fun `no summon listens on its own on Android 11 to 14`() {
+        for (sdk in 30..34) {
+            assertEquals(false, summonListens(sdk, callerUid = 1000, callerIsSystemUi = true))
+        }
+    }
 }
