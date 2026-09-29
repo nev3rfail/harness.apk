@@ -24,9 +24,11 @@ class AskActivity : ComponentActivity(), PanelHost {
     override val inSession = false
     private var state by mutableStateOf<PanelState?>(null)
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
+    /** Whether the app asked for the microphone before the request in flight. */
+    private var micAskedBefore = false
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) state?.micGranted()
-        else state?.micBlocked = !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        else state?.micBlocked = micBlocked(false, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO), micAskedBefore)
     }
 
     /** The screen going off ends the panel, as the lock screen does where one is set. */
@@ -129,5 +131,8 @@ class AskActivity : ComponentActivity(), PanelHost {
 
     override fun askContext(text: Boolean, shot: Boolean) {}
     // The dialog pauses the activity and does not stop it, so onStop's dismiss does not fire.
-    override fun requestMic() = micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    override fun requestMic() {
+        micAskedBefore = Assistant.askingMic(this)
+        micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
 }

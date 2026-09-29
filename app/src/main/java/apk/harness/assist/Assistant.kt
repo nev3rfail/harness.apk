@@ -44,6 +44,13 @@ object Assistant {
     fun settings(context: Context): AssistantSettings =
         readAssistant(File(context.noBackupFilesDir, ASSISTANT_FILE))
 
+    /** Records a microphone request; true when one was made before it. */
+    fun askingMic(context: Context): Boolean {
+        val current = settings(context)
+        if (!current.micAsked) save(context, current.copy(micAsked = true))
+        return current.micAsked
+    }
+
     /** The context the service keeps disabled while the panel asks for none. */
     fun disabled(context: Context): Int = settings(context).let { disabledContext(it.screenContext, it.consented) }
 
@@ -60,9 +67,9 @@ object Assistant {
     private var handed: PanelState? = null
     private var pending: Handover? = null
 
-    fun handOver(state: PanelState, kind: HandoverKind) {
+    fun handOver(state: PanelState) {
         handed = state
-        val (started, outcome) = beginHandover(kind)
+        val (started, outcome) = beginHandover()
         pending = started
         act(outcome)
     }

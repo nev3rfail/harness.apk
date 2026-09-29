@@ -8,10 +8,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 /** Asks for the microphone on the session's behalf, and says what it was told. */
 class MicActivity : ComponentActivity() {
     private var answered = false
+    /** Whether the app asked for the microphone before this request. */
+    private var askedBefore = false
 
     private val ask = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         answered = true
-        val blocked = !granted && !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        val blocked = micBlocked(granted, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO), askedBefore)
         Assistant.mic.value = MicAnswer.Answered(granted, blocked)
         // The session hid for the dialog; granted or not, it comes back with its panel.
         if (MIC_DIALOG_UNDER_SESSION) Assistant.service?.showSession(Assistant.requestArgs(), 0)
@@ -21,9 +23,15 @@ class MicActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) {
+            askedBefore = Assistant.askingMic(this)
             Assistant.mic.value = MicAnswer.Started
             ask.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        } else askedBefore = savedInstanceState.getBoolean(ASKED_BEFORE)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(ASKED_BEFORE, askedBefore)
     }
 
     override fun onStop() {
@@ -36,3 +44,5 @@ class MicActivity : ComponentActivity() {
         }
     }
 }
+
+private const val ASKED_BEFORE = "askedBefore"

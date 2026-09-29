@@ -1,10 +1,7 @@
 package apk.harness.assist
 
-/** A hide the panel makes itself, for context or for the microphone. */
-enum class HandoverKind { Context, Mic }
-
+/** A hide the panel makes itself for the microphone's permission dialog. */
 data class Handover(
-    val kind: HandoverKind,
     val generation: Int = 0,
     val micStarted: Boolean = false,
     val micFinished: Boolean = false,
@@ -31,11 +28,11 @@ sealed interface HandoverOutcome {
 const val HANDOVER_WAIT = 2_000L
 
 /**
- * A handover waits 2 s from its start: a context one for the re-show, a mic one
- * for MicActivity to start, and then for as long as the activity runs.
+ * A handover waits 2 s from its start for MicActivity to start, then for as
+ * long as the activity runs, then 2 s for the re-show.
  */
-fun beginHandover(kind: HandoverKind): Pair<Handover, HandoverOutcome> =
-    Handover(kind, generation = 1) to HandoverOutcome.After(HANDOVER_WAIT, 1)
+fun beginHandover(): Pair<Handover, HandoverOutcome> =
+    Handover(generation = 1) to HandoverOutcome.After(HANDOVER_WAIT, 1)
 
 /** The next step of a handover; a null state means it has ended. */
 fun handover(state: Handover, event: HandoverEvent): Pair<Handover?, HandoverOutcome> = when (event) {
@@ -43,12 +40,12 @@ fun handover(state: Handover, event: HandoverEvent): Pair<Handover?, HandoverOut
     HandoverEvent.MicStopped, HandoverEvent.ShowFailed, HandoverEvent.Superseded -> null to HandoverOutcome.Dismiss
     HandoverEvent.MicStarted -> state.copy(micStarted = true) to HandoverOutcome.Wait
     HandoverEvent.MicFinished ->
-        if (state.kind == HandoverKind.Mic && !state.micFinished) {
+        if (!state.micFinished) {
             val next = state.copy(micFinished = true, generation = state.generation + 1)
             next to HandoverOutcome.After(HANDOVER_WAIT, next.generation)
         } else state to HandoverOutcome.Wait
     is HandoverEvent.Timer ->
-        if (event.generation == state.generation && (state.kind == HandoverKind.Context || !state.micStarted || state.micFinished)) {
+        if (event.generation == state.generation && (!state.micStarted || state.micFinished)) {
             null to HandoverOutcome.Dismiss
         } else state to HandoverOutcome.Wait
 }

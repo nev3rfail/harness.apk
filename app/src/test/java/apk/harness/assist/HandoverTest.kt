@@ -6,8 +6,8 @@ import org.junit.Test
 
 class HandoverTest {
 
-    private fun run(kind: HandoverKind, vararg events: HandoverEvent): List<HandoverOutcome> {
-        val begun = beginHandover(kind)
+    private fun run(vararg events: HandoverEvent): List<HandoverOutcome> {
+        val begun = beginHandover()
         var state: Handover? = begun.first
         val outcomes = mutableListOf(begun.second)
         for (event in events) {
@@ -20,20 +20,10 @@ class HandoverTest {
     }
 
     @Test
-    fun `a context handover re-shown within 2 s keeps the panel`() {
-        assertEquals(listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Keep), run(HandoverKind.Context, HandoverEvent.ReShown))
-    }
-
-    @Test
-    fun `a context handover not re-shown is a dismiss`() {
-        assertEquals(listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Dismiss), run(HandoverKind.Context, HandoverEvent.Timer(1)))
-    }
-
-    @Test
     fun `a mic handover waits for the activity, then 2 s for the re-show`() {
         assertEquals(
             listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Wait, HandoverOutcome.After(2_000, 2), HandoverOutcome.Keep),
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.ReShown),
+            run(HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.ReShown),
         )
     }
 
@@ -41,20 +31,20 @@ class HandoverTest {
     fun `a mic handover whose activity started outlives the first wait`() {
         assertEquals(
             listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Wait, HandoverOutcome.Wait, HandoverOutcome.After(2_000, 2), HandoverOutcome.Keep),
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.Timer(1), HandoverEvent.MicFinished, HandoverEvent.ReShown),
+            run(HandoverEvent.MicStarted, HandoverEvent.Timer(1), HandoverEvent.MicFinished, HandoverEvent.ReShown),
         )
     }
 
     @Test
     fun `a mic handover whose activity never started is a dismiss after 2 s`() {
-        assertEquals(listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Dismiss), run(HandoverKind.Mic, HandoverEvent.Timer(1)))
+        assertEquals(listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Dismiss), run(HandoverEvent.Timer(1)))
     }
 
     @Test
     fun `a mic handover with no re-show after the activity finishes is a dismiss`() {
         assertEquals(
             listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Wait, HandoverOutcome.After(2_000, 2), HandoverOutcome.Wait, HandoverOutcome.Dismiss),
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.Timer(1), HandoverEvent.Timer(2)),
+            run(HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.Timer(1), HandoverEvent.Timer(2)),
         )
     }
 
@@ -62,7 +52,7 @@ class HandoverTest {
     fun `the mic activity stopped with no answer is a dismiss`() {
         assertEquals(
             listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Wait, HandoverOutcome.Dismiss),
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.MicStopped),
+            run(HandoverEvent.MicStarted, HandoverEvent.MicStopped),
         )
     }
 
@@ -70,18 +60,16 @@ class HandoverTest {
     fun `a re-show that fails is a dismiss`() {
         assertEquals(
             listOf(HandoverOutcome.After(2_000, 1), HandoverOutcome.Wait, HandoverOutcome.After(2_000, 2), HandoverOutcome.Dismiss),
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.ShowFailed),
+            run(HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.ShowFailed),
         )
     }
 
     @Test
     fun `a fresh summon during a handover ends it as a dismiss`() {
-        for (kind in HandoverKind.entries) {
-            assertEquals(HandoverOutcome.Dismiss, run(kind, HandoverEvent.Superseded).last())
-        }
+        assertEquals(HandoverOutcome.Dismiss, run(HandoverEvent.Superseded).last())
         assertEquals(
             HandoverOutcome.Dismiss,
-            run(HandoverKind.Mic, HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.Superseded).last(),
+            run(HandoverEvent.MicStarted, HandoverEvent.MicFinished, HandoverEvent.Superseded).last(),
         )
     }
 
