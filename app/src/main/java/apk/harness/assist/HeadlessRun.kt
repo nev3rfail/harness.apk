@@ -147,7 +147,12 @@ class HeadlessRun(
             if (synchronized(this@HeadlessRun) { stopping != null }) {
                 feed(StopEvent.Exited)
                 killSurvivors()
-            } else main { onExit(code, synchronized(tail) { tail.toList() }) }
+            } else {
+                // A process that exits on its own takes the tools' processes
+                // seen at its turns' ends with it.
+                killSurvivors()
+                main { onExit(code, synchronized(tail) { tail.toList() }) }
+            }
         }
         return started
     }
@@ -156,6 +161,9 @@ class HeadlessRun(
         val event = backend.parseEvent(line, interruptSent)
         if (event == HeadlessEvent.Malformed) Log.w(TAG, "a line of ${line.length} characters is not an event")
         if (event is HeadlessEvent.Finished) {
+            // A tool's process still running at the turn's end is reparented
+            // once the agent exits, so it is noted while it is under the tree.
+            witness(descendantsNow())
             inFlight = false
             feed(StopEvent.Result)
         }
@@ -289,9 +297,10 @@ class HeadlessRun(
     }
 
     /**
-     * The descendants seen during this stop, pid to start time. A tool's
-     * process outlives the agent once it is reparented, so the stop ends it by
-     * this list rather than by the tree.
+     * The descendants seen at each turn's end and during a stop, pid to start
+     * time. A tool's process outlives the agent once it is reparented, so the
+     * stop and an exit of the agent's own end it by this list rather than by
+     * the tree.
      */
     private val seen = HashMap<Int, Long>()
 
