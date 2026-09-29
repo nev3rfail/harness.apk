@@ -6,6 +6,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 
 /** An image ready to go as a block: its file under the cache directory, its type and size. */
 data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
@@ -16,15 +17,23 @@ data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
  * at quality 85. An encoding over [IMAGE_BYTES_LIMIT] is encoded again as JPEG.
  * Every JPEG of an image with alpha is composited onto white first. Null when
  * the stream does not decode, or its JPEG is still over the limit; the caller
- * copies it as a file instead.
+ * copies it as a file instead. Cancelling stops the open or the read in flight.
  */
-fun encodeImage(resolver: ContentResolver, stream: HandedStream, into: File): EncodedImage? = runCatching {
-    val source = ImageDecoder.createSource(resolver, Uri.parse(stream.uri))
-    val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-        val (width, height) = targetSize(info.size.width, info.size.height)
-        decoder.setTargetSize(width, height)
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-    }
+suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream, into: File): EncodedImage? = runCatching {
+    // Opened as ImageDecoder's own content source opens it, with a signal the cancel reaches.
+    readShared({ resolver.openTypedAssetFileDescriptor(Uri.parse(stream.uri), "image/*", null, it) }) { descriptor ->
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource { descriptor }) { decoder, info, _ ->
+            val (width, height) = targetSize(info.size.width, info.size.height)
+            decoder.setTargetSize(width, height)
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+    }?.let { encode(it, stream, into) }
+}.getOrElse { failure ->
+    if (failure is CancellationException) throw failure
+    null
+}
+
+private fun encode(bitmap: Bitmap, stream: HandedStream, into: File): EncodedImage? =
     try {
         into.mkdirs()
         val png = stream.type == "image/png"
@@ -42,7 +51,6 @@ fun encodeImage(resolver: ContentResolver, stream: HandedStream, into: File): En
     } finally {
         bitmap.recycle()
     }
-}.getOrNull()
 
 private fun jpeg(bitmap: Bitmap, into: File): File {
     if (!bitmap.hasAlpha()) return write(bitmap, Bitmap.CompressFormat.JPEG, into, "jpg")
