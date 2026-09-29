@@ -1,6 +1,7 @@
 package apk.harness.assist
 
 import android.content.Intent
+import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,10 +22,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import apk.harness.agents.BACKENDS
 import apk.harness.ui.MarkdownDocument
@@ -123,7 +129,31 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
         }
         if (state.nothingCame) Text(NOTHING_CAME, style = MaterialTheme.typography.bodySmall)
     }
+    state.quote?.let { quote ->
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text(quote, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
+        }
+    }
     state.attachments.forEach { Text(it.line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    if (state.copying > 0) {
+        Text(
+            if (state.copying == 1) "Copying 1 file…" else "Copying ${state.copying} files…",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    val context = LocalContext.current
+    state.refused.forEach {
+        val size = it.size?.let { bytes -> " (" + Formatter.formatShortFileSize(context, bytes) + ")" } ?: ""
+        Text("${it.name}$size: ${it.why}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+    }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (state.focusField) LaunchedEffect(Unit) {
+        focus.requestFocus()
+        keyboard?.show()
+        state.focusField = false
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = state.field,
@@ -132,7 +162,7 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
                 if (state.listening) state.voice?.stop()
                 state.field = typed
             },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(focus),
             maxLines = 5,
         )
         IconButton(onClick = { state.mic(host) }) {
