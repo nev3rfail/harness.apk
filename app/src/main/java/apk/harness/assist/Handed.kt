@@ -1,7 +1,11 @@
 package apk.harness.assist
 
-/** One stream handed over: its URI, and what the sender's provider says about it. */
-data class HandedStream(val uri: String, val type: String?, val name: String?, val size: Long?)
+/**
+ * One stream handed over: its URI, and what the sender's provider says about
+ * it. A stream [refused] before any resolver call carries the reason, the URI's
+ * last path segment as its name, and no type or size.
+ */
+data class HandedStream(val uri: String, val type: String?, val name: String?, val size: Long?, val refused: String? = null)
 
 /** What an intent handed over, read out of it and nothing more. */
 data class Handed(

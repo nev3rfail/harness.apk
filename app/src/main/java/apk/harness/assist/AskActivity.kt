@@ -83,7 +83,7 @@ class AskActivity : ComponentActivity(), PanelHost {
                 panel.begin(this)
                 when (intent?.action) {
                     Intent.ACTION_ASSIST -> panel.listenIfGranted()
-                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, contentResolver), ::ownAuthority))
+                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, contentResolver, ::ownAuthority)))
                 }
             }
         }
