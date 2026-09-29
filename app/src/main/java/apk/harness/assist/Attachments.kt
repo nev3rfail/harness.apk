@@ -14,6 +14,16 @@ sealed interface Attachment {
     data class Screenshot(val file: File, val bytes: Long) : Attachment {
         override val line get() = "Screenshot"
     }
+
+    /** A shared image encoded into [file], going as a block. */
+    data class Image(val file: File, val mediaType: String, val bytes: Long, val name: String) : Attachment {
+        override val line get() = "Image: $name"
+    }
+
+    /** A shared file copied into the inbox, named by path in the message. */
+    data class Document(val file: File) : Attachment {
+        override val line get() = "File: ${file.name}"
+    }
 }
 
 /** [pending] with its attachment of [attachment]'s kind replaced by it. */

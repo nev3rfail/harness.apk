@@ -77,12 +77,19 @@ class AskActivity : ComponentActivity(), PanelHost {
         state = when (show) {
             Show.Locked -> PanelState.locked()
             Show.NotStaged -> PanelState.notStaged(this)
-            else -> PanelState().also { it.begin(this); if (intent?.action == Intent.ACTION_ASSIST) it.listenIfGranted() }
+            else -> PanelState().also { panel ->
+                panel.begin(this)
+                when (intent?.action) {
+                    Intent.ACTION_ASSIST -> panel.listenIfGranted()
+                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, contentResolver), ::ownAuthority))
+                }
+            }
         }
-        if (intent?.action in SHARE_ACTIONS) handed = handedOf(intent, contentResolver)
     }
 
-    private var handed: Handed? = null
+    /** Whether [authority] is one of this app's providers, exported or not. */
+    private fun ownAuthority(authority: String): Boolean =
+        packageManager.resolveContentProvider(authority, 0)?.packageName == packageName
 
     override fun onDestroy() {
         unregisterReceiver(screenOff)

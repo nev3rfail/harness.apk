@@ -16,6 +16,13 @@ import apk.harness.agents.HeadlessImage
 import apk.harness.bootstrap.Bootstrap
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** One panel's state. A plain holder: the session provides no ViewModelStoreOwner. */
 class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
@@ -87,27 +94,115 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         otherAppsMic = asksMicForOtherApps(app)
     }
 
+    /** Selected text another app handed over, drawn above the field and quoted in the first message. */
+    var quote by mutableStateOf<String?>(null)
+    /** How many of a share's streams are still being encoded or copied. */
+    var copying by mutableStateOf(0)
+    /** A share's streams not read or not copied, each named with the reason. */
+    var refused by mutableStateOf(listOf<Refusal>())
+    /** Set when the panel opens on a quote: the field takes focus and the keyboard comes up once. */
+    var focusField by mutableStateOf(false)
+    /** The share's directory under the inbox, deleted if the panel goes with nothing sent. */
+    private var inbox: File? = null
+    private var preparing: Job? = null
+    /** A send tapped during the copy, made once it ends. */
+    private var sendWhenReady = false
+
+    /**
+     * Opens on what was handed over: the quote and the field at once, then, on
+     * the IO dispatcher while the activity holds the grant, the images encoded
+     * and the files copied. Nothing is sent until the operator sends.
+     */
+    fun fromShare(context: Context, request: AskRequest) {
+        quote = request.quote
+        field = request.field
+        focusField = request.quote != null
+        refused = request.refused
+        if (request.empty) {
+            notice = NOTHING_SHARED
+            return
+        }
+        val resolver = context.contentResolver
+        val cache = File(context.cacheDir, SHARE_CACHE)
+        val box = File(File(Agent(app).home, ASSISTANT_DIRECTORY), "inbox/${UUID.randomUUID()}").also { inbox = it }
+        copying = request.images.size + request.files.size
+        if (copying == 0) return
+        preparing = Assistant.runs.launch {
+            // Declared outside the try, so a cancelled preparation deletes what it encoded.
+            val encoded = ArrayList<EncodedImage?>()
+            try {
+                request.images.forEach { ensureActive(); encoded += encodeImage(resolver, it, cache) }
+                val split = shareImages(encoded.map { it?.bytes })
+                val blocks = split.blocks.map { request.images[it] to encoded[it]!! }
+                // Past the budget, past the twentieth, or not decodable: copied as files.
+                val asFiles = split.files.map { request.images[it] }
+                split.files.forEach { encoded[it]?.file?.delete() }
+                val copied = copyIn(resolver, asFiles + request.files, box)
+                withContext(Dispatchers.Main) {
+                    attachments = attachments +
+                        blocks.map { (stream, image) -> Attachment.Image(image.file, image.mediaType, image.bytes, safeName(stream.name)) } +
+                        copied.files.map { Attachment.Document(it) }
+                    refused = refused + copied.refused
+                    copying = 0
+                    if (sendWhenReady) {
+                        sendWhenReady = false
+                        send()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                encoded.forEach { it?.file?.delete() }
+                throw cancelled
+            }
+        }
+    }
+
     // `this.field`: a bare `field` in a getter is the backing field.
     val canSend: Boolean get() =
-        gate == Gate.Open && !escalating && !conversation.inFlight && (this.field.isNotBlank() || attachments.isNotEmpty())
+        gate == Gate.Open && !escalating && !conversation.inFlight &&
+            (this.field.isNotBlank() || quote != null || attachments.isNotEmpty() || copying > 0)
 
-    /** The field and the attachments as one message: the screen text first, each its own text block. */
+    /**
+     * The quote, the field, the copied files' paths and the attachments as one
+     * message: the screen text first, each its own text block. During a share's
+     * copy the send waits for it.
+     */
     fun send() {
         if (!canSend) return
+        if (copying > 0) {
+            sendWhenReady = true
+            return
+        }
         val text = field
+        val copiedPaths = attachments.filterIsInstance<Attachment.Document>().map { it.file.absolutePath }
         val screen = attachments.filterIsInstance<Attachment.ScreenText>().firstOrNull()?.let { screenBlock(it.app, it.text) }
-        val shots = attachments.filterIsInstance<Attachment.Screenshot>()
-        conversation = threaded(conversation, ThreadEvent.Sent(text, attachments.map { it.line }))
+        // Screen text is its own block, ahead of the operator's.
+        val texts = listOfNotNull(screen, compose(quote, text, copiedPaths).ifBlank { null })
+        val images = attachments.mapNotNull {
+            when (it) {
+                is Attachment.Screenshot -> HeadlessImage(it.file, "image/jpeg")
+                is Attachment.Image -> HeadlessImage(it.file, it.mediaType)
+                else -> null
+            }
+        }
+        val lines = listOfNotNull(if (quote != null) SELECTED_TEXT else null) + attachments.map { it.line }
+        conversation = threaded(conversation, ThreadEvent.Sent(text, lines))
         field = ""
         notice = null
         voiceProblem = null
         sent = true
-        sentImages = sentImages + shots.map { base64Size(it.bytes) }
+        sentImages = sentImages + attachments.mapNotNull {
+            when (it) {
+                is Attachment.Screenshot -> base64Size(it.bytes)
+                is Attachment.Image -> base64Size(it.bytes)
+                else -> null
+            }
+        }
+        quote = null
         attachments = emptyList()
         screenText = false
         screenshot = false
         nothingCame = false
-        run?.send(listOfNotNull(screen, text.takeIf { it.isNotBlank() }), shots.map { HeadlessImage(it.file, "image/jpeg") })
+        run?.send(texts, images)
     }
 
     /**
@@ -302,11 +397,27 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     }
 
     fun dismiss() {
+        // A share not sent goes with the panel: its copies, and its encoded
+        // images once the preparation has ended. Once sent, the files are the
+        // conversation's.
+        if (!sent && inbox != null) {
+            val job = preparing
+            val box = inbox
+            Assistant.runs.launch {
+                job?.cancelAndJoin()
+                box?.deleteRecursively()
+                withContext(Dispatchers.Main) { attachments }.forEach { (it as? Attachment.Image)?.file?.delete() }
+            }
+        }
         run?.stop(StopKind.Dismiss, sent)
         voice?.destroy()
     }
 
     companion object {
+        const val NOTHING_SHARED = "Nothing came with the share."
+        private const val SELECTED_TEXT = "Selected text"
+        /** Under the cache directory: a share's images, encoded for the message. */
+        private const val SHARE_CACHE = "assist"
         const val NOTHING_OPENS = "Nothing on this phone opens that."
         const val NO_ROOM_FOR_IMAGES = "This conversation holds as many images as it can carry."
 
