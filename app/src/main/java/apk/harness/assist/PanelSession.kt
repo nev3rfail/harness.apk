@@ -254,7 +254,7 @@ class PanelSession(context: Context) :
     private fun drop() {
         val current = state ?: return
         state = null
-        if (current.escalating) current.run?.hidden() else current.dismiss()
+        current.hide()
     }
 
     override fun start(intent: Intent): Boolean =
