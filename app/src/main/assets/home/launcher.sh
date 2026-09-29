@@ -36,6 +36,11 @@ if [ -x "$HARNESS_PREFIX/bin/bash" ]; then
     export SHELL="$HARNESS_HOME/shell.sh"
 fi
 
+# Whether this run has no terminal is the app's to say, so it is read before
+# launcher.local.sh: a HARNESS_HEADLESS_SCRIPT set there names the headless
+# script and never turns a tab headless.
+harness_headless="$HARNESS_HEADLESS_SCRIPT"
+
 # The extension point, sourced with the environment assembled so it has the last
 # word on any of it. Absent by default: nothing stages it, and its absence is how
 # a device says it wants none.
@@ -46,10 +51,11 @@ fi
 # another headless script, as it can another HARNESS_AGENT_SCRIPT.
 # HARNESS_AGENT_ARGS splits into arguments as a tab's does below, and set -f
 # keeps the shell from also expanding them as globs.
-if [ -n "$HARNESS_HEADLESS_SCRIPT" ]; then
+if [ -n "$harness_headless" ]; then
     set -f
-    exec "$HARNESS_HOME/$HARNESS_HEADLESS_SCRIPT" $HARNESS_AGENT_ARGS
+    exec "$HARNESS_HOME/${HARNESS_HEADLESS_SCRIPT:-$harness_headless}" $HARNESS_AGENT_ARGS
 fi
+unset harness_headless HARNESS_HEADLESS_SCRIPT
 
 # Run the agent rather than become it: exec would take the pty down on its exit.
 #
