@@ -19,6 +19,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -173,6 +174,9 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             } catch (cancelled: CancellationException) {
                 encoded.forEach { it?.file?.delete() }
                 throw cancelled
+            } finally {
+                // However the preparation ends, a send no longer waits for it.
+                withContext(NonCancellable + Dispatchers.Main) { copying = 0 }
             }
         }
     }
