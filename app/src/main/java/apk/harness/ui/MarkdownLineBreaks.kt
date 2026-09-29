@@ -41,8 +41,12 @@ private val BREAK_TAG = Regex("""<\s*br\s*/?\s*>""", RegexOption.IGNORE_CASE)
  * own. The newline of a wrapped line adds the space the two lines are joined by,
  * unless the continuation line is indented, in which case that indent is drawn
  * as the space instead.
+ *
+ * With [hard], each newline is a line break instead, for text written as lines
+ * rather than wrapped, such as an answer in the panel; the indent of the line
+ * after it is not drawn.
  */
-fun lineBreakText(node: ASTNode, content: CharSequence, written: Boolean): String? {
+fun lineBreakText(node: ASTNode, content: CharSequence, written: Boolean, hard: Boolean = false): String? {
     if (isBreakTag(node, content)) return "\n"
     if (node.type == MarkdownTokenTypes.HARD_LINE_BREAK) return ""
     if (!isSpace(node)) return null
@@ -53,6 +57,8 @@ fun lineBreakText(node: ASTNode, content: CharSequence, written: Boolean): Strin
     val after = siblings.getOrNull(at + 1)
     return when {
         isBreakTag(before, content) || isBreakTag(after, content) -> ""
+        hard && node.type == MarkdownTokenTypes.EOL -> if (written) "\n" else ""
+        hard && before?.type == MarkdownTokenTypes.EOL -> ""
         node.type == MarkdownTokenTypes.EOL && after?.type == MarkdownTokenTypes.WHITE_SPACE -> ""
         !written -> ""
         else -> " "
@@ -67,10 +73,10 @@ private fun isBreakTag(node: ASTNode?, content: CharSequence): Boolean =
         node.type == MarkdownTokenTypes.HTML_TAG &&
         BREAK_TAG.matches(content.subSequence(node.startOffset, node.endOffset))
 
-/** The renderer's inline hook, answering line breaks and leaving the rest alone. */
+/** The renderer's inline hook, answering line breaks, each newline one with [hard], and leaving the rest alone. */
 @Composable
-fun lineBreakAnnotator(): MarkdownAnnotator = markdownAnnotator { content, child ->
-    val text = lineBreakText(child, content, length > 0) ?: return@markdownAnnotator false
+fun lineBreakAnnotator(hard: Boolean = false): MarkdownAnnotator = markdownAnnotator { content, child ->
+    val text = lineBreakText(child, content, length > 0, hard) ?: return@markdownAnnotator false
     append(text)
     true
 }
