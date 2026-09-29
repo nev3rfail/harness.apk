@@ -434,9 +434,28 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     }
 
     fun dismiss() {
-        // A share not sent goes with the panel: its copies and its encoded
-        // images, now and again once the preparation has ended. Once sent, the
-        // files are the conversation's.
+        dropUnsentShare()
+        run?.stop(StopKind.Dismiss, sent)
+        voice?.destroy()
+    }
+
+    /**
+     * Home, the lock screen or the host going: an escalation carries on to its
+     * stop and opens no tab, anything else is a dismiss. The share not sent
+     * goes either way.
+     */
+    fun hide() {
+        if (!escalating) return dismiss()
+        dropUnsentShare()
+        run?.hidden()
+    }
+
+    /**
+     * A share not sent goes with the panel: its copies and its encoded images,
+     * now and again once the preparation has ended. Once sent, the files are
+     * the conversation's.
+     */
+    private fun dropUnsentShare() {
         if (!sent && inbox != null) {
             val job = preparing
             // The mark last, so a panel gone before the delete ends leaves the rest to the next clear.
@@ -447,8 +466,6 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             job?.invokeOnCompletion { Assistant.runs.launch { directories.forEach { it.deleteRecursively() } } }
         }
         shareId?.let { Assistant.sharesInUse -= it }
-        run?.stop(StopKind.Dismiss, sent)
-        voice?.destroy()
     }
 
     companion object {

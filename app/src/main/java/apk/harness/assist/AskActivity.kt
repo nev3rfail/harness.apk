@@ -158,7 +158,7 @@ class AskActivity : ComponentActivity(), PanelHost {
         // A recreation the configChanges do not absorb hands the panel and its
         // run to the new instance; any other end stops it.
         if (isChangingConfigurations) Assistant.recreated = state
-        else state?.let { if (it.escalating) it.run?.hidden() else it.dismiss() }
+        else state?.hide()
         state = null
         super.onDestroy()
     }
@@ -170,7 +170,7 @@ class AskActivity : ComponentActivity(), PanelHost {
 
     /** Ends the panel as a hide does: an escalation reaches its stop, anything else is dismissed. */
     private fun end() {
-        state?.let { if (it.escalating) it.run?.hidden() else it.dismiss() }
+        state?.hide()
         state = null
         finish()
     }
