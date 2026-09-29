@@ -57,6 +57,18 @@ class PanelStateTest {
     }
 
     @Test
+    fun `a send with no run deletes the image files it would have written`() {
+        val state = PanelState()
+        val image = Attachment.Image(folder.newFile("a.jpg"), "image/jpeg", 10, "a.jpg")
+        val screenshot = shot("1.jpg")
+        state.screenshotCame(screenshot)
+        state.attachments = state.attachments + image
+        state.field = "look"
+        state.send()
+        assertFalse(image.file.exists() || screenshot.file.exists())
+    }
+
+    @Test
     fun `a delivery to a panel that is not open is dropped with its file`() {
         val state = PanelState.locked()
         val screenshot = shot("1.jpg")

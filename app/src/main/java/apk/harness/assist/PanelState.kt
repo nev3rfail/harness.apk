@@ -212,7 +212,8 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         screenText = false
         screenshot = false
         nothingCame = false
-        run?.send(texts, images)
+        // The run deletes the image files once written; with none, they go here.
+        run?.send(texts, images) ?: images.forEach { it.file.delete() }
     }
 
     /**
