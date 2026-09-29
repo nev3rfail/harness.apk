@@ -149,6 +149,15 @@ class AskRequestTest {
     }
 
     @Test
+    fun `shared text and subject longer than the limit are cut with the line saying so`() {
+        val long = "x".repeat(QUOTE_LIMIT + 5)
+        val cut = "x".repeat(QUOTE_LIMIT) + "\n" + QUOTE_CUT
+        assertEquals(cut, askRequest(Handed(ACTION_SEND, text = long)).field)
+        assertEquals("$cut\nbody", askRequest(Handed(ACTION_SEND, text = "body", subject = long)).field)
+        assertEquals(cut, askRequest(Handed(ACTION_SEND, clipText = long)).field)
+    }
+
+    @Test
     fun `blank text and subject are absent`() {
         assertTrue(askRequest(Handed(ACTION_SEND, text = "  ", subject = "")).empty)
         assertEquals("body", askRequest(Handed(ACTION_SEND, text = "body", subject = " ")).field)

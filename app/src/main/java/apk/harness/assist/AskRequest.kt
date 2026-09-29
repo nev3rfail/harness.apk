@@ -58,8 +58,8 @@ fun askRequest(handed: Handed): AskRequest {
     if (handed.action == ACTION_PROCESS_TEXT) {
         return AskRequest(handed.selected?.takeIf { it.isNotBlank() }, "", emptyList(), emptyList())
     }
-    val text = (handed.text ?: handed.clipText)?.takeIf { it.isNotBlank() }
-    val subject = handed.subject?.takeIf { it.isNotBlank() }
+    val text = (handed.text ?: handed.clipText)?.takeIf { it.isNotBlank() }?.let(::cutWithLine)
+    val subject = handed.subject?.takeIf { it.isNotBlank() }?.let(::cutWithLine)
     val (refusedStreams, streams) = handed.streams.partition { it.refused != null }
     val refused = refusedStreams.map { Refusal(it.name ?: "shared", it.refused!!, it.size) }
     val (images, files) = streams.partition { it.type?.startsWith("image/") == true }

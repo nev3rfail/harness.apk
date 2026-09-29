@@ -1,6 +1,6 @@
 package apk.harness.assist
 
-/** Selected text quoted in full up to this many characters. */
+/** Selected or shared text kept in full up to this many characters. */
 const val QUOTE_LIMIT = 100_000
 const val QUOTE_CUT = "[the selection was longer; the rest was cut]"
 
@@ -11,15 +11,19 @@ const val QUOTE_CUT = "[the selection was longer; the rest was cut]"
  */
 fun compose(quote: String?, text: String, files: List<String>): String = buildList {
     if (quote != null) {
-        val cut = quote.length > QUOTE_LIMIT
-        add("Selected text:\n" + fenced(if (cut) cutQuote(quote) else quote) + if (cut) "\n$QUOTE_CUT" else "")
+        add("Selected text:\n" + fenced(cutToLimit(quote)) + if (quote.length > QUOTE_LIMIT) "\n$QUOTE_CUT" else "")
     }
     if (text.isNotBlank()) add(text)
     if (files.isNotEmpty()) add(files.joinToString("\n") { "Attached: $it" })
 }.joinToString("\n\n")
 
-private fun cutQuote(quote: String): String {
+/** [text] cut to [QUOTE_LIMIT] characters without splitting a surrogate pair. */
+fun cutToLimit(text: String): String {
+    if (text.length <= QUOTE_LIMIT) return text
     var end = QUOTE_LIMIT
-    if (Character.isHighSurrogate(quote[end - 1])) end--
-    return quote.substring(0, end)
+    if (Character.isHighSurrogate(text[end - 1])) end--
+    return text.substring(0, end)
 }
+
+/** [text], cut to [QUOTE_LIMIT] with the [QUOTE_CUT] line after it when longer. */
+fun cutWithLine(text: String): String = if (text.length > QUOTE_LIMIT) cutToLimit(text) + "\n" + QUOTE_CUT else text

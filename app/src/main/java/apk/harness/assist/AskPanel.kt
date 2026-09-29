@@ -131,7 +131,8 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
     }
     state.quote?.let { quote ->
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Text(quote, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
+            // The message carries the same cut; the panel lays out no more than it.
+            Text(remember(quote) { cutToLimit(quote) }, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
         }
     }
     state.attachments.forEach { Text(it.line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }

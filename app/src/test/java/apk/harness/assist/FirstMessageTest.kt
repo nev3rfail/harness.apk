@@ -37,4 +37,11 @@ class FirstMessageTest {
         assertFalse(message.contains("\uD83D\n"))
         assertTrue(message.contains("a".repeat(QUOTE_LIMIT - 1) + "\n```"))
     }
+
+    @Test
+    fun `a text within the limit is not cut, and a longer one is cut to it`() {
+        assertEquals("short", cutToLimit("short"))
+        assertEquals("x".repeat(QUOTE_LIMIT), cutToLimit("x".repeat(QUOTE_LIMIT + 1)))
+        assertEquals("a".repeat(QUOTE_LIMIT - 1), cutToLimit("a".repeat(QUOTE_LIMIT - 1) + "😀"))
+    }
 }
