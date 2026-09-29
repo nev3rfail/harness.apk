@@ -33,7 +33,7 @@ class StopTest {
     @Test
     fun `an idle escalation closes stdin, waits for the roster once the process exits, then opens the tab`() {
         assertEquals(
-            listOf(CloseStdin, After(3_000, 1), Settle(id), Open(id), Dismiss),
+            listOf(CloseStdin, After(3_000, 1), Settle(id), Open(id)),
             run(escalate(), StopEvent.Begin, StopEvent.Exited, StopEvent.Settled),
         )
     }
@@ -41,7 +41,7 @@ class StopTest {
     @Test
     fun `a turn in flight is interrupted and given 4 s for its result`() {
         assertEquals(
-            listOf(Interrupt, After(4_000, 1), CloseStdin, After(3_000, 2), Settle(id), Open(id), Dismiss),
+            listOf(Interrupt, After(4_000, 1), CloseStdin, After(3_000, 2), Settle(id), Open(id)),
             run(escalate(inFlight = true), StopEvent.Begin, StopEvent.Result, StopEvent.Exited, StopEvent.Settled),
         )
     }
@@ -69,22 +69,15 @@ class StopTest {
 
     @Test
     fun `a process already dead goes straight to the roster wait`() {
-        assertEquals(listOf(Settle(id), Open(id), Dismiss), run(escalate(alive = false), StopEvent.Begin, StopEvent.Settled))
+        assertEquals(listOf(Settle(id), Open(id)), run(escalate(alive = false), StopEvent.Begin, StopEvent.Settled))
     }
 
     @Test
     fun `a panel that sent nothing opens the tab with no session`() {
         assertEquals(
-            listOf(CloseStdin, After(3_000, 1), Settle(null), Open(null), Dismiss),
+            listOf(CloseStdin, After(3_000, 1), Settle(null), Open(null)),
             run(escalate(sessionId = null), StopEvent.Begin, StopEvent.Exited, StopEvent.Settled),
         )
-    }
-
-    @Test
-    fun `back during the stop is ignored`() {
-        val (state, actions) = escalation(escalate(), StopEvent.Begin)
-        assertEquals(state to emptyList<StopAction>(), escalation(state, StopEvent.Back))
-        assertEquals(listOf(CloseStdin, After(3_000, 1)), actions)
     }
 
     @Test
@@ -122,7 +115,7 @@ class StopTest {
     @Test
     fun `an exit during the interrupt goes to the roster wait`() {
         assertEquals(
-            listOf(Interrupt, After(4_000, 1), Settle(id), Open(id), Dismiss),
+            listOf(Interrupt, After(4_000, 1), Settle(id), Open(id)),
             run(escalate(inFlight = true), StopEvent.Begin, StopEvent.Exited, StopEvent.Settled),
         )
     }

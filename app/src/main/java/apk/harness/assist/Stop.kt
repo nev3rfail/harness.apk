@@ -26,7 +26,6 @@ sealed interface StopEvent {
     data object Settled : StopEvent
     /** Home or the lock screen hid the panel. */
     data object Hidden : StopEvent
-    data object Back : StopEvent
 }
 
 sealed interface StopAction {
@@ -37,8 +36,8 @@ sealed interface StopAction {
     data class After(val millis: Long, val generation: Int) : StopAction
     /** Wait, up to 1 s, for the roster to stop naming [sessionId], then report Settled. */
     data class Settle(val sessionId: String?) : StopAction
+    /** Opens the tab on [sessionId], then dismisses the panel. */
     data class Open(val sessionId: String?) : StopAction
-    data object Dismiss : StopAction
 }
 
 // 4 + 3 + 2 s, and the 1 s roster wait (HeadlessRun.settle): at most 10 s.
@@ -52,13 +51,13 @@ const val KILL_WAIT = 2_000L
  * in flight interrupted and given 4 s for its result, stdin closed and 3 s to
  * exit, SIGTERM and 2 s, SIGKILL -- waits for the roster to let the
  * conversation go, and then opens the tab and dismisses the panel. A hide
- * before the tab opens turns it into a dismiss; back is ignored.
+ * before the tab opens turns it into a dismiss.
  */
 fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAction>> {
     if (state.phase == StopState.Phase.Done) return state to emptyList()
     val none = state to emptyList<StopAction>()
     if (state.phase == StopState.Phase.Settling) return when (event) {
-        StopEvent.Settled -> state.copy(phase = StopState.Phase.Done) to listOf(StopAction.Open(state.sessionId), StopAction.Dismiss)
+        StopEvent.Settled -> state.copy(phase = StopState.Phase.Done) to listOf(StopAction.Open(state.sessionId))
         StopEvent.Hidden -> state.copy(kind = StopKind.Dismiss, phase = StopState.Phase.Done) to emptyList()
         else -> none
     }
@@ -79,7 +78,7 @@ fun escalation(state: StopState, event: StopEvent): Pair<StopState, List<StopAct
             else -> none
         }
         StopEvent.Hidden -> if (state.kind == StopKind.Dismiss) none else hide(state.copy(kind = StopKind.Dismiss))
-        StopEvent.Settled, StopEvent.Back -> none
+        StopEvent.Settled -> none
     }
 }
 
