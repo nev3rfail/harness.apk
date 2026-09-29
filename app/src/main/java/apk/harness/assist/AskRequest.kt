@@ -80,3 +80,13 @@ fun shareImages(encoded: List<Long?>): ShareImages {
     val blocks = split.blocks.map { decoded[it] }
     return ShareImages(blocks, encoded.indices.filter { it !in blocks })
 }
+
+/**
+ * Whether an image encoded after [encoded] could still go as a block: fewer
+ * than twenty are blocks and none that decoded went past the budget. Past
+ * that, the share's other images are copied as files without being encoded.
+ */
+fun roomForBlocks(encoded: List<Long?>): Boolean {
+    val split = shareImages(encoded)
+    return split.blocks.size < MESSAGE_IMAGES && split.files.all { encoded[it] == null }
+}

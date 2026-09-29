@@ -130,11 +130,16 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             // Declared outside the try, so a cancelled preparation deletes what it encoded.
             val encoded = ArrayList<EncodedImage?>()
             try {
-                request.images.forEach { ensureActive(); encoded += encodeImage(resolver, it, cache) }
+                for (image in request.images) {
+                    if (!roomForBlocks(encoded.map { it?.bytes })) break
+                    ensureActive()
+                    encoded += encodeImage(resolver, image, cache)
+                }
                 val split = shareImages(encoded.map { it?.bytes })
                 val blocks = split.blocks.map { request.images[it] to encoded[it]!! }
-                // Past the budget, past the twentieth, or not decodable: copied as files.
-                val asFiles = split.files.map { request.images[it] }
+                // Past the budget, past the twentieth, or not decodable: copied as
+                // files, with the ones never encoded.
+                val asFiles = split.files.map { request.images[it] } + request.images.drop(encoded.size)
                 split.files.forEach { encoded[it]?.file?.delete() }
                 val copied = copyIn(resolver, asFiles + request.files, box)
                 withContext(Dispatchers.Main) {

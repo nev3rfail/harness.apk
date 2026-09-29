@@ -1,6 +1,7 @@
 package apk.harness.assist
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -73,6 +74,18 @@ class AskRequestTest {
     @Test
     fun `an image that did not decode goes as a file, in its place`() {
         assertEquals(ShareImages(listOf(0, 2), listOf(1)), shareImages(listOf(1000L, null, 1000L)))
+    }
+
+    @Test
+    fun `encoding stops once twenty are blocks or the budget is spent`() {
+        assertTrue(roomForBlocks(emptyList()))
+        assertTrue(roomForBlocks(List(19) { 1000L }))
+        assertFalse(roomForBlocks(List(20) { 1000L }))
+        // Six of 2.4 MiB fit the budget; the seventh crosses it.
+        assertTrue(roomForBlocks(List(6) { 2_516_583L }))
+        assertFalse(roomForBlocks(List(7) { 2_516_583L }))
+        // One that did not decode spends nothing.
+        assertTrue(roomForBlocks(listOf(1000L, null)))
     }
 
     @Test
