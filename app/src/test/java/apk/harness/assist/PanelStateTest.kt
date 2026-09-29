@@ -39,6 +39,24 @@ class PanelStateTest {
     }
 
     @Test
+    fun `a removed attachment goes with its file, and a removed screen attachment turns its chip off`() {
+        val state = PanelState()
+        val image = Attachment.Image(folder.newFile("a.jpg"), "image/jpeg", 10, "a.jpg")
+        val document = Attachment.Document(folder.newFile("b.pdf"))
+        val screenshot = shot("1.jpg")
+        state.screenshotCame(screenshot)
+        state.screenTextCame(Attachment.ScreenText("Chrome", "text"))
+        state.attachments = state.attachments + image + document
+        state.remove(image)
+        state.remove(document)
+        state.remove(screenshot)
+        state.remove(Attachment.ScreenText("Chrome", "text"))
+        assertFalse(image.file.exists() || document.file.exists() || screenshot.file.exists())
+        assertEquals(emptyList<Attachment>(), state.attachments)
+        assertFalse(state.screenText || state.screenshot)
+    }
+
+    @Test
     fun `a delivery to a panel that is not open is dropped with its file`() {
         val state = PanelState.locked()
         val screenshot = shot("1.jpg")
