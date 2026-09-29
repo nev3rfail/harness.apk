@@ -14,7 +14,13 @@ const val OPENS_WITHOUT_GRANT = "this app could open it without the sharing app'
 /** At most this many of a share's streams are decided and read. */
 const val STREAM_LIMIT = 100
 
-/** What the panel opens with. Nothing is sent until the operator sends. */
+/**
+ * What the panel opens with. Nothing is sent until the operator sends. Each of
+ * [streams] passed [streamRefusal]: a `content:` URI that reads the same once
+ * printed and parsed, of another app's provider, in `ClipData` under the
+ * grant flag, and allowed by the sender's-access question the activity asks.
+ * Its type, name and size are not known yet.
+ */
 data class AskRequest<out U>(
     /** Selected text, drawn above the field. */
     val quote: String?,
@@ -38,11 +44,13 @@ fun <U> decided(named: List<Pair<U, Boolean>>, refusal: (U, Boolean) -> String?)
     named.mapIndexed { index, (uri, granted) -> uri to if (index >= STREAM_LIMIT) TOO_MANY else refusal(uri, granted) }
 
 /**
- * The stream URIs a share names, [clip] first, each with whether it came
- * under the sender's grant. `FLAG_GRANT_READ_URI_PERMISSION` grants the
- * `ClipData` URIs, once the platform has checked the sender may grant them,
- * and the platform fills `ClipData` from `EXTRA_STREAM` for a `SEND` or
- * `SEND_MULTIPLE`; a URI only in [extras] comes with no grant.
+ * The stream URIs a share names, [clip] first, each with whether it counts as
+ * granted: a `ClipData` URI of an intent [flagged] with
+ * `FLAG_GRANT_READ_URI_PERMISSION`. The platform fills `ClipData` from
+ * `EXTRA_STREAM` for an ordinary `SEND` or `SEND_MULTIPLE`; a URI only in
+ * [extras] counts as not granted. The flag says only that the sender asked for
+ * a grant, not that the sender may read the URI itself; [streamRefusal] asks
+ * that last.
  */
 fun <U> sharedUris(extras: List<U>, clip: List<U>, flagged: Boolean): List<Pair<U, Boolean>> =
     (clip + extras).distinct().map { it to (flagged && it in clip) }
