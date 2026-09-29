@@ -119,7 +119,7 @@ suspend fun <T> closedOnCancel(resource: Closeable, block: suspend () -> T): T =
     }
 }
 
-private fun refusal(stream: HandedStream, why: String) = Refusal(safeName(stream.name), why, stream.size)
+private fun refusal(stream: HandedStream, why: String) = Refusal(safeName(stream.name), why, stream.size?.takeIf { it >= 0 })
 
 private const val CHUNK = 64 * 1024
 private const val OVER = "over the limit of 100 MB a file and 500 MB a share; not copied"
