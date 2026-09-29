@@ -100,3 +100,10 @@ class Voice(
         const val STOPPED = "The speech recognizer stopped (error %d)."
     }
 }
+
+/** The field during a listen: what is [heard] after what was [typed] before the listen began. */
+fun afterTyped(typed: String, heard: String): String = when {
+    typed.isBlank() -> heard
+    heard.isEmpty() -> typed
+    else -> typed.trimEnd() + " " + heard
+}

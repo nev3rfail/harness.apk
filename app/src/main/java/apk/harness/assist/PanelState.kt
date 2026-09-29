@@ -38,6 +38,8 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var voiceProblem by mutableStateOf<String?>(null)
     /** The microphone denied for good: only the app's settings can grant it now. */
     var micBlocked by mutableStateOf(false)
+    /** The field when the listen began; what is heard goes after it. */
+    private var typedBeforeListen = ""
     /** Whether a grant from the mic disclosure starts a listen; one for other apps' voice input does not. */
     private var listenOnGrant = true
     /** This summon's open request for screen context; a delivery outside one is dropped. */
@@ -84,10 +86,13 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         voice?.destroy()
         voice = Voice(
             app,
-            onPartial = { field = it },
-            onFinal = { field = it; send() },
+            onPartial = { field = afterTyped(typedBeforeListen, it) },
+            onFinal = { field = afterTyped(typedBeforeListen, it); send() },
             onProblem = { voiceProblem = it },
-            onListening = { listening = it },
+            onListening = {
+                if (it && !listening) typedBeforeListen = field
+                listening = it
+            },
         )
         otherAppsMic = asksMicForOtherApps(app)
     }
