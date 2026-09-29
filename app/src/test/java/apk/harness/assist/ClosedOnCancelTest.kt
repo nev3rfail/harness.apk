@@ -36,6 +36,41 @@ class ClosedOnCancelTest {
         assertEquals(0, stuck.closed.count)
     }
 
+    /** A resource that counts its closes. */
+    private class Counted : Closeable {
+        var closes = 0
+        override fun close() { closes++ }
+    }
+
+    @Test
+    fun `an open that returns after the cancel has its resource closed`() = runBlocking {
+        val signal = Counted()
+        val opened = Counted()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val job = launch(Dispatchers.IO) {
+            openedUnlessCancelled(signal) {
+                entered.countDown()
+                // An open that ignores the signal and returns once it is let go.
+                release.await()
+                opened
+            }
+        }
+        assertTrue(entered.await(2, TimeUnit.SECONDS))
+        job.cancel()
+        withTimeout(2000) { while (signal.closes == 0) kotlinx.coroutines.delay(10) }
+        release.countDown()
+        withTimeout(2000) { job.join() }
+        assertEquals(1, opened.closes)
+    }
+
+    @Test
+    fun `an open that ends returns its resource open`() = runBlocking {
+        val opened = Counted()
+        assertEquals(opened, openedUnlessCancelled(Counted()) { opened })
+        assertEquals(0, opened.closes)
+    }
+
     @Test
     fun `a read that ends returns its value and leaves the resource open`() = runBlocking {
         val stuck = Stuck()
