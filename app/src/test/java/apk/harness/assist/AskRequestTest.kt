@@ -1,13 +1,14 @@
 package apk.harness.assist
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AskRequestTest {
 
     /** This app's own authority, as the activity answers it from resolveContentProvider. */
-    private fun askRequest(handed: Handed) = askRequest(handed) { it == "btl.harness.files" }
+    private val isOwn = { authority: String -> authority == "dev.harness.files" }
 
     private fun image(n: Int) = HandedStream("content://media/external/images/media/$n", "image/jpeg", "IMG_$n.jpg", 1000)
     private val pdf = HandedStream("content://files/doc/1", "application/pdf", "a.pdf", 5000)
@@ -80,20 +81,45 @@ class AskRequestTest {
     }
 
     @Test
-    fun `a stream that is not a content uri is refused with its reason`() {
-        val file = HandedStream("file:///data/data/btl.harness/files/.claude/.credentials.json", null, null, null)
-        val request = askRequest(Handed(ACTION_SEND, streams = listOf(file)))
-        assertTrue(request.empty)
-        assertEquals(listOf(Refusal("file:///data/data/btl.harness/files/.claude/.credentials.json", NOT_SHARED, null)), request.refused)
+    fun `a refused stream is named with its reason and not attached`() {
+        val own = HandedStream("content://dev.harness.files/agent/.claude/.credentials.json", null, "_credentials.json", null, OWN_FILES)
+        val request = askRequest(Handed(ACTION_SEND, text = "look", streams = listOf(own)))
+        assertEquals(emptyList<HandedStream>(), request.files)
+        assertEquals(listOf(Refusal("_credentials.json", OWN_FILES, null)), request.refused)
+        assertEquals("look", request.field)
     }
 
     @Test
-    fun `a stream of this app's own authority is refused with its reason`() {
-        val own = HandedStream("content://btl.harness.files/agent/.claude/.credentials.json", null, ".credentials.json", 400)
-        val request = askRequest(Handed(ACTION_SEND, text = "look", streams = listOf(own)))
-        assertEquals(emptyList<HandedStream>(), request.files)
-        assertEquals(listOf(Refusal(".credentials.json", OWN_FILES, 400)), request.refused)
-        assertEquals("look", request.field)
+    fun `a scheme other than content is refused`() {
+        assertEquals(NOT_SHARED, streamRefusal("file", null, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal(null, null, isOwn))
+        // content:foo has no authority.
+        assertEquals(NOT_SHARED, streamRefusal("content", null, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("content", "", isOwn))
+    }
+
+    /**
+     * Each form with the scheme and the decoded authority android.net.Uri reads
+     * from it, which the resolver opens the provider by.
+     */
+    @Test
+    fun `this app's own authority is refused in every form the resolver opens it by`() {
+        val forms = listOf(
+            "content://dev.harness.files/agent/x" to "dev.harness.files",
+            "content://dev.harness%2Efiles/agent/x" to "dev.harness.files",
+            "content://0@dev.harness.files/agent/x" to "0@dev.harness.files",
+            "content://10@dev.harness.files/agent/x" to "10@dev.harness.files",
+            "content://dev.harness.files?/agent/x" to "dev.harness.files",
+            "content://dev.harness.files#/agent/x" to "dev.harness.files",
+        )
+        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, isOwn))
+        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", isOwn))
+    }
+
+    @Test
+    fun `another app's authority is read`() {
+        assertNull(streamRefusal("content", "com.android.providers.media.documents", isOwn))
+        assertNull(streamRefusal("content", "10@media", isOwn))
     }
 
     @Test
