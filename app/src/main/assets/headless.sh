@@ -2,8 +2,9 @@
 # How the agent is started with no terminal, for the panel over another app.
 #
 # Do not edit: the app rewrites this file on every start, and keeps a copy that
-# differed from the shipped one as headless.sh.bak. To start it another way, set
-# HARNESS_HEADLESS_SCRIPT in launcher.local.sh to a script of your own.
+# differed from the shipped one as headless.sh.bak. To start it another way, put
+# a script of your own in the home and set HARNESS_HEADLESS_SCRIPT to its name
+# in launcher.local.sh; the launcher runs it only for a run with no terminal.
 #
 # No --ide: the home tab's editor advertises the home, and the panel's directory
 # lies under it. No --continue guard: the panel always names its conversation.
