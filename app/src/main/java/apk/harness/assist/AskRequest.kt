@@ -6,15 +6,16 @@ data class Refusal(val name: String, val why: String, val size: Long?)
 const val NOT_SHARED = "not a file another app shared; not read"
 const val OWN_FILES = "one of this app's own files; not read"
 const val NOT_GRANTED = "the sharing app did not grant access to this file; not read"
+const val NOT_AS_WRITTEN = "its address reads as another file once written out; not read"
 
 /** What the panel opens with. Nothing is sent until the operator sends. */
-data class AskRequest(
+data class AskRequest<out U>(
     /** Selected text, drawn above the field. */
     val quote: String?,
     val field: String,
-    val images: List<HandedStream>,
+    val images: List<HandedStream<U>>,
     /** Every other stream, copied into the inbox and named by path. */
-    val files: List<HandedStream>,
+    val files: List<HandedStream<U>>,
     val refused: List<Refusal> = emptyList(),
 ) {
     // `this.field`: a bare `field` in a getter is the backing field.
@@ -28,7 +29,7 @@ data class AskRequest(
  * and the platform fills `ClipData` from `EXTRA_STREAM` for a `SEND` or
  * `SEND_MULTIPLE`; a URI only in [extras] comes with no grant.
  */
-fun sharedUris(extras: List<String>, clip: List<String>, flagged: Boolean): List<Pair<String, Boolean>> =
+fun <U> sharedUris(extras: List<U>, clip: List<U>, flagged: Boolean): List<Pair<U, Boolean>> =
     (clip + extras).distinct().map { it to (flagged && it in clip) }
 
 /**
@@ -41,12 +42,16 @@ fun sharedUris(extras: List<String>, clip: List<String>, flagged: Boolean): List
  * files -- rather than the sender's. The resolver opens a provider by the
  * decoded authority with any `<userId>@` prefix dropped, as
  * `ContentProvider.getAuthorityWithoutUserId` drops it, so the check takes the
- * same one.
+ * same one. A URI not [asWritten] -- one whose string, parsed again, differs
+ * in scheme, authority, path or query, as a `Uri` built with a `/` in its
+ * authority does -- is refused before any other question, since the platform
+ * checks grants against the parsed string.
  */
-fun streamRefusal(scheme: String?, authority: String?, granted: Boolean, isOwn: (authority: String) -> Boolean): String? {
+fun streamRefusal(scheme: String?, authority: String?, granted: Boolean, isOwn: (authority: String) -> Boolean, asWritten: Boolean): String? {
     val provider = authority?.substringAfterLast('@')
     return when {
         !scheme.equals("content", ignoreCase = true) || provider.isNullOrEmpty() -> NOT_SHARED
+        !asWritten -> NOT_AS_WRITTEN
         isOwn(provider) -> OWN_FILES
         !granted -> NOT_GRANTED
         else -> null
@@ -54,7 +59,7 @@ fun streamRefusal(scheme: String?, authority: String?, granted: Boolean, isOwn: 
 }
 
 /** [handed] as the panel's opening state; each stream [HandedStream.refused] is named with its reason. */
-fun askRequest(handed: Handed): AskRequest {
+fun <U> askRequest(handed: Handed<U>): AskRequest<U> {
     if (handed.action == ACTION_PROCESS_TEXT) {
         return AskRequest(handed.selected?.takeIf { it.isNotBlank() }, "", emptyList(), emptyList())
     }

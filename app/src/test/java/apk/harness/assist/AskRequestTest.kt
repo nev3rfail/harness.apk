@@ -16,44 +16,44 @@ class AskRequestTest {
 
     @Test
     fun `selected text is a quote with the field empty`() {
-        val request = askRequest(Handed(ACTION_PROCESS_TEXT, selected = "the selection"))
+        val request = askRequest(Handed<String>(ACTION_PROCESS_TEXT, selected = "the selection"))
         assertEquals("the selection", request.quote)
         assertEquals("", request.field)
     }
 
     @Test
     fun `shared text fills the field, the subject on its own line first`() {
-        assertEquals("Title\nbody", askRequest(Handed(ACTION_SEND, text = "body", subject = "Title")).field)
-        assertEquals("body", askRequest(Handed(ACTION_SEND, text = "body")).field)
+        assertEquals("Title\nbody", askRequest(Handed<String>(ACTION_SEND, text = "body", subject = "Title")).field)
+        assertEquals("body", askRequest(Handed<String>(ACTION_SEND, text = "body")).field)
     }
 
     @Test
     fun `a shared link fills the field`() {
-        assertEquals("https://example.org/a", askRequest(Handed(ACTION_SEND, text = "https://example.org/a")).field)
+        assertEquals("https://example.org/a", askRequest(Handed<String>(ACTION_SEND, text = "https://example.org/a")).field)
     }
 
     @Test
     fun `one image is an image attachment`() {
-        assertEquals(listOf(image(1)), askRequest(Handed(ACTION_SEND, streams = listOf(image(1)))).images)
+        assertEquals(listOf(image(1)), askRequest(Handed<String>(ACTION_SEND, streams = listOf(image(1)))).images)
     }
 
     @Test
     fun `images and a pdf in one share are split into images and files`() {
-        val request = askRequest(Handed(ACTION_SEND_MULTIPLE, streams = listOf(image(1), pdf, image(2))))
+        val request = askRequest(Handed<String>(ACTION_SEND_MULTIPLE, streams = listOf(image(1), pdf, image(2))))
         assertEquals(listOf(image(1), image(2)), request.images)
         assertEquals(listOf(pdf), request.files)
     }
 
     @Test
     fun `text and an image stream in one send are both kept`() {
-        val request = askRequest(Handed(ACTION_SEND, text = "a page", streams = listOf(image(1))))
+        val request = askRequest(Handed<String>(ACTION_SEND, text = "a page", streams = listOf(image(1))))
         assertEquals("a page", request.field)
         assertEquals(listOf(image(1)), request.images)
     }
 
     @Test
     fun `text only in the clip data fills the field`() {
-        assertEquals("clipped", askRequest(Handed(ACTION_SEND, clipText = "clipped")).field)
+        assertEquals("clipped", askRequest(Handed<String>(ACTION_SEND, clipText = "clipped")).field)
     }
 
     @Test
@@ -90,25 +90,25 @@ class AskRequestTest {
 
     @Test
     fun `nothing usable is an empty request`() {
-        assertTrue(askRequest(Handed(ACTION_SEND)).empty)
+        assertTrue(askRequest(Handed<String>(ACTION_SEND)).empty)
     }
 
     @Test
     fun `a refused stream is named with its reason and not attached`() {
         val own = HandedStream("content://dev.harness.files/agent/.claude/.credentials.json", null, "_credentials.json", null, OWN_FILES)
-        val request = askRequest(Handed(ACTION_SEND, text = "look", streams = listOf(own)))
-        assertEquals(emptyList<HandedStream>(), request.files)
+        val request = askRequest(Handed<String>(ACTION_SEND, text = "look", streams = listOf(own)))
+        assertEquals(emptyList<HandedStream<String>>(), request.files)
         assertEquals(listOf(Refusal("_credentials.json", OWN_FILES, null)), request.refused)
         assertEquals("look", request.field)
     }
 
     @Test
     fun `a scheme other than content is refused`() {
-        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn))
-        assertEquals(NOT_SHARED, streamRefusal(null, null, true, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn, asWritten = true))
+        assertEquals(NOT_SHARED, streamRefusal(null, null, true, isOwn, asWritten = true))
         // content:foo has no authority.
-        assertEquals(NOT_SHARED, streamRefusal("content", null, true, isOwn))
-        assertEquals(NOT_SHARED, streamRefusal("content", "", true, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("content", null, true, isOwn, asWritten = true))
+        assertEquals(NOT_SHARED, streamRefusal("content", "", true, isOwn, asWritten = true))
     }
 
     /**
@@ -125,19 +125,35 @@ class AskRequestTest {
             "content://dev.harness.files?/agent/x" to "dev.harness.files",
             "content://dev.harness.files#/agent/x" to "dev.harness.files",
         )
-        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, true, isOwn))
-        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", true, isOwn))
+        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, true, isOwn, asWritten = true))
+        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", true, isOwn, asWritten = true))
     }
 
     @Test
     fun `another app's authority is read`() {
-        assertNull(streamRefusal("content", "com.android.providers.media.documents", true, isOwn))
-        assertNull(streamRefusal("content", "10@media", true, isOwn))
+        assertNull(streamRefusal("content", "com.android.providers.media.documents", true, isOwn, asWritten = true))
+        assertNull(streamRefusal("content", "10@media", true, isOwn, asWritten = true))
     }
 
     @Test
     fun `a stream without the sender's grant is refused`() {
-        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn))
+        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn, asWritten = true))
+    }
+
+    @Test
+    fun `a uri that reads as another once printed and parsed is refused before anything else is asked`() {
+        // Uri.Builder().encodedAuthority("media/external/file/19") prints as content://media/external/file/19.
+        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "media/external/file/19", true, { error("asked") }, asWritten = false))
+        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "dev.harness.files", true, isOwn, asWritten = false))
+    }
+
+    @Test
+    fun `the uris handed over are the ones returned, clip data first`() {
+        val clip = StringBuilder("A")
+        val extra = StringBuilder("B")
+        val shared = sharedUris(extras = listOf(extra), clip = listOf(clip), flagged = true)
+        assertTrue(shared[0].first === clip)
+        assertTrue(shared[1].first === extra)
     }
 
     @Test
@@ -152,14 +168,14 @@ class AskRequestTest {
     fun `shared text and subject longer than the limit are cut with the line saying so`() {
         val long = "x".repeat(QUOTE_LIMIT + 5)
         val cut = "x".repeat(QUOTE_LIMIT) + "\n" + "[the shared text was longer; the rest was cut]"
-        assertEquals(cut, askRequest(Handed(ACTION_SEND, text = long)).field)
-        assertEquals("$cut\nbody", askRequest(Handed(ACTION_SEND, text = "body", subject = long)).field)
-        assertEquals(cut, askRequest(Handed(ACTION_SEND, clipText = long)).field)
+        assertEquals(cut, askRequest(Handed<String>(ACTION_SEND, text = long)).field)
+        assertEquals("$cut\nbody", askRequest(Handed<String>(ACTION_SEND, text = "body", subject = long)).field)
+        assertEquals(cut, askRequest(Handed<String>(ACTION_SEND, clipText = long)).field)
     }
 
     @Test
     fun `blank text and subject are absent`() {
-        assertTrue(askRequest(Handed(ACTION_SEND, text = "  ", subject = "")).empty)
-        assertEquals("body", askRequest(Handed(ACTION_SEND, text = "body", subject = " ")).field)
+        assertTrue(askRequest(Handed<String>(ACTION_SEND, text = "  ", subject = "")).empty)
+        assertEquals("body", askRequest(Handed<String>(ACTION_SEND, text = "body", subject = " ")).field)
     }
 }
