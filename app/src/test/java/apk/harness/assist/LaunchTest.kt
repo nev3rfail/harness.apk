@@ -19,7 +19,7 @@ class LaunchTest {
     private val id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
     private fun launch(resume: Boolean = false, environment: Map<String, String> = base) =
-        headlessLaunch(environment, launcher, directory, ClaudeBackend.headlessScript, ClaudeBackend.headless(id, resume))
+        headlessLaunch(environment, launcher, directory, ClaudeBackend.headlessScript, ClaudeBackend.ideVariables, ClaudeBackend.headless(id, resume))
 
     @Test
     fun `the launcher runs under the android shell in the assistant directory`() {
@@ -56,14 +56,14 @@ class LaunchTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `an argument holding a space is refused`() {
-        headlessLaunch(base, launcher, directory, "headless.sh", listOf("-p", "two words"))
+        headlessLaunch(base, launcher, directory, "headless.sh", emptySet(), listOf("-p", "two words"))
     }
 
     @Test
     fun `an argument holding a glob character is refused`() {
         for (argument in listOf("a*", "a?", "[a]")) {
             assertThrows(IllegalArgumentException::class.java) {
-                headlessLaunch(base, launcher, directory, "headless.sh", listOf("-p", argument))
+                headlessLaunch(base, launcher, directory, "headless.sh", emptySet(), listOf("-p", argument))
             }
         }
     }

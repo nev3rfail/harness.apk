@@ -21,7 +21,8 @@ import java.io.OutputStream
  *
  * The caller binds Claude's editor protocol for every tab it opens -- the
  * lockfile, the port in the environment, the authorization header -- whichever
- * backend the tab runs. That protocol is outside this interface.
+ * backend the tab runs. That protocol is outside this interface, save the
+ * variables a run with no terminal leaves out, [ideVariables].
  */
 interface AgentBackend {
     /** What a chat carries in [Chat.backendId] to say which backend read it. */
@@ -53,6 +54,9 @@ interface AgentBackend {
 
     /** The script under `HARNESS_HOME` the launcher runs for a run with no terminal. */
     val headlessScript: String
+
+    /** The variables that attach a tab's process to its editor, left out of a run with no terminal. */
+    val ideVariables: Set<String>
 
     /**
      * Arguments for a run with no terminal that takes its messages on stdin and

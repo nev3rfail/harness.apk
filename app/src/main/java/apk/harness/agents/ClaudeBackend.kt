@@ -46,6 +46,8 @@ object ClaudeBackend : AgentBackend {
 
     override val headlessScript: String = "headless.sh"
 
+    override val ideVariables: Set<String> = setOf("CLAUDE_CODE_SSE_PORT")
+
     override fun headless(sessionId: String, resume: Boolean): List<String> =
         listOf(
             "-p",
