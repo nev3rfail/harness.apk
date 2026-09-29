@@ -111,8 +111,9 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
 
     /**
      * Opens on what was handed over: the quote and the field at once, then, on
-     * the IO dispatcher while the activity holds the grant, the images encoded
-     * and the files copied. Nothing is sent until the operator sends.
+     * the IO dispatcher while the activity holds the grant, each stream's type,
+     * name and size asked of its provider, the images encoded and the files
+     * copied. Nothing is sent until the operator sends.
      */
     fun fromShare(context: Context, request: AskRequest<Uri>) {
         quote = request.quote
@@ -130,24 +131,26 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         shares.listFiles()?.forEach { it.delete() }
         val cache = File(shares, UUID.randomUUID().toString()).also { shareCache = it }
         val box = File(File(Agent(app).home, ASSISTANT_DIRECTORY), "inbox/${UUID.randomUUID()}").also { inbox = it }
-        copying = request.images.size + request.files.size
+        copying = request.streams.size
         if (copying == 0) return
         preparing = Assistant.runs.launch {
             // Declared outside the try, so a cancelled preparation deletes what it encoded.
             val encoded = ArrayList<EncodedImage?>()
             try {
-                for (image in request.images) {
+                val described = request.streams.map { ensureActive(); describe(resolver, it.uri) }
+                val (images, files) = described.partition { isImage(it.type) }
+                for (image in images) {
                     if (!roomForBlocks(encoded.map { it?.bytes })) break
                     ensureActive()
                     encoded += encodeImage(resolver, image, cache)
                 }
                 val split = shareImages(encoded.map { it?.bytes })
-                val blocks = split.blocks.map { request.images[it] to encoded[it]!! }
+                val blocks = split.blocks.map { images[it] to encoded[it]!! }
                 // Past the budget, past the twentieth, or not decodable: copied as
                 // files, with the ones never encoded.
-                val asFiles = split.files.map { request.images[it] } + request.images.drop(encoded.size)
+                val asFiles = split.files.map { images[it] } + images.drop(encoded.size)
                 split.files.forEach { encoded[it]?.file?.delete() }
-                val copied = copyIn(resolver, asFiles + request.files, box)
+                val copied = copyIn(resolver, asFiles + files, box)
                 withContext(Dispatchers.Main) {
                     attachments = attachments +
                         blocks.map { (stream, image) -> Attachment.Image(image.file, image.mediaType, image.bytes, safeName(stream.name)) } +

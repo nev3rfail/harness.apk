@@ -2,7 +2,6 @@ package apk.harness.assist
 
 import android.content.ContentResolver
 import android.content.res.AssetFileDescriptor
-import android.net.Uri
 import android.os.CancellationSignal
 import java.io.Closeable
 import java.io.File
@@ -25,7 +24,7 @@ data class Copied(val files: List<File>, val refused: List<Refusal>)
  * cannot be read, is deleted and refused. Cancelling stops the open or the
  * read in flight.
  */
-suspend fun copyIn(resolver: ContentResolver, streams: List<HandedStream<Uri>>, into: File): Copied = withContext(Dispatchers.IO) {
+suspend fun copyIn(resolver: ContentResolver, streams: List<SharedStream>, into: File): Copied = withContext(Dispatchers.IO) {
     val plan = planCopies(streams.map { it.size })
     val refused = plan.refused.mapTo(ArrayList()) { refusal(streams[it], OVER) }
     val files = ArrayList<File>()
@@ -58,7 +57,7 @@ private sealed interface Outcome {
     data object Unreadable : Outcome
 }
 
-private suspend fun copyOne(resolver: ContentResolver, stream: HandedStream<Uri>, file: File, shareBefore: Long): Outcome = runCatching {
+private suspend fun copyOne(resolver: ContentResolver, stream: SharedStream, file: File, shareBefore: Long): Outcome = runCatching {
     readShared({ resolver.openAssetFileDescriptor(stream.uri, "r", it) }) { descriptor ->
         descriptor.createInputStream().use { source ->
             file.outputStream().use { out ->
@@ -136,7 +135,7 @@ suspend fun <T> closedOnCancel(resource: Closeable, block: suspend () -> T): T =
     }
 }
 
-private fun refusal(stream: HandedStream<Uri>, why: String) = Refusal(safeName(stream.name), why, stream.size?.takeIf { it >= 0 })
+private fun refusal(stream: SharedStream, why: String) = Refusal(safeName(stream.name), why, stream.size?.takeIf { it >= 0 })
 
 private const val CHUNK = 64 * 1024
 private const val OVER = "over the limit of 100 MB a file and 500 MB a share; not copied"
