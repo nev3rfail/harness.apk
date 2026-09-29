@@ -22,3 +22,12 @@ fun classifyShow(locked: Boolean, shown: Boolean, ownRequest: Boolean, staged: B
     !staged -> Show.NotStaged
     else -> Show.Fresh
 }
+
+/**
+ * Whether a summon of AskActivity listens on its own: only one the system
+ * made, the system uid or the system UI, so an app firing ASSIST at the
+ * activity gets a panel and no speech without the mic tap. Android 11 to 14
+ * name no caller, so there no summon listens on its own.
+ */
+fun summonListens(sdk: Int, callerUid: Int?, callerIsSystemUi: Boolean): Boolean =
+    sdk >= 35 && (callerUid == android.os.Process.SYSTEM_UID || callerIsSystemUi)
