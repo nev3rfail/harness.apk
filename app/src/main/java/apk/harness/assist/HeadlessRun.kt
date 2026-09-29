@@ -263,8 +263,6 @@ class HeadlessRun(
                     onDismiss()
                 }
             }
-            // The sequencer puts Dismiss only right after Open, which posts it.
-            StopAction.Dismiss -> {}
         }
     }
 

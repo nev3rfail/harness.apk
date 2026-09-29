@@ -101,6 +101,3 @@ const val CONTEXT_WAIT = 2_000L
  */
 fun parkedApplies(parkedIn: Int, generation: Int, parkedAt: Long, now: Long): Boolean =
     parkedIn == generation && now - parkedAt < CONTEXT_WAIT
-
-/** Whether the microphone permission dialog lands under the session window, so the mic hands the panel over. */
-const val MIC_DIALOG_UNDER_SESSION = true

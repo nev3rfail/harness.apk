@@ -16,7 +16,7 @@ class MicActivity : ComponentActivity() {
         val blocked = micBlocked(granted, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO), askedBefore)
         Assistant.mic.value = MicAnswer.Answered(granted, blocked)
         // The session hid for the dialog; granted or not, it comes back with its panel.
-        if (MIC_DIALOG_UNDER_SESSION) Assistant.service?.showSession(Assistant.requestArgs(), 0)
+        Assistant.service?.showSession(Assistant.requestArgs(), 0)
         finishAndRemoveTask()
     }
 

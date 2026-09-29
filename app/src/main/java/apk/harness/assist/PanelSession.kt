@@ -415,11 +415,9 @@ class PanelSession(context: Context) :
             return
         }
         micAsker = current
-        if (MIC_DIALOG_UNDER_SESSION) {
-            Assistant.handOver(current)
-            handingOver = true
-            hide()
-        }
+        Assistant.handOver(current)
+        handingOver = true
+        hide()
     }
 }
 
