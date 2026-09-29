@@ -100,10 +100,19 @@ class AskActivity : ComponentActivity(), PanelHost {
      * ask whether the sender may read a URI this app can already open, so the
      * app asks: from Android 15, whether the app that sent the intent in hand,
      * [summoned] through onNewIntent or at the start, may read the URI itself.
+     * Android 11 to 14 name no sender the app can trust, so there a stream
+     * whose provider this app could open without a grant is refused: its read
+     * would be this app's, whatever the sender may read. On Android 11 that
+     * includes MediaStore, where the platform grants any sender's URI.
      */
     private fun senderAccess(summoned: Boolean): (Uri) -> String? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) callerAccess(if (summoned) currentCaller else initialCaller)
-        else { _ -> null }
+        else { uri -> if (opensWithoutGrant(uri.authority)) OPENS_WITHOUT_GRANT else null }
+
+    private fun opensWithoutGrant(authority: String?): Boolean {
+        val info = authority?.let { packageManager.resolveContentProvider(it.substringAfterLast('@'), 0) } ?: return false
+        return opensWithoutGrant(info.exported, info.readPermission) { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+    }
 
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private fun callerAccess(caller: ComponentCaller): (Uri) -> String? = { uri ->

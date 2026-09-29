@@ -157,6 +157,18 @@ class AskRequestTest {
     }
 
     @Test
+    fun `a provider opens without a grant when exported with no read permission or one this app holds`() {
+        val holds = { permission: String -> permission == "held" }
+        // MediaStore's provider below Android 15: exported, no read permission.
+        assertTrue(opensWithoutGrant(exported = true, readPermission = null, holds))
+        assertTrue(opensWithoutGrant(exported = true, readPermission = "held", holds))
+        // The documents providers ask MANAGE_DOCUMENTS, which the app does not hold.
+        assertFalse(opensWithoutGrant(exported = true, readPermission = "android.permission.MANAGE_DOCUMENTS", holds))
+        // A FileProvider is not exported: only a grant opens it.
+        assertFalse(opensWithoutGrant(exported = false, readPermission = null, holds))
+    }
+
+    @Test
     fun `a uri that reads as another once printed and parsed is refused before anything else is asked`() {
         // Uri.Builder().encodedAuthority("media/external/file/19") prints as content://media/external/file/19.
         assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "media/external/file/19", true, { error("asked") }, asWritten = false, sender = { error("asked") }))
