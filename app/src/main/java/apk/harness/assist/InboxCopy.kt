@@ -86,11 +86,28 @@ private suspend fun copyOne(resolver: ContentResolver, stream: HandedStream, fil
  * The descriptor [open] gives, handed to [read], or null when it gives none.
  * A cancel of the caller cancels the open through its signal and closes the
  * descriptor from another thread, which ends a read blocked on a sender's pipe.
+ * The descriptor is this function's: it is closed when [read] ends, and a
+ * descriptor opened for a caller cancelled by then is closed at once.
  */
 suspend fun <T> readShared(open: (CancellationSignal) -> AssetFileDescriptor?, read: suspend (AssetFileDescriptor) -> T): T? {
     val signal = CancellationSignal()
-    val descriptor = closedOnCancel({ signal.cancel() }) { open(signal) } ?: return null
+    val descriptor = openedUnlessCancelled({ signal.cancel() }) { open(signal) } ?: return null
     return descriptor.use { closedOnCancel(it) { read(it) } }
+}
+
+/**
+ * What [open] gives, with [cancel] closed from another thread once the caller
+ * is cancelled while it runs. A resource [open] returns to a caller cancelled
+ * by then is closed rather than returned, since the caller never gets it.
+ */
+suspend fun <R : Closeable> openedUnlessCancelled(cancel: Closeable, open: suspend () -> R?): R? {
+    var opened: R? = null
+    try {
+        return closedOnCancel(cancel) { open().also { opened = it } }
+    } catch (failure: Throwable) {
+        runCatching { opened?.close() }
+        throw failure
+    }
 }
 
 /**
