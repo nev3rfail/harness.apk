@@ -14,7 +14,7 @@ import androidx.core.content.IntentCompat
  * [streamRefusal] refuses, by [isOwn] and the grant [sharedUris] reads, is
  * refused before any resolver call.
  */
-fun handedOf(intent: Intent, resolver: ContentResolver, isOwn: (authority: String) -> Boolean): Handed {
+fun handedOf(intent: Intent, resolver: ContentResolver, isOwn: (authority: String) -> Boolean): Handed<Uri> {
     val action = intent.action.orEmpty()
     val clip = intent.clipData
     val clipItems = (0 until (clip?.itemCount ?: 0)).map { clip!!.getItemAt(it) }
@@ -25,20 +25,20 @@ fun handedOf(intent: Intent, resolver: ContentResolver, isOwn: (authority: Strin
     }
     val flagged = intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0
     val uris = if (action == Intent.ACTION_PROCESS_TEXT) emptyList()
-    else sharedUris(extras.map(Uri::toString), clipItems.mapNotNull { it.uri?.toString() }, flagged)
+    else sharedUris(extras, clipItems.mapNotNull { it.uri }, flagged)
     return Handed(
         action = action,
         selected = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString(),
         text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString(),
         subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString(),
         clipText = if (action == Intent.ACTION_SEND) clipItems.firstNotNullOfOrNull { it.text?.toString() } else null,
-        streams = uris.map { (uri, granted) -> stream(resolver, Uri.parse(uri), granted, isOwn) },
+        streams = uris.map { (uri, granted) -> stream(resolver, uri, granted, isOwn) },
     )
 }
 
-private fun stream(resolver: ContentResolver, uri: Uri, granted: Boolean, isOwn: (String) -> Boolean): HandedStream {
+private fun stream(resolver: ContentResolver, uri: Uri, granted: Boolean, isOwn: (String) -> Boolean): HandedStream<Uri> {
     // getAuthority() is the decoded authority, which the resolver opens by.
-    streamRefusal(uri.scheme, uri.authority, granted, isOwn)?.let { return HandedStream(uri.toString(), null, safeName(uri.lastPathSegment), null, it) }
+    streamRefusal(uri.scheme, uri.authority, granted, isOwn, asWritten(uri))?.let { return HandedStream(uri, null, safeName(uri.lastPathSegment), null, it) }
     val type = runCatching { resolver.getType(uri) }.getOrNull()
     var name: String? = null
     var size: Long? = null
@@ -52,5 +52,11 @@ private fun stream(resolver: ContentResolver, uri: Uri, granted: Boolean, isOwn:
             }
         }
     }
-    return HandedStream(uri.toString(), type, name, size)
+    return HandedStream(uri, type, name, size)
+}
+
+/** Whether [uri], printed and parsed again, has the same scheme, decoded authority, decoded path and query. */
+private fun asWritten(uri: Uri): Boolean {
+    val parsed = Uri.parse(uri.toString())
+    return parsed.scheme == uri.scheme && parsed.authority == uri.authority && parsed.path == uri.path && parsed.query == uri.query
 }

@@ -114,7 +114,7 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
      * the IO dispatcher while the activity holds the grant, the images encoded
      * and the files copied. Nothing is sent until the operator sends.
      */
-    fun fromShare(context: Context, request: AskRequest) {
+    fun fromShare(context: Context, request: AskRequest<Uri>) {
         quote = request.quote
         field = request.field
         focusField = request.quote != null

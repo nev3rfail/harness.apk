@@ -19,9 +19,9 @@ data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
  * the stream does not decode, or its JPEG is still over the limit; the caller
  * copies it as a file instead. Cancelling stops the open or the read in flight.
  */
-suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream, into: File): EncodedImage? = runCatching {
+suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream<Uri>, into: File): EncodedImage? = runCatching {
     // Opened as ImageDecoder's own content source opens it, with a signal the cancel reaches.
-    readShared({ resolver.openTypedAssetFileDescriptor(Uri.parse(stream.uri), "image/*", null, it) }) { descriptor ->
+    readShared({ resolver.openTypedAssetFileDescriptor(stream.uri, "image/*", null, it) }) { descriptor ->
         ImageDecoder.decodeBitmap(ImageDecoder.createSource { descriptor }) { decoder, info, _ ->
             val (width, height) = targetSize(info.size.width, info.size.height)
             decoder.setTargetSize(width, height)
@@ -33,7 +33,7 @@ suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream, into: F
     null
 }
 
-private fun encode(bitmap: Bitmap, stream: HandedStream, into: File): EncodedImage? =
+private fun encode(bitmap: Bitmap, stream: HandedStream<Uri>, into: File): EncodedImage? =
     try {
         into.mkdirs()
         val png = stream.type == "image/png"

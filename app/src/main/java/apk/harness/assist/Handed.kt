@@ -1,14 +1,14 @@
 package apk.harness.assist
 
 /**
- * One stream handed over: its URI, and what the sender's provider says about
- * it. A stream [refused] before any resolver call carries the reason, the URI's
+ * One stream handed over: its URI, the object the intent delivered, and what
+ * the sender's provider says about it. A stream [refused] before any resolver call carries the reason, the URI's
  * last path segment as its name, and no type or size.
  */
-data class HandedStream(val uri: String, val type: String?, val name: String?, val size: Long?, val refused: String? = null)
+data class HandedStream<out U>(val uri: U, val type: String?, val name: String?, val size: Long?, val refused: String? = null)
 
 /** What an intent handed over, read out of it and nothing more. */
-data class Handed(
+data class Handed<out U>(
     val action: String,
     /** `EXTRA_PROCESS_TEXT`. */
     val selected: String? = null,
@@ -17,7 +17,7 @@ data class Handed(
     val subject: String? = null,
     /** A `SEND`'s text when it came only in `ClipData`. */
     val clipText: String? = null,
-    val streams: List<HandedStream> = emptyList(),
+    val streams: List<HandedStream<U>> = emptyList(),
 )
 
 const val ACTION_PROCESS_TEXT = "android.intent.action.PROCESS_TEXT"
