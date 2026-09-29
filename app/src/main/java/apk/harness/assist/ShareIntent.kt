@@ -38,16 +38,13 @@ fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean, sender: (Uri
         subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString(),
         clipText = if (action == Intent.ACTION_SEND) clipItems.firstNotNullOfOrNull { it.text?.toString() } else null,
         // getAuthority() is the decoded authority, which the resolver opens by.
-        streams = decided(uris) { uri, granted -> streamRefusal(uri.scheme, uri.authority, granted, isOwn, asWritten(uri)) { sender(uri) } }
-            .map { (uri, refused) -> HandedStream(uri, safeName(uri.lastPathSegment), refused) },
+        streams = decided(uris) { uri, granted ->
+            streamRefusal(uri.scheme, uri.authority, granted, isOwn, asWritten(uri.parts(), Uri.parse(uri.toString()).parts())) { sender(uri) }
+        }.map { (uri, refused) -> HandedStream(uri, safeName(uri.lastPathSegment), refused) },
     )
 }
 
-/** Whether [uri], printed and parsed again, has the same scheme, decoded authority, decoded path and query. */
-private fun asWritten(uri: Uri): Boolean {
-    val parsed = Uri.parse(uri.toString())
-    return parsed.scheme == uri.scheme && parsed.authority == uri.authority && parsed.path == uri.path && parsed.query == uri.query
-}
+private fun Uri.parts() = UriParts(scheme, authority, path, query)
 
 /**
  * [uri]'s type from `ContentResolver.getType` and its name and size from one
