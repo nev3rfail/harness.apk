@@ -154,4 +154,13 @@ class PanelStateTest {
         state.screenshotCame(shot("1.jpg"))
         assertFalse(state.nothingCame)
     }
+
+    @Test
+    fun `what is heard goes after what was typed before the listen`() {
+        assertEquals("hello", afterTyped("", "hello"))
+        assertEquals("hello", afterTyped("  ", "hello"))
+        assertEquals("look at this: hello there", afterTyped("look at this: ", "hello there"))
+        assertEquals("draft hello", afterTyped("draft", "hello"))
+        assertEquals("draft", afterTyped("draft", ""))
+    }
 }
