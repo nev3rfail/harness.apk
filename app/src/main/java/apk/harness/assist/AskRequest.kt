@@ -5,6 +5,7 @@ data class Refusal(val name: String, val why: String, val size: Long?)
 
 const val NOT_SHARED = "not a file another app shared; not read"
 const val OWN_FILES = "one of this app's own files; not read"
+const val NOT_GRANTED = "the sharing app did not grant access to this file; not read"
 
 /** What the panel opens with. Nothing is sent until the operator sends. */
 data class AskRequest(
@@ -21,20 +22,33 @@ data class AskRequest(
 }
 
 /**
- * Why a stream is not read, or null, from its [scheme] and [authority] as
- * `android.net.Uri` decodes them. A stream is read only through a `content:`
- * URI of another app's provider: any other scheme, and an authority [isOwn]
- * answers for, would be read with this app's own rights -- its
- * `<package>.files` provider exposes the whole home -- rather than the
- * sender's grant. The resolver opens a provider by the decoded authority with
- * any `<userId>@` prefix dropped, as `ContentProvider.getAuthorityWithoutUserId`
- * drops it, so the check takes the same one.
+ * The stream URIs a share names, [clip] first, each with whether it came
+ * under the sender's grant. `FLAG_GRANT_READ_URI_PERMISSION` grants the
+ * `ClipData` URIs, once the platform has checked the sender may grant them,
+ * and the platform fills `ClipData` from `EXTRA_STREAM` for a `SEND` or
+ * `SEND_MULTIPLE`; a URI only in [extras] comes with no grant.
  */
-fun streamRefusal(scheme: String?, authority: String?, isOwn: (authority: String) -> Boolean): String? {
+fun sharedUris(extras: List<String>, clip: List<String>, flagged: Boolean): List<Pair<String, Boolean>> =
+    (clip + extras).distinct().map { it to (flagged && it in clip) }
+
+/**
+ * Why a stream is not read, or null, from its [scheme] and [authority] as
+ * `android.net.Uri` decodes them and whether it came [granted]. A stream is
+ * read only through a `content:` URI of another app's provider under the
+ * sender's grant: any other scheme, an authority [isOwn] answers for, and a
+ * URI with no grant would be read with this app's own rights -- its
+ * `<package>.files` provider exposes the whole home, and it can read all
+ * files -- rather than the sender's. The resolver opens a provider by the
+ * decoded authority with any `<userId>@` prefix dropped, as
+ * `ContentProvider.getAuthorityWithoutUserId` drops it, so the check takes the
+ * same one.
+ */
+fun streamRefusal(scheme: String?, authority: String?, granted: Boolean, isOwn: (authority: String) -> Boolean): String? {
     val provider = authority?.substringAfterLast('@')
     return when {
         !scheme.equals("content", ignoreCase = true) || provider.isNullOrEmpty() -> NOT_SHARED
         isOwn(provider) -> OWN_FILES
+        !granted -> NOT_GRANTED
         else -> null
     }
 }
