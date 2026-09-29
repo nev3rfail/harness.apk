@@ -92,6 +92,12 @@ fun streamRefusal(
     }
 }
 
+/** A URI's scheme, decoded authority, decoded path and query, as `android.net.Uri` reads them. */
+data class UriParts(val scheme: String?, val authority: String?, val path: String?, val query: String?)
+
+/** Whether a URI [delivered] as an object reads the same once printed and [reparsed]. */
+fun asWritten(delivered: UriParts, reparsed: UriParts): Boolean = delivered == reparsed
+
 /**
  * Whether this app could open a provider without anyone's grant: it is
  * [exported] and asks no [readPermission], or one the app [holds], or the app

@@ -184,6 +184,37 @@ class AskRequestTest {
         assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "dev.harness.files", true, isOwn, asWritten = false, sender = { error("asked") }))
     }
 
+    /**
+     * Each case as the parts android.net.Uri gives the delivered object and the
+     * one parsed from its string: scheme, decoded authority, decoded path, query.
+     */
+    @Test
+    fun `a uri is as written only when its string parses back to the same parts`() {
+        // Uri.Builder().scheme("content").encodedAuthority("media/external/file/19"), printed content://media/external/file/19.
+        assertFalse(asWritten(
+            UriParts("content", "media/external/file/19", "", null),
+            UriParts("content", "media", "/external/file/19", null),
+        ))
+        // The same with a trailing `?` in the authority.
+        assertFalse(asWritten(
+            UriParts("content", "media/external/file/19?", "", null),
+            UriParts("content", "media", "/external/file/19", ""),
+        ))
+        // A parsed URI with an empty query parses back the same.
+        val emptyQuery = UriParts("content", "media", "/external/file/19", "")
+        assertTrue(asWritten(emptyQuery, emptyQuery.copy()))
+        // encodedPath("/a#b"), printed content://p/a#b: the `#` starts a fragment once parsed.
+        assertFalse(asWritten(
+            UriParts("content", "p", "/a#b", null),
+            UriParts("content", "p", "/a", null),
+        ))
+        // path("/a#b") is printed with %23, which decodes back to the same path.
+        assertTrue(asWritten(
+            UriParts("content", "p", "/a#b", null),
+            UriParts("content", "p", "/a#b", null),
+        ))
+    }
+
     @Test
     fun `the uris handed over are the ones returned, clip data first`() {
         val clip = StringBuilder("A")
