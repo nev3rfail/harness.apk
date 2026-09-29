@@ -11,8 +11,8 @@ class AskRequestTest {
     /** This app's own authority, as the activity answers it from resolveContentProvider. */
     private val isOwn = { authority: String -> authority == "dev.harness.files" }
 
-    private fun image(n: Int) = HandedStream("content://media/external/images/media/$n", "image/jpeg", "IMG_$n.jpg", 1000)
-    private val pdf = HandedStream("content://files/doc/1", "application/pdf", "a.pdf", 5000)
+    private fun image(n: Int) = HandedStream("content://media/external/images/media/$n", "$n")
+    private val pdf = HandedStream("content://files/doc/1", "1")
 
     @Test
     fun `selected text is a quote with the field empty`() {
@@ -33,22 +33,27 @@ class AskRequestTest {
     }
 
     @Test
-    fun `one image is an image attachment`() {
-        assertEquals(listOf(image(1)), askRequest(Handed<String>(ACTION_SEND, streams = listOf(image(1)))).images)
-    }
-
-    @Test
-    fun `images and a pdf in one share are split into images and files`() {
-        val request = askRequest(Handed<String>(ACTION_SEND_MULTIPLE, streams = listOf(image(1), pdf, image(2))))
-        assertEquals(listOf(image(1), image(2)), request.images)
-        assertEquals(listOf(pdf), request.files)
-    }
-
-    @Test
-    fun `text and an image stream in one send are both kept`() {
-        val request = askRequest(Handed<String>(ACTION_SEND, text = "a page", streams = listOf(image(1))))
+    fun `the streams not refused are kept, in order, with the text`() {
+        val request = askRequest(Handed(ACTION_SEND_MULTIPLE, text = "a page", streams = listOf(image(1), pdf, image(2))))
         assertEquals("a page", request.field)
-        assertEquals(listOf(image(1)), request.images)
+        assertEquals(listOf(image(1), pdf, image(2)), request.streams)
+    }
+
+    @Test
+    fun `a stream is an image by its type`() {
+        assertTrue(isImage("image/heic"))
+        assertFalse(isImage("application/pdf"))
+        assertFalse(isImage(null))
+    }
+
+    @Test
+    fun `past the first hundred streams each is refused without being asked about`() {
+        val named = List(102) { "u$it" to true }
+        val asked = ArrayList<String>()
+        val decided = decided(named) { uri, _ -> asked += uri; null }
+        assertEquals(100, asked.size)
+        assertEquals(List(100) { null } + listOf(TOO_MANY, TOO_MANY), decided.map { it.second })
+        assertEquals(named.map { it.first }, decided.map { it.first })
     }
 
     @Test
@@ -95,9 +100,9 @@ class AskRequestTest {
 
     @Test
     fun `a refused stream is named with its reason and not attached`() {
-        val own = HandedStream("content://dev.harness.files/agent/.claude/.credentials.json", null, "_credentials.json", null, OWN_FILES)
-        val request = askRequest(Handed<String>(ACTION_SEND, text = "look", streams = listOf(own)))
-        assertEquals(emptyList<HandedStream<String>>(), request.files)
+        val own = HandedStream("content://dev.harness.files/agent/.claude/.credentials.json", "_credentials.json", OWN_FILES)
+        val request = askRequest(Handed(ACTION_SEND, text = "look", streams = listOf(own)))
+        assertEquals(emptyList<HandedStream<String>>(), request.streams)
         assertEquals(listOf(Refusal("_credentials.json", OWN_FILES, null)), request.refused)
         assertEquals("look", request.field)
     }

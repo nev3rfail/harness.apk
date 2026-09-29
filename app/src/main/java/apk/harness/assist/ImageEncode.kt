@@ -3,7 +3,6 @@ package apk.harness.assist
 import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
-import android.net.Uri
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -19,7 +18,7 @@ data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
  * the stream does not decode, or its JPEG is still over the limit; the caller
  * copies it as a file instead. Cancelling stops the open or the read in flight.
  */
-suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream<Uri>, into: File): EncodedImage? = runCatching {
+suspend fun encodeImage(resolver: ContentResolver, stream: SharedStream, into: File): EncodedImage? = runCatching {
     // Opened as ImageDecoder's own content source opens it, with a signal the cancel reaches.
     readShared({ resolver.openTypedAssetFileDescriptor(stream.uri, "image/*", null, it) }) { descriptor ->
         ImageDecoder.decodeBitmap(ImageDecoder.createSource { descriptor }) { decoder, info, _ ->
@@ -33,7 +32,7 @@ suspend fun encodeImage(resolver: ContentResolver, stream: HandedStream<Uri>, in
     null
 }
 
-private fun encode(bitmap: Bitmap, stream: HandedStream<Uri>, into: File): EncodedImage? =
+private fun encode(bitmap: Bitmap, stream: SharedStream, into: File): EncodedImage? =
     try {
         into.mkdirs()
         val png = stream.type == "image/png"

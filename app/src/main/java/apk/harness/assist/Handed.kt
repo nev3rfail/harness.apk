@@ -1,11 +1,16 @@
 package apk.harness.assist
 
+import android.net.Uri
+
 /**
- * One stream handed over: its URI, the object the intent delivered, and what
- * the sender's provider says about it. A stream [refused] before any resolver call carries the reason, the URI's
- * last path segment as its name, and no type or size.
+ * One stream handed over: its URI, the object the intent delivered, and the
+ * URI's last path segment as its name. A stream [refused] carries the reason;
+ * no provider is asked about any stream while the intent is read.
  */
-data class HandedStream<out U>(val uri: U, val type: String?, val name: String?, val size: Long?, val refused: String? = null)
+data class HandedStream<out U>(val uri: U, val name: String?, val refused: String? = null)
+
+/** A stream to read, with what the sender's provider says about it: its type, `DISPLAY_NAME` and `SIZE`. */
+data class SharedStream(val uri: Uri, val type: String?, val name: String?, val size: Long?)
 
 /** What an intent handed over, read out of it and nothing more. */
 data class Handed<out U>(
