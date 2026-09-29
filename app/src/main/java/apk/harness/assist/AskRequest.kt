@@ -94,10 +94,15 @@ fun streamRefusal(
 
 /**
  * Whether this app could open a provider without anyone's grant: it is
- * [exported] and asks no [readPermission], or one the app [holds].
+ * [exported] and asks no [readPermission], or one the app [holds], or the app
+ * holds the read permission of one of its [pathReadPermissions].
  */
-fun opensWithoutGrant(exported: Boolean, readPermission: String?, holds: (permission: String) -> Boolean): Boolean =
-    exported && (readPermission == null || holds(readPermission))
+fun opensWithoutGrant(
+    exported: Boolean,
+    readPermission: String?,
+    pathReadPermissions: List<String?>,
+    holds: (permission: String) -> Boolean,
+): Boolean = exported && (readPermission == null || holds(readPermission) || pathReadPermissions.any { it != null && holds(it) })
 
 /** [handed] as the panel's opening state; each stream [HandedStream.refused] is named with its reason. */
 fun <U> askRequest(handed: Handed<U>): AskRequest<U> {

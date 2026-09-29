@@ -160,12 +160,20 @@ class AskRequestTest {
     fun `a provider opens without a grant when exported with no read permission or one this app holds`() {
         val holds = { permission: String -> permission == "held" }
         // MediaStore's provider below Android 15: exported, no read permission.
-        assertTrue(opensWithoutGrant(exported = true, readPermission = null, holds))
-        assertTrue(opensWithoutGrant(exported = true, readPermission = "held", holds))
+        assertTrue(opensWithoutGrant(exported = true, readPermission = null, emptyList(), holds))
+        assertTrue(opensWithoutGrant(exported = true, readPermission = "held", emptyList(), holds))
         // The documents providers ask MANAGE_DOCUMENTS, which the app does not hold.
-        assertFalse(opensWithoutGrant(exported = true, readPermission = "android.permission.MANAGE_DOCUMENTS", holds))
+        assertFalse(opensWithoutGrant(exported = true, readPermission = "android.permission.MANAGE_DOCUMENTS", emptyList(), holds))
         // A FileProvider is not exported: only a grant opens it.
-        assertFalse(opensWithoutGrant(exported = false, readPermission = null, holds))
+        assertFalse(opensWithoutGrant(exported = false, readPermission = null, emptyList(), holds))
+    }
+
+    @Test
+    fun `a provider opens without a grant when this app holds the read permission of any of its paths`() {
+        val holds = { permission: String -> permission == "held" }
+        assertTrue(opensWithoutGrant(exported = true, readPermission = "other", listOf(null, "held"), holds))
+        assertFalse(opensWithoutGrant(exported = true, readPermission = "other", listOf(null, "other"), holds))
+        assertFalse(opensWithoutGrant(exported = false, readPermission = "other", listOf("held"), holds))
     }
 
     @Test
