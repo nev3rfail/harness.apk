@@ -44,7 +44,7 @@ fun uniqueName(name: String, taken: Set<String>): String {
 data class CopyPlan(val copy: List<Int>, val refused: List<Int>)
 
 /**
- * [sizes] from `SIZE`, null where unknown. A known size over [FILE_LIMIT] is
+ * [sizes] from `SIZE`, null or negative where unknown. A known size over [FILE_LIMIT] is
  * refused; the known sizes run up the share, and the one crossing
  * [SHARE_LIMIT] and every one after it are refused.
  */
@@ -52,7 +52,8 @@ fun planCopies(sizes: List<Long?>): CopyPlan {
     val copy = ArrayList<Int>()
     val refused = ArrayList<Int>()
     var share = 0L
-    for ((index, size) in sizes.withIndex()) {
+    for ((index, reported) in sizes.withIndex()) {
+        val size = reported?.takeIf { it >= 0 }
         when {
             share > SHARE_LIMIT -> refused += index
             size != null && size > FILE_LIMIT -> refused += index

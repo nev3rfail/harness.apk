@@ -66,6 +66,8 @@ class InboxTest {
     @Test
     fun `an unknown size is copied and checked while copying`() {
         assertEquals(CopyPlan(listOf(0), emptyList()), planCopies(listOf(null)))
+        // A negative size is unknown and takes nothing off the share's total.
+        assertEquals(CopyPlan(listOf(0, 1), listOf(2)), planCopies(listOf(-SHARE_LIMIT, 90 * mb, SHARE_LIMIT)))
         assertNull(limitCrossed(FILE_LIMIT, FILE_LIMIT))
         assertEquals(Limit.File, limitCrossed(FILE_LIMIT + 1, FILE_LIMIT + 1))
         assertEquals(Limit.Share, limitCrossed(mb, SHARE_LIMIT + 1))
