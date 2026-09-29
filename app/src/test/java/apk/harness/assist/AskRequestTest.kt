@@ -194,6 +194,13 @@ class AskRequestTest {
     }
 
     @Test
+    fun `where the sender's own access decides, every clip data and extra stream uri is asked about, flag or not`() {
+        assertEquals(listOf("A" to true, "B" to true), sharedUris(extras = listOf("B"), clip = listOf("A"), flagged = false, senderDecides = true))
+        assertEquals(listOf("B" to true), sharedUris(extras = listOf("B"), clip = emptyList(), flagged = false, senderDecides = true))
+        assertEquals(listOf("A" to true), sharedUris(extras = listOf("A"), clip = listOf("A"), flagged = true, senderDecides = true))
+    }
+
+    @Test
     fun `shared text and subject longer than the limit are cut with the line saying so`() {
         val long = "x".repeat(QUOTE_LIMIT + 5)
         val cut = "x".repeat(QUOTE_LIMIT) + "\n" + "[the shared text was longer; the rest was cut]"

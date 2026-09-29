@@ -16,10 +16,10 @@ import kotlinx.coroutines.withContext
  * then `EXTRA_STREAM` for SEND or its list for SEND_MULTIPLE -- as the `Uri`
  * objects the intent delivered. Each stream is decided by [streamRefusal],
  * with [isOwn], the grant [sharedUris] reads, and [sender] for the sender's
- * own access, and no provider is asked about any of them here; [describe]
- * asks, off the main thread.
+ * own access, which alone decides where [senderDecides]; no provider is asked
+ * about any of them here, and [describe] asks, off the main thread.
  */
-fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean, sender: (Uri) -> String?): Handed<Uri> {
+fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean, sender: (Uri) -> String?, senderDecides: Boolean): Handed<Uri> {
     val action = intent.action.orEmpty()
     val clip = intent.clipData
     val clipItems = (0 until (clip?.itemCount ?: 0)).map { clip!!.getItemAt(it) }
@@ -30,7 +30,7 @@ fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean, sender: (Uri
     }
     val flagged = intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0
     val uris = if (action == Intent.ACTION_PROCESS_TEXT) emptyList()
-    else sharedUris(extras, clipItems.mapNotNull { it.uri }, flagged)
+    else sharedUris(extras, clipItems.mapNotNull { it.uri }, flagged, senderDecides)
     return Handed(
         action = action,
         selected = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString(),

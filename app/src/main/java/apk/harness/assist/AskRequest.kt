@@ -17,8 +17,9 @@ const val STREAM_LIMIT = 100
 /**
  * What the panel opens with. Nothing is sent until the operator sends. Each of
  * [streams] passed [streamRefusal]: a `content:` URI that reads the same once
- * printed and parsed, of another app's provider, in `ClipData` under the
- * grant flag, and allowed by the sender's-access question the activity asks.
+ * printed and parsed, of another app's provider, below Android 15 in
+ * `ClipData` under the grant flag, and allowed by the sender's-access question
+ * the activity asks.
  * Its type, name and size are not known yet.
  */
 data class AskRequest<out U>(
@@ -50,10 +51,11 @@ fun <U> decided(named: List<Pair<U, Boolean>>, refusal: (U, Boolean) -> String?)
  * `EXTRA_STREAM` for an ordinary `SEND` or `SEND_MULTIPLE`; a URI only in
  * [extras] counts as not granted. The flag says only that the sender asked for
  * a grant, not that the sender may read the URI itself; [streamRefusal] asks
- * that last.
+ * that last. Where [senderDecides], as on Android 15 and later, that last
+ * question is the whole test, and every URI counts as granted.
  */
-fun <U> sharedUris(extras: List<U>, clip: List<U>, flagged: Boolean): List<Pair<U, Boolean>> =
-    (clip + extras).distinct().map { it to (flagged && it in clip) }
+fun <U> sharedUris(extras: List<U>, clip: List<U>, flagged: Boolean, senderDecides: Boolean = false): List<Pair<U, Boolean>> =
+    (clip + extras).distinct().map { it to (senderDecides || flagged && it in clip) }
 
 /**
  * Why a stream is not read, or null, from its [scheme] and [authority] as

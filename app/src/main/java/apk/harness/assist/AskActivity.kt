@@ -107,7 +107,7 @@ class AskActivity : ComponentActivity(), PanelHost {
                 panel.begin(this)
                 when (intent?.action) {
                     Intent.ACTION_ASSIST -> panel.listenIfGranted()
-                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess())))
+                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess(), senderDecides = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM)))
                 }
             }
         }
