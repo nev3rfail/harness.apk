@@ -1,6 +1,22 @@
 package apk.harness.assist
 
+import java.io.File
+
 const val NAME_BYTES = 128
+
+/**
+ * Removes what earlier shares left behind: the directory under [inbox] of each
+ * share named by a file under [unsent], which is one never sent, with that
+ * file, and every directory under [cache]. The shares [inUse] keep theirs.
+ */
+fun clearAbandoned(unsent: File, inbox: File, cache: File, inUse: Set<String>) {
+    unsent.listFiles()?.forEach { mark ->
+        if (mark.name in inUse) return@forEach
+        File(inbox, mark.name).deleteRecursively()
+        mark.delete()
+    }
+    cache.listFiles()?.forEach { if (it.name !in inUse) it.deleteRecursively() }
+}
 const val FILE_LIMIT = 100L * 1024 * 1024
 const val SHARE_LIMIT = 500L * 1024 * 1024
 
