@@ -9,6 +9,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -31,6 +33,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import apk.harness.agents.BACKENDS
 import apk.harness.ui.MarkdownDocument
@@ -100,7 +103,7 @@ fun AskPanel(state: PanelState, host: PanelHost) {
                                 onContinue = { state.micContinue(host) },
                                 onNotNow = { state.disclosure = null },
                             )
-                            null -> Body(state, host, Modifier.weight(1f, fill = false))
+                            null -> Body(state, host, Modifier.weight(1f, fill = false), listMax = sheet * LIST_SHARE)
                         }
                     }
                 }
@@ -110,7 +113,7 @@ fun AskPanel(state: PanelState, host: PanelHost) {
 }
 
 @Composable
-private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
+private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, listMax: Dp) {
     val turns = state.conversation.turns
     val list = rememberLazyListState()
     val lastLength = turns.lastOrNull()?.items?.sumOf { (it as? Item.Text)?.text?.length ?: 1 } ?: 0
@@ -135,18 +138,33 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier) {
             Text(remember(quote) { cutToLimit(quote) }, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
         }
     }
-    state.attachments.forEach { Text(it.line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    if (state.copying > 0) {
-        Text(
-            if (state.copying == 1) "Copying 1 file…" else "Copying ${state.copying} files…",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
     val context = LocalContext.current
-    state.refused.forEach {
-        val size = it.size?.let { bytes -> " (" + Formatter.formatShortFileSize(context, bytes) + ")" } ?: ""
-        Text("${it.name}$size: ${it.why}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+    // Scrolls within its cap, so a large share leaves the field and Send on the panel.
+    Column(Modifier.heightIn(max = listMax).verticalScroll(rememberScrollState())) {
+        state.attachments.forEach { attachment ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    attachment.line,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { state.remove(attachment) }) {
+                    Icon(Icons.Default.Close, contentDescription = "$REMOVE ${attachment.line}", modifier = Modifier.size(18.dp))
+                }
+            }
+        }
+        if (state.copying > 0) {
+            Text(
+                if (state.copying == 1) "Copying 1 file…" else "Copying ${state.copying} files…",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        state.refused.forEach {
+            val size = it.size?.let { bytes -> " (" + Formatter.formatShortFileSize(context, bytes) + ")" } ?: ""
+            Text("${it.name}$size: ${it.why}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        }
     }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -224,6 +242,9 @@ private fun StatusLine(state: PanelState, host: PanelHost) {
 }
 
 private const val SHEET_SHARE = 0.75f
+/** The panel's share the attachments and refusals take at most. */
+private const val LIST_SHARE = 1f / 3
+private const val REMOVE = "Remove"
 private val SCRIM = Color.Black.copy(alpha = 0.4f)
 private const val TITLE = "Ask Agent"
 private const val CLOSE = "Close"

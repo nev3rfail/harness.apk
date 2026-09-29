@@ -275,6 +275,17 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         }
     }
 
+    /** An attachment's remove control: it leaves the next message with its file, and a screen one turns its chip off. */
+    fun remove(attachment: Attachment) {
+        when (attachment) {
+            is Attachment.ScreenText -> screenText = false
+            is Attachment.Screenshot -> { screenshot = false; attachment.file.delete() }
+            is Attachment.Image -> attachment.file.delete()
+            is Attachment.Document -> attachment.file.delete()
+        }
+        attachments = attachments - attachment
+    }
+
     /** [attachments] without the screenshot, its file deleted. */
     private fun dropScreenshot(): List<Attachment> {
         attachments.filterIsInstance<Attachment.Screenshot>().forEach { it.file.delete() }
