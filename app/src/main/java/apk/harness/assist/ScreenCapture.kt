@@ -35,6 +35,12 @@ fun encodeScreenshot(context: Context, bitmap: Bitmap): Attachment.Screenshot {
     val (width, height) = targetSize(software.width, software.height)
     val scaled = Bitmap.createScaledBitmap(software, width, height, true)
     val file = File(context.cacheDir, "assist/${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() }
-    file.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+    try {
+        file.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+    } finally {
+        // The copies made here; the caller's bitmap is its own.
+        if (scaled !== bitmap && scaled !== software) scaled.recycle()
+        if (software !== bitmap) software.recycle()
+    }
     return Attachment.Screenshot(file, file.length())
 }
