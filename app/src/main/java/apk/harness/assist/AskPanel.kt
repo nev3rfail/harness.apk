@@ -222,7 +222,8 @@ private fun TurnView(turn: Turn, onContinue: () -> Unit, openLink: (String) -> U
         turn.attachments.forEach { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         turn.items.forEach { item ->
             when (item) {
-                is Item.Text -> MarkdownDocument(content = item.text, openExternal = openLink)
+                // An answer is written as lines, not wrapped, so each newline breaks one.
+                is Item.Text -> MarkdownDocument(content = item.text, openExternal = openLink, hardBreaks = true)
                 is Item.Tool -> Text("${item.name}: ${item.input}", style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                 is Item.Denied -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$NEEDS_APPROVAL ${item.tool}", modifier = Modifier.weight(1f))

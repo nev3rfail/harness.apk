@@ -61,6 +61,30 @@ class MarkdownLineBreaksTest {
     }
 
     @Test
+    fun `with hard breaks each newline is a line break`() {
+        assertEquals("1\n2\n3", drawn("1\n2\n3", hard = true))
+        assertEquals("one two\nthree four", drawn("one two\nthree four", hard = true))
+    }
+
+    @Test
+    fun `with hard breaks the indent of a continuation line is not drawn`() {
+        assertEquals("one two\nthree four", drawn("one two\n    three four", hard = true))
+    }
+
+    @Test
+    fun `with hard breaks a list item and a quote break where their source does`() {
+        assertEquals("item one\nwrapped here", drawn("- item one\n  wrapped here", hard = true))
+        assertEquals("quoted one\nquoted two", drawn("> quoted one\n> quoted two", hard = true))
+    }
+
+    @Test
+    fun `with hard breaks two trailing spaces and a break tag are one break, not two`() {
+        assertEquals("one two\nthree four", drawn("one two  \nthree four", hard = true))
+        assertEquals("one two\nthree four", drawn("one two\n<br/>\nthree four", hard = true))
+        assertEquals("one two\nthree four", drawn("one two<br/>three four", hard = true))
+    }
+
+    @Test
     fun `anything that is not a break or the space around one is left to the renderer`() {
         val word = wordsOf("word").first()
 
@@ -73,13 +97,13 @@ class MarkdownLineBreaksTest {
      * hook first, then the rules it does not answer -- a word is itself, and a
      * run of space is one space once something has been written.
      */
-    private fun drawn(source: String): String {
+    private fun drawn(source: String, hard: Boolean = false): String {
         val out = StringBuilder()
         var previous: Any? = null
         wordsOf(source).forEach { child ->
             if (previous == child.type) return@forEach
             previous = null
-            val text = lineBreakText(child, source, written = out.isNotEmpty())
+            val text = lineBreakText(child, source, written = out.isNotEmpty(), hard = hard)
             when {
                 text != null -> out.append(text)
                 child.type == MarkdownTokenTypes.TEXT ->

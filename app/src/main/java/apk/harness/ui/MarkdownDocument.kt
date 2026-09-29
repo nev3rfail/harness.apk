@@ -78,6 +78,8 @@ import org.intellij.markdown.ast.getTextInNode
  * [openExternal] is what a cell's source mark hands its reference to. It comes
  * from here rather than from the cell because a document is the smallest thing
  * that can be shown without a way out of the app.
+ *
+ * [hardBreaks] draws each newline inside a paragraph as a line break.
  */
 @Composable
 fun MarkdownDocument(
@@ -86,6 +88,7 @@ fun MarkdownDocument(
     selected: IntRange? = null,
     onPoint: ((Unit, anchoring: Boolean) -> kotlin.Unit)? = null,
     openExternal: ((String) -> kotlin.Unit)? = null,
+    hardBreaks: Boolean = false,
 ) {
     val blocks = remember(content) { promoteCells(markdownBlocks(content)).blocks }
     // A view names a cell elsewhere in the document, so the whole block list is
@@ -106,8 +109,9 @@ fun MarkdownDocument(
     // arriving and going away.
     val holding by rememberUpdatedState(selected != null)
     val highlight = MaterialTheme.colorScheme.primary.copy(alpha = SELECTION_ALPHA)
-    // A newline inside a paragraph separates two words rather than two lines.
-    val lineBreaks = lineBreakAnnotator()
+    // A newline inside a paragraph separates two words rather than two lines,
+    // unless [hardBreaks] asks for each to be a line break.
+    val lineBreaks = lineBreakAnnotator(hardBreaks)
     // Where each item and each block was drawn. Plain maps rather than state:
     // only a touch reads them, and a bound that moved changes nothing that is
     // drawn until the next touch asks. The map instance outlives every
