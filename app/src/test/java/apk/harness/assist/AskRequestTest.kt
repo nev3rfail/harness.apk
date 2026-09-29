@@ -91,11 +91,11 @@ class AskRequestTest {
 
     @Test
     fun `a scheme other than content is refused`() {
-        assertEquals(NOT_SHARED, streamRefusal("file", null, isOwn))
-        assertEquals(NOT_SHARED, streamRefusal(null, null, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal(null, null, true, isOwn))
         // content:foo has no authority.
-        assertEquals(NOT_SHARED, streamRefusal("content", null, isOwn))
-        assertEquals(NOT_SHARED, streamRefusal("content", "", isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("content", null, true, isOwn))
+        assertEquals(NOT_SHARED, streamRefusal("content", "", true, isOwn))
     }
 
     /**
@@ -112,14 +112,27 @@ class AskRequestTest {
             "content://dev.harness.files?/agent/x" to "dev.harness.files",
             "content://dev.harness.files#/agent/x" to "dev.harness.files",
         )
-        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, isOwn))
-        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", isOwn))
+        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, true, isOwn))
+        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", true, isOwn))
     }
 
     @Test
     fun `another app's authority is read`() {
-        assertNull(streamRefusal("content", "com.android.providers.media.documents", isOwn))
-        assertNull(streamRefusal("content", "10@media", isOwn))
+        assertNull(streamRefusal("content", "com.android.providers.media.documents", true, isOwn))
+        assertNull(streamRefusal("content", "10@media", true, isOwn))
+    }
+
+    @Test
+    fun `a stream without the sender's grant is refused`() {
+        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn))
+    }
+
+    @Test
+    fun `only clip data uris carry the grant, and only with the flag`() {
+        assertEquals(listOf("A" to true, "B" to false), sharedUris(extras = listOf("B"), clip = listOf("A"), flagged = true))
+        assertEquals(listOf("A" to false), sharedUris(extras = listOf("A"), clip = listOf("A"), flagged = false))
+        assertEquals(listOf("A" to true, "C" to true), sharedUris(extras = listOf("A"), clip = listOf("A", "C"), flagged = true))
+        assertEquals(listOf("B" to false), sharedUris(extras = listOf("B"), clip = emptyList(), flagged = true))
     }
 
     @Test
