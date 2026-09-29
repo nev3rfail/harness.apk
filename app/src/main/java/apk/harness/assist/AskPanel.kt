@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -117,12 +118,22 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
     val turns = state.conversation.turns
     val list = rememberLazyListState()
     val lastLength = turns.lastOrNull()?.items?.sumOf { (it as? Item.Text)?.text?.length ?: 1 } ?: 0
-    LaunchedEffect(turns.size, lastLength) { if (turns.isNotEmpty()) list.scrollToItem(turns.lastIndex) }
+    // The thread's end is the item after the last turn: scrolled to, the list
+    // shows the bottom of a turn taller than itself.
+    LaunchedEffect(turns.size, lastLength) { if (turns.isNotEmpty()) list.animateScrollToItem(turns.size) }
+    // The keyboard coming up shrinks the thread from below; its end stays in view.
+    LaunchedEffect(list) {
+        snapshotFlow { list.layoutInfo.viewportSize.height }.collect {
+            val count = list.layoutInfo.totalItemsCount
+            if (count > 1) list.scrollToItem(count - 1)
+        }
+    }
 
     LazyColumn(state = list, modifier = threadModifier) {
         items(turns.size) { index ->
             TurnView(turns[index], onContinue = { state.escalate(host) }, openLink = { state.openLink(host, it) })
         }
+        item { Spacer(Modifier.height(1.dp)) }
     }
     StatusLine(state, host)
     if (host.inSession) {
