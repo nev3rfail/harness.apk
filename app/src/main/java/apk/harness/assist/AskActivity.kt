@@ -31,6 +31,14 @@ class AskActivity : ComponentActivity(), PanelHost {
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     /** Whether the app asked for the microphone before the request in flight. */
     private var micAskedBefore = false
+    /**
+     * From Android 15, the app that delivered the intent in hand: the one that
+     * launched the activity, then the sender of each intent onNewIntent sets.
+     * Null where the platform named none, and every stream is then refused.
+     */
+    private var intentCaller: ComponentCaller? = null
+    /** The caller onNewIntent(Intent, ComponentCaller) hands to the onNewIntent(Intent) it calls. */
+    private var arriving: ComponentCaller? = null
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) state?.micGranted()
         else state?.micBlocked = micBlocked(false, shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO), micAskedBefore)
@@ -44,6 +52,7 @@ class AskActivity : ComponentActivity(), PanelHost {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) intentCaller = initialCaller
         setContent { HarnessTheme { state?.let { AskPanel(it, this) } } }
         ContextCompat.registerReceiver(this, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
@@ -57,11 +66,21 @@ class AskActivity : ComponentActivity(), PanelHost {
         show(summoned = false)
     }
 
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    override fun onNewIntent(intent: Intent, caller: ComponentCaller) {
+        arriving = caller
+        super.onNewIntent(intent, caller)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val caller = arriving.also { arriving = null }
         // A new intent during an escalation is ignored until it ends.
         if (state?.escalating == true) return
+        // The caller goes with its intent, so a share read later, once the
+        // phone is unlocked, is checked against the app that sent it.
         setIntent(intent)
+        intentCaller = caller
         // A second summon keeps the conversation and listens, as in the session;
         // a share replaces the panel with one holding it.
         show(summoned = true)
@@ -88,7 +107,7 @@ class AskActivity : ComponentActivity(), PanelHost {
                 panel.begin(this)
                 when (intent?.action) {
                     Intent.ACTION_ASSIST -> panel.listenIfGranted()
-                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess(summoned))))
+                    in SHARE_ACTIONS -> panel.fromShare(this, askRequest(handedOf(intent, ::ownAuthority, senderAccess())))
                 }
             }
         }
@@ -98,15 +117,15 @@ class AskActivity : ComponentActivity(), PanelHost {
      * Why a stream is refused on the sender's own access, or null. The grant
      * check the platform makes for `FLAG_GRANT_READ_URI_PERMISSION` does not
      * ask whether the sender may read a URI this app can already open, so the
-     * app asks: from Android 15, whether the app that sent the intent in hand,
-     * [summoned] through onNewIntent or at the start, may read the URI itself.
-     * Android 11 to 14 name no sender the app can trust, so there a stream
-     * whose provider this app could open without a grant is refused: its read
-     * would be this app's, whatever the sender may read. On Android 11 that
-     * includes MediaStore, where the platform grants any sender's URI.
+     * app asks: from Android 15, whether [intentCaller], the app that delivered
+     * the intent in hand, may read the URI itself. Android 11 to 14 name no
+     * sender the app can trust, so there a stream whose provider this app could
+     * open without a grant is refused: its read would be this app's, whatever
+     * the sender may read. On Android 11 that includes MediaStore, where the
+     * platform grants any sender's URI.
      */
-    private fun senderAccess(summoned: Boolean): (Uri) -> String? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) callerAccess(if (summoned) currentCaller else initialCaller)
+    private fun senderAccess(): (Uri) -> String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) callerAccess(intentCaller)
         else { uri -> if (opensWithoutGrant(uri.authority)) OPENS_WITHOUT_GRANT else null }
 
     private fun opensWithoutGrant(authority: String?): Boolean {
@@ -115,8 +134,8 @@ class AskActivity : ComponentActivity(), PanelHost {
     }
 
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-    private fun callerAccess(caller: ComponentCaller): (Uri) -> String? = { uri ->
-        val access = runCatching { caller.checkContentUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.getOrNull()
+    private fun callerAccess(caller: ComponentCaller?): (Uri) -> String? = { uri ->
+        val access = runCatching { caller?.checkContentUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.getOrNull()
         if (access == PackageManager.PERMISSION_GRANTED) null else SENDER_CANNOT_READ
     }
 
