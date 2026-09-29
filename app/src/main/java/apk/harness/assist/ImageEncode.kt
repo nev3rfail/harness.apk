@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import java.io.File
 import java.util.UUID
-import kotlinx.coroutines.CancellationException
 
 /** An image ready to go as a block: its file under the cache directory, its type and size. */
 data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
@@ -15,21 +14,30 @@ data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
  * included) at [targetSize], and encoded into [into]: PNG from a PNG, else JPEG
  * at quality 85. An encoding over [IMAGE_BYTES_LIMIT] is encoded again as JPEG.
  * Every JPEG of an image with alpha is composited onto white first. Null when
- * the stream does not decode, or its JPEG is still over the limit; the caller
- * copies it as a file instead. Cancelling stops the open or the read in flight.
+ * the stream does not decode, is over [FILE_LIMIT], or its JPEG is still over
+ * the limit; the caller copies it as a file instead. The stream is first
+ * copied into a file under [into], counted against [FILE_LIMIT] as a file of
+ * the inbox is, and decoded from there, so the decoder never holds the
+ * sender's descriptor. Cancelling stops the open or the read in flight.
  */
-suspend fun encodeImage(resolver: ContentResolver, stream: SharedStream, into: File): EncodedImage? = runCatching {
-    // Opened as ImageDecoder's own content source opens it, with a signal the cancel reaches.
-    readShared({ resolver.openTypedAssetFileDescriptor(stream.uri, "image/*", null, it) }) { descriptor ->
-        ImageDecoder.decodeBitmap(ImageDecoder.createSource { descriptor }) { decoder, info, _ ->
-            val (width, height) = targetSize(info.size.width, info.size.height)
-            decoder.setTargetSize(width, height)
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        }
-    }?.let { encode(it, stream, into) }
-}.getOrElse { failure ->
-    if (failure is CancellationException) throw failure
-    null
+suspend fun encodeImage(resolver: ContentResolver, stream: SharedStream, into: File): EncodedImage? {
+    into.mkdirs()
+    val source = File(into, "${UUID.randomUUID()}.source")
+    return try {
+        // Opened as ImageDecoder's own content source opens it, with a signal the cancel reaches.
+        val read = copyOpened({ resolver.openTypedAssetFileDescriptor(stream.uri, "image/*", null, it) }, source, 0)
+        if (read !is Outcome.Done) return null
+        runCatching {
+            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
+                val (width, height) = targetSize(info.size.width, info.size.height)
+                decoder.setTargetSize(width, height)
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+            encode(bitmap, stream, into)
+        }.getOrNull()
+    } finally {
+        source.delete()
+    }
 }
 
 private fun encode(bitmap: Bitmap, stream: SharedStream, into: File): EncodedImage? =

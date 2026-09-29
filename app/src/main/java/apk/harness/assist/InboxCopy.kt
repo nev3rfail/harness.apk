@@ -21,7 +21,7 @@ data class Copied(val files: List<File>, val refused: List<Refusal>)
 /**
  * [streams] copied into [into], each under a safe, unique name, within the
  * limits before and during the copy. A file that crosses a limit mid-copy, or
- * cannot be read, is deleted and refused. Cancelling stops the open or the
+ * cannot be read, is refused and leaves no file. Cancelling stops the open or the
  * read in flight.
  */
 suspend fun copyIn(resolver: ContentResolver, streams: List<SharedStream>, into: File): Copied = withContext(Dispatchers.IO) {
@@ -37,9 +37,8 @@ suspend fun copyIn(resolver: ContentResolver, streams: List<SharedStream>, into:
         val file = File(into, name)
         when (val outcome = copyOne(resolver, stream, file, share)) {
             is Outcome.Done -> { files += file; share += outcome.bytes }
-            Outcome.Unreadable -> { file.delete(); refused += refusal(stream, UNREADABLE) }
+            Outcome.Unreadable -> refused += refusal(stream, UNREADABLE)
             is Outcome.Over -> {
-                file.delete()
                 refused += refusal(stream, OVER)
                 if (outcome.limit == Limit.Share) {
                     plan.copy.drop(position + 1).forEach { refused += refusal(streams[it], OVER) }
@@ -51,14 +50,23 @@ suspend fun copyIn(resolver: ContentResolver, streams: List<SharedStream>, into:
     Copied(files, refused)
 }
 
-private sealed interface Outcome {
+sealed interface Outcome {
     data class Done(val bytes: Long) : Outcome
     data class Over(val limit: Limit) : Outcome
     data object Unreadable : Outcome
 }
 
-private suspend fun copyOne(resolver: ContentResolver, stream: SharedStream, file: File, shareBefore: Long): Outcome = runCatching {
-    readShared({ resolver.openAssetFileDescriptor(stream.uri, "r", it) }) { descriptor ->
+private suspend fun copyOne(resolver: ContentResolver, stream: SharedStream, file: File, shareBefore: Long): Outcome =
+    copyOpened({ resolver.openAssetFileDescriptor(stream.uri, "r", it) }, file, shareBefore)
+
+/**
+ * What [open] gives copied into [file], counting the bytes against the file
+ * limit and, after [shareBefore], the share's. A copy that crosses a limit,
+ * or cannot be read, leaves no file. Cancelling stops the open or the read in
+ * flight.
+ */
+suspend fun copyOpened(open: (CancellationSignal) -> AssetFileDescriptor?, file: File, shareBefore: Long): Outcome = runCatching {
+    readShared(open) { descriptor ->
         descriptor.createInputStream().use { source ->
             file.outputStream().use { out ->
                 val buffer = ByteArray(CHUNK)
@@ -79,7 +87,7 @@ private suspend fun copyOne(resolver: ContentResolver, stream: SharedStream, fil
     file.delete()
     if (failure is CancellationException) throw failure
     Outcome.Unreadable
-}
+}.also { if (it !is Outcome.Done) file.delete() }
 
 /**
  * The descriptor [open] gives, handed to [read], or null when it gives none.
