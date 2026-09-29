@@ -154,7 +154,7 @@ class Agent(private val context: Context) {
         // prepare restores a launcher that went missing, so the check follows it.
         prepare(directory, trusted = true)
         check(stage.isStaged()) { "the agent is not staged" }
-        val launch = headlessLaunch(baseEnvironment(), stage.launcher, directory, backend.headlessScript, arguments)
+        val launch = headlessLaunch(baseEnvironment(), stage.launcher, directory, backend.headlessScript, backend.ideVariables, arguments)
         return ProcessBuilder(launch.argv)
             .directory(launch.directory)
             .apply {

@@ -18,19 +18,21 @@ data class HeadlessLaunch(
  * The launcher splits `HARNESS_AGENT_ARGS` on whitespace, so an argument
  * holding any is refused rather than split, and one holding a glob character
  * is refused rather than left to a shell that might expand it. A tab's own
- * variables are left out: the run belongs to no tab and attaches to no editor.
+ * variables are left out, the tab's name and the backend's [ideVariables]: the
+ * run belongs to no tab and attaches to no editor.
  */
 fun headlessLaunch(
     environment: Map<String, String>,
     launcher: File,
     directory: File,
     script: String,
+    ideVariables: Set<String>,
     arguments: List<String>,
 ): HeadlessLaunch {
     arguments.firstOrNull { it.isEmpty() || it.any { c -> c.isWhitespace() || c in GLOB } }?.let {
         throw IllegalArgumentException("the launcher splits arguments on whitespace and may expand globs: \"$it\"")
     }
-    val variables = environment - setOf(TAB_VARIABLE, IDE_PORT_VARIABLE) + mapOf(
+    val variables = environment - ideVariables - TAB_VARIABLE + mapOf(
         "HARNESS_HEADLESS_SCRIPT" to script,
         "HARNESS_AGENT_ARGS" to arguments.joinToString(" "),
     )
@@ -39,4 +41,3 @@ fun headlessLaunch(
 
 private const val GLOB = "*?["
 private const val ANDROID_SHELL = "/system/bin/sh"
-private const val IDE_PORT_VARIABLE = "CLAUDE_CODE_SSE_PORT"

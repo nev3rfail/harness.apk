@@ -29,6 +29,7 @@ class AgentBackendTest {
         override fun resume(sessionId: String) = unreached()
         override fun start(sessionId: String) = unreached()
         override val headlessScript: String get() = unreached()
+        override val ideVariables: Set<String> get() = unreached()
         override fun headless(sessionId: String, resume: Boolean) = unreached()
         override fun parseEvent(line: String, interruptSent: Boolean) = unreached()
         override val provider: String get() = unreached()
