@@ -100,6 +100,8 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     var focusField by mutableStateOf(false)
     /** The share's directory under the inbox, deleted if the panel goes with nothing sent. */
     private var inbox: File? = null
+    /** The share's directory under the cache, holding its encoded images; deleted as [inbox] is. */
+    private var shareCache: File? = null
     private var preparing: Job? = null
     /** A send tapped during the copy, made once it ends. */
     private var sendWhenReady = false
@@ -119,7 +121,11 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
             return
         }
         val resolver = context.contentResolver
-        val cache = File(context.cacheDir, SHARE_CACHE)
+        val shares = File(context.cacheDir, SHARE_CACHE)
+        // A sent share's directory is left empty once its images are written;
+        // delete() takes only an empty one.
+        shares.listFiles()?.forEach { it.delete() }
+        val cache = File(shares, UUID.randomUUID().toString()).also { shareCache = it }
         val box = File(File(Agent(app).home, ASSISTANT_DIRECTORY), "inbox/${UUID.randomUUID()}").also { inbox = it }
         copying = request.images.size + request.files.size
         if (copying == 0) return
@@ -414,15 +420,11 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
         // files are the conversation's.
         if (!sent && inbox != null) {
             val job = preparing
-            val box = inbox
-            val images = attachments.mapNotNull { (it as? Attachment.Image)?.file }
+            val directories = listOfNotNull(inbox, shareCache)
             job?.cancel()
-            Assistant.runs.launch {
-                box?.deleteRecursively()
-                images.forEach { it.delete() }
-            }
-            // A copy the cancel has not stopped yet may still write into it.
-            job?.invokeOnCompletion { box?.deleteRecursively() }
+            Assistant.runs.launch { directories.forEach { it.deleteRecursively() } }
+            // A copy or an encode the cancel has not stopped yet may still write into them.
+            job?.invokeOnCompletion { Assistant.runs.launch { directories.forEach { it.deleteRecursively() } } }
         }
         run?.stop(StopKind.Dismiss, sent)
         voice?.destroy()
@@ -431,8 +433,12 @@ class PanelState(val sessionId: String = UUID.randomUUID().toString()) {
     companion object {
         const val NOTHING_SHARED = "Nothing came with the share."
         private const val SELECTED_TEXT = "Selected text"
-        /** Under the cache directory: a share's images, encoded for the message. */
-        private const val SHARE_CACHE = "assist"
+        /**
+         * Under the cache directory, one directory per share: its images,
+         * encoded for the message. Apart from the session's `assist`, which
+         * each hide deletes.
+         */
+        private const val SHARE_CACHE = "share"
         const val NOTHING_OPENS = "Nothing on this phone opens that."
         const val NO_ROOM_FOR_IMAGES = "This conversation holds as many images as it can carry."
 
