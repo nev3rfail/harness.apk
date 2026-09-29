@@ -4,11 +4,13 @@ import java.io.Closeable
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,6 +71,21 @@ class ClosedOnCancelTest {
         val opened = Counted()
         assertEquals(opened, openedUnlessCancelled(Counted()) { opened })
         assertEquals(0, opened.closes)
+    }
+
+    @Test
+    fun `a question not answered in time is null, even one blocked in a call that ignores the cancel`() = runBlocking {
+        val release = CountDownLatch(1)
+        val started = System.nanoTime()
+        val answer = answeredWithin(100, CoroutineScope(Dispatchers.IO)) { release.await(); 1 }
+        assertNull(answer)
+        assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(2))
+        release.countDown()
+    }
+
+    @Test
+    fun `a question answered in time is its answer`() = runBlocking {
+        assertEquals(7, answeredWithin(2000, CoroutineScope(Dispatchers.IO)) { 7 })
     }
 
     @Test

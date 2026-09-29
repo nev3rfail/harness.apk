@@ -10,6 +10,7 @@ const val NOT_AS_WRITTEN = "its address reads as another file once written out; 
 const val TOO_MANY = "past the first 100 files of one share; not read"
 const val SENDER_CANNOT_READ = "the sharing app may not read this file itself; not read"
 const val OPENS_WITHOUT_GRANT = "this app could open it without the sharing app's grant; not read"
+const val NO_ANSWER = "the sharing app did not say what this file is within 10 seconds; not read"
 
 /** At most this many of a share's streams are decided and read. */
 const val STREAM_LIMIT = 100

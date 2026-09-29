@@ -7,14 +7,17 @@ import java.io.Closeable
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class Copied(val files: List<File>, val refused: List<Refusal>)
 
@@ -140,6 +143,21 @@ suspend fun <T> closedOnCancel(resource: Closeable, block: suspend () -> T): T =
     } finally {
         ended.set(true)
         closer.cancel()
+    }
+}
+
+/**
+ * What [ask] answers within [millis], or null. [ask] runs in [scope] rather
+ * than under the caller, so one blocked in a call that ignores the cancel is
+ * left to end on its own while the caller goes on; it is cancelled once the
+ * answer is not waited for.
+ */
+suspend fun <T> answeredWithin(millis: Long, scope: CoroutineScope, ask: suspend () -> T): T? {
+    val asked = scope.async { ask() }
+    try {
+        return withTimeoutOrNull(millis) { asked.await() }
+    } finally {
+        asked.cancel()
     }
 }
 
