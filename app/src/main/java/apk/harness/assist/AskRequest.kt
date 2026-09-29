@@ -8,6 +8,8 @@ const val OWN_FILES = "one of this app's own files; not read"
 const val NOT_GRANTED = "the sharing app did not grant access to this file; not read"
 const val NOT_AS_WRITTEN = "its address reads as another file once written out; not read"
 const val TOO_MANY = "past the first 100 files of one share; not read"
+const val SENDER_CANNOT_READ = "the sharing app may not read this file itself; not read"
+const val OPENS_WITHOUT_GRANT = "this app could open it without the sharing app's grant; not read"
 
 /** At most this many of a share's streams are decided and read. */
 const val STREAM_LIMIT = 100
@@ -58,16 +60,25 @@ fun <U> sharedUris(extras: List<U>, clip: List<U>, flagged: Boolean): List<Pair<
  * same one. A URI not [asWritten] -- one whose string, parsed again, differs
  * in scheme, authority, path or query, as a `Uri` built with a `/` in its
  * authority does -- is refused before any other question, since the platform
- * checks grants against the parsed string.
+ * checks grants against the parsed string. A stream past every other question
+ * is refused for the reason [sender] gives, the sender's own access to it,
+ * asked last.
  */
-fun streamRefusal(scheme: String?, authority: String?, granted: Boolean, isOwn: (authority: String) -> Boolean, asWritten: Boolean): String? {
+fun streamRefusal(
+    scheme: String?,
+    authority: String?,
+    granted: Boolean,
+    isOwn: (authority: String) -> Boolean,
+    asWritten: Boolean,
+    sender: () -> String?,
+): String? {
     val provider = authority?.substringAfterLast('@')
     return when {
         !scheme.equals("content", ignoreCase = true) || provider.isNullOrEmpty() -> NOT_SHARED
         !asWritten -> NOT_AS_WRITTEN
         isOwn(provider) -> OWN_FILES
         !granted -> NOT_GRANTED
-        else -> null
+        else -> sender()
     }
 }
 

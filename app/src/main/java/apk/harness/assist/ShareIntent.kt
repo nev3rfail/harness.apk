@@ -15,10 +15,11 @@ import kotlinx.coroutines.withContext
  * `EXTRA_SUBJECT` as char sequences, and the streams -- the `ClipData` items,
  * then `EXTRA_STREAM` for SEND or its list for SEND_MULTIPLE -- as the `Uri`
  * objects the intent delivered. Each stream is decided by [streamRefusal],
- * with [isOwn] and the grant [sharedUris] reads, and no provider is asked
- * about any of them here; [describe] asks, off the main thread.
+ * with [isOwn], the grant [sharedUris] reads, and [sender] for the sender's
+ * own access, and no provider is asked about any of them here; [describe]
+ * asks, off the main thread.
  */
-fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean): Handed<Uri> {
+fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean, sender: (Uri) -> String?): Handed<Uri> {
     val action = intent.action.orEmpty()
     val clip = intent.clipData
     val clipItems = (0 until (clip?.itemCount ?: 0)).map { clip!!.getItemAt(it) }
@@ -37,7 +38,7 @@ fun handedOf(intent: Intent, isOwn: (authority: String) -> Boolean): Handed<Uri>
         subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString(),
         clipText = if (action == Intent.ACTION_SEND) clipItems.firstNotNullOfOrNull { it.text?.toString() } else null,
         // getAuthority() is the decoded authority, which the resolver opens by.
-        streams = decided(uris) { uri, granted -> streamRefusal(uri.scheme, uri.authority, granted, isOwn, asWritten(uri)) }
+        streams = decided(uris) { uri, granted -> streamRefusal(uri.scheme, uri.authority, granted, isOwn, asWritten(uri)) { sender(uri) } }
             .map { (uri, refused) -> HandedStream(uri, safeName(uri.lastPathSegment), refused) },
     )
 }

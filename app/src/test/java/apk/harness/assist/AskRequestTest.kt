@@ -109,11 +109,11 @@ class AskRequestTest {
 
     @Test
     fun `a scheme other than content is refused`() {
-        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn, asWritten = true))
-        assertEquals(NOT_SHARED, streamRefusal(null, null, true, isOwn, asWritten = true))
+        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn, asWritten = true, sender = { null }))
+        assertEquals(NOT_SHARED, streamRefusal(null, null, true, isOwn, asWritten = true, sender = { null }))
         // content:foo has no authority.
-        assertEquals(NOT_SHARED, streamRefusal("content", null, true, isOwn, asWritten = true))
-        assertEquals(NOT_SHARED, streamRefusal("content", "", true, isOwn, asWritten = true))
+        assertEquals(NOT_SHARED, streamRefusal("content", null, true, isOwn, asWritten = true, sender = { null }))
+        assertEquals(NOT_SHARED, streamRefusal("content", "", true, isOwn, asWritten = true, sender = { null }))
     }
 
     /**
@@ -130,26 +130,38 @@ class AskRequestTest {
             "content://dev.harness.files?/agent/x" to "dev.harness.files",
             "content://dev.harness.files#/agent/x" to "dev.harness.files",
         )
-        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, true, isOwn, asWritten = true))
-        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", true, isOwn, asWritten = true))
+        for ((uri, authority) in forms) assertEquals(uri, OWN_FILES, streamRefusal("content", authority, true, isOwn, asWritten = true, sender = { null }))
+        assertEquals(OWN_FILES, streamRefusal("CONTENT", "dev.harness.files", true, isOwn, asWritten = true, sender = { null }))
     }
 
     @Test
     fun `another app's authority is read`() {
-        assertNull(streamRefusal("content", "com.android.providers.media.documents", true, isOwn, asWritten = true))
-        assertNull(streamRefusal("content", "10@media", true, isOwn, asWritten = true))
+        assertNull(streamRefusal("content", "com.android.providers.media.documents", true, isOwn, asWritten = true, sender = { null }))
+        assertNull(streamRefusal("content", "10@media", true, isOwn, asWritten = true, sender = { null }))
     }
 
     @Test
     fun `a stream without the sender's grant is refused`() {
-        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn, asWritten = true))
+        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn, asWritten = true, sender = { null }))
+    }
+
+    @Test
+    fun `the sender's own access is asked last, and its refusal is the stream's`() {
+        val refuse = { "the sender may not read it" }
+        assertEquals("the sender may not read it", streamRefusal("content", "media", true, isOwn, asWritten = true, sender = refuse))
+        // Refused on an earlier question, the sender is not asked.
+        val ask = { error("asked") }
+        assertEquals(NOT_SHARED, streamRefusal("file", null, true, isOwn, asWritten = true, sender = ask))
+        assertEquals(OWN_FILES, streamRefusal("content", "dev.harness.files", true, isOwn, asWritten = true, sender = ask))
+        assertEquals(NOT_GRANTED, streamRefusal("content", "media", false, isOwn, asWritten = true, sender = ask))
     }
 
     @Test
     fun `a uri that reads as another once printed and parsed is refused before anything else is asked`() {
         // Uri.Builder().encodedAuthority("media/external/file/19") prints as content://media/external/file/19.
-        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "media/external/file/19", true, { error("asked") }, asWritten = false))
-        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "dev.harness.files", true, isOwn, asWritten = false))
+        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "media/external/file/19", true, { error("asked") }, asWritten = false, sender = { error("asked") }))
+        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "media", true, isOwn, asWritten = false, sender = { null }))
+        assertEquals(NOT_AS_WRITTEN, streamRefusal("content", "dev.harness.files", true, isOwn, asWritten = false, sender = { error("asked") }))
     }
 
     @Test
