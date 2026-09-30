@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- The renderer needs OpenGL ES 3.1. -->
     <uses-feature
@@ -102,15 +103,17 @@
             android:exported="false"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
-        <!-- Enabled on Android 11 only, where picking the app as the assistant
+        <!-- Enabled on Android 7 to 11, where picking the app as the assistant
              also makes this the device's speech recognizer: while the app is
              the assistant, other apps' speech recognition passes through it, to
-             the first system recognizer on the device. -->
+             the first system recognizer on the device. Any app binds it, so it
+             takes no permission. -->
         <service
             android:name=".assist.ForwardingRecognitionService"
             android:enabled="@bool/forwarding_recognizer"
             android:exported="true"
-            android:label="@string/ask_agent">
+            android:label="@string/ask_agent"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
             </intent-filter>

@@ -1,5 +1,6 @@
 package apk.harness.assist
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -52,6 +53,8 @@ class Voice(
         onListening(true)
     }
 
+    // recognizerKind returns OnDevice, and asks whether it is available, on 31+ only.
+    @SuppressLint("NewApi")
     private fun create(onDevice: Boolean): Pair<SpeechRecognizer, Boolean>? =
         when (recognizerKind(Build.VERSION.SDK_INT, onDevice) { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }) {
             RecognizerKind.OnDevice -> SpeechRecognizer.createOnDeviceSpeechRecognizer(context) to true
@@ -73,7 +76,9 @@ class Voice(
         override fun onEndOfSpeech() {}
         override fun onError(error: Int) {
             Log.i(TAG, "recognizer error $error")
-            val noLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED
+            // The language errors are 31+, as the on-device recognizer is.
+            val noLanguage = Build.VERSION.SDK_INT >= 31 &&
+                (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)
             if (retriesOnline(onDevice, retried, noLanguage)) {
                 retried = true
                 listen(onDevice = false)

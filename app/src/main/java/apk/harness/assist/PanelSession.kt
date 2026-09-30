@@ -1,11 +1,14 @@
 package apk.harness.assist
 
 import android.app.KeyguardManager
+import android.app.assist.AssistContent
+import android.app.assist.AssistStructure
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +19,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.service.voice.VoiceInteractionSession
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -347,14 +351,27 @@ class PanelSession(context: Context) :
         if (current != null) apply(current) else early += Parked(summon, SystemClock.uptimeMillis(), file, apply)
     }
 
+    /** 29+: the focused app's structure only, so in split screen the text is that app's. */
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onHandleAssist(assist: AssistState) {
         val structure = assist.assistStructure
         Log.i(TAG, "assist focused=${assist.isFocused} structure=${structure != null} windows=${structure?.windowNodeCount}")
         if (!assist.isFocused) return
+        screenCame(structure, assist.assistContent)
+    }
+
+    /** Below 29, the one app's structure. From 29 the override above takes every delivery and never calls this one. */
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
+        Log.i(TAG, "assist structure=${structure != null} windows=${structure?.windowNodeCount}")
+        screenCame(structure, content)
+    }
+
+    private fun screenCame(structure: AssistStructure?, content: AssistContent?) {
         val taken = taken(Delivery.Structure)
         Log.i(TAG, "assist taken=$taken")
         if (!taken) return
-        val flat = structure?.let { flattenScreen(screenNodes(it), assist.assistContent?.webUri?.toString()) }
+        val flat = structure?.let { flattenScreen(screenNodes(it), content?.webUri?.toString()) }
         val text = flat?.takeIf { it.isNotEmpty() }?.let { Attachment.ScreenText(appLabel(context, structure), it) }
         Log.i(TAG, "screen text of ${flat?.length ?: 0} characters")
         toPanel(null) { it.screenTextCame(text) }
@@ -403,6 +420,11 @@ class PanelSession(context: Context) :
      */
     override fun requestMic() {
         val current = state ?: return
+        // startAssistantActivity is 26+; below it the panel points at the app's settings.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            current.micBlocked = true
+            return
+        }
         // A fresh task each time, so nothing an earlier request left behind answers for this one.
         val started = runCatching {
             startAssistantActivity(

@@ -1,5 +1,6 @@
 package apk.harness.assist
 
+import android.annotation.SuppressLint
 import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
@@ -58,7 +59,11 @@ suspend fun describe(resolver: ContentResolver, uri: Uri): SharedStream? =
 /** How long a provider has to say what a stream is. */
 const val DESCRIBE_MILLIS = 10_000L
 
-/** A cancel cancels the query through its signal; `getType` takes none. */
+/**
+ * A cancel cancels the query through its signal; `getType` takes none. `use`
+ * closes the cursor, which lint does not follow out of the lambda that opens it.
+ */
+@SuppressLint("Recycle")
 private suspend fun ask(resolver: ContentResolver, uri: Uri): SharedStream = withContext(Dispatchers.IO) {
     val type = runCatching { resolver.getType(uri) }.getOrNull()
     var name: String? = null

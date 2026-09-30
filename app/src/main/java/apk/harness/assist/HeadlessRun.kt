@@ -66,7 +66,7 @@ class HeadlessRun(
                             // shows the failure with the rest of stderr.
                             Log.w(TAG, "the message did not reach the agent", failure)
                             remember("the message did not reach the agent: ${failure.message ?: failure}")
-                            process.destroyForcibly()
+                            kill(process)
                         }
                 }
                 images.forEach { it.file.delete() }
@@ -84,7 +84,7 @@ class HeadlessRun(
             }
             this.onOpen = onOpen
             this.onDismiss = onDismiss
-            stopping = StopState(kind, alive = process?.isAlive == true, turnInFlight = inFlight, sessionId = sessionId.takeIf { sent })
+            stopping = StopState(kind, alive = process?.alive == true, turnInFlight = inFlight, sessionId = sessionId.takeIf { sent })
             true
         }
         val event = when {
@@ -110,7 +110,7 @@ class HeadlessRun(
     private suspend fun running(): Process? {
         // A process being stopped takes no more messages.
         if (synchronized(this) { stopping != null }) return null
-        process?.takeIf { it.isAlive }?.let { return it }
+        process?.takeIf { it.alive }?.let { return it }
         pid = null
         synchronized(tail) { tail.clear() }
         val started = runCatching { startProcess(backend.headless(sessionId, backend.hasTranscript(home, sessionId))) }
@@ -126,7 +126,7 @@ class HeadlessRun(
             stopping != null
         }
         if (stopped) {
-            started.destroyForcibly()
+            kill(started)
             return null
         }
         val reader = Assistant.runs.launch { read(started) }
@@ -251,7 +251,7 @@ class HeadlessRun(
             StopAction.Kill -> {
                 signalChildren(android.os.Process.SIGNAL_KILL)
                 killSurvivors()
-                Assistant.runs.launch { process?.destroyForcibly() }
+                Assistant.runs.launch { process?.let(::kill) }
             }
             is StopAction.After -> Assistant.runs.launch {
                 delay(action.millis)
@@ -287,10 +287,20 @@ class HeadlessRun(
         found.keys.forEach { android.os.Process.sendSignal(it, signal) }
     }
 
+    /**
+     * SIGKILL to [target] by the pid headless.sh named, while it runs, so the
+     * pid is still its own; [Process.destroy] when no pid was named for it.
+     */
+    private fun kill(target: Process) {
+        val named = pid.takeIf { process === target }
+        if (named != null && target.alive) android.os.Process.sendSignal(named, android.os.Process.SIGNAL_KILL)
+        else target.destroy()
+    }
+
     /** Every descendant of the started process while it is alive, pid to start time. */
     private fun descendantsNow(): Map<Int, Long> {
         val parent = pid ?: return emptyMap()
-        if (process?.isAlive != true) return emptyMap()
+        if (process?.alive != true) return emptyMap()
         val table = ProcTable()
         val stats = table.pids().mapNotNull { child -> table.stat(child)?.let { child to it } }.toMap()
         return descendants(parent, stats.mapValues { it.value.ppid }).associateWith { stats.getValue(it).procStart }
@@ -340,6 +350,9 @@ class HeadlessRun(
         const val SIGTERM = 15
     }
 }
+
+/** Whether the process runs: `exitValue` throws until it has exited. */
+private val Process.alive: Boolean get() = runCatching { exitValue(); false }.getOrDefault(true)
 
 /** The pid in the `harness-pid <n>` line headless.sh writes to stderr first, or null. */
 internal fun pidOf(line: String): Int? =

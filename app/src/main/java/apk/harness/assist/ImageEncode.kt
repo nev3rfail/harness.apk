@@ -3,6 +3,7 @@ package apk.harness.assist
 import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.os.Build
 import java.io.File
 import java.util.UUID
 
@@ -21,6 +22,8 @@ data class EncodedImage(val file: File, val mediaType: String, val bytes: Long)
  * sender's descriptor. Cancelling stops the open or the read in flight.
  */
 suspend fun encodeImage(resolver: ContentResolver, stream: SharedStream, into: File): EncodedImage? {
+    // ImageDecoder is 28+; below it every image goes as a file.
+    if (Build.VERSION.SDK_INT < 28) return null
     into.mkdirs()
     val source = File(into, "${UUID.randomUUID()}.source")
     return try {

@@ -140,7 +140,9 @@ object Roster {
             Log.w(TAG, "$directory cannot be made, so its records are not heard")
         }
         observers.remove(directory)?.stopWatching()
-        val observer = object : FileObserver(directory, MASK) {
+        // The path constructor: the File one is 29+.
+        @Suppress("DEPRECATION")
+        val observer = object : FileObserver(directory.path, MASK) {
             override fun onEvent(event: Int, path: String?) {
                 if (event and (DELETE_SELF or MOVE_SELF) != 0) {
                     // The directory itself went, and the watch went with it.

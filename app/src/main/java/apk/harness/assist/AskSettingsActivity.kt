@@ -1,7 +1,6 @@
 package apk.harness.assist
 
 import android.Manifest
-import android.app.role.RoleManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -92,8 +91,7 @@ class AskSettingsActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        val roles = getSystemService(RoleManager::class.java)
-        held = roles.isRoleAvailable(RoleManager.ROLE_ASSISTANT) && roles.isRoleHeld(RoleManager.ROLE_ASSISTANT)
+        held = holdsAssistant(this)
         settings = Assistant.settings(this)
         otherAppsMic = asksMicForOtherApps(this)
     }

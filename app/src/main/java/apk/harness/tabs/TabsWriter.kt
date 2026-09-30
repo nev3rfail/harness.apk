@@ -1,8 +1,6 @@
 package apk.harness.tabs
 
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.concurrent.Executors
 
 /**
@@ -68,12 +66,7 @@ class TabsWriter(
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, "${file.name}.tmp")
             temporary.writeText(encode(saved))
-            Files.move(
-                temporary.toPath(),
-                file.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
+            check(temporary.renameTo(file)) { "$temporary was not renamed over $file" }
         }.onFailure(onFailure)
     }
 }

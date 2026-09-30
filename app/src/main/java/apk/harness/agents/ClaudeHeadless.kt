@@ -4,7 +4,9 @@ import apk.harness.agents.HeadlessEvent.*
 import java.io.FilterOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.Base64
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
+import kotlin.io.encoding.encodingWith
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -121,6 +123,7 @@ fun writeClaudeMessage(out: OutputStream, texts: List<String>, images: List<Head
     }
 }
 
+@OptIn(ExperimentalEncodingApi::class)
 private fun writeOpened(out: OutputStream, texts: List<String>, images: List<Pair<HeadlessImage, InputStream>>) {
     fun put(s: String) = out.write(s.toByteArray(Charsets.UTF_8))
     put("""{"type":"user","message":{"role":"user","content":[""")
@@ -135,7 +138,7 @@ private fun writeOpened(out: OutputStream, texts: List<String>, images: List<Pai
         separate()
         put("""{"type":"image","source":{"type":"base64","media_type":${JSONObject.quote(image.mediaType)},"data":"""")
         // Closing the encoder writes its padding; the view keeps out open.
-        Base64.getEncoder().wrap(Unclosed(out)).use { encoder -> stream.copyTo(encoder) }
+        Unclosed(out).encodingWith(Base64.Default).use { encoder -> stream.copyTo(encoder) }
         put("\"}}")
     }
     put("""]},"parent_tool_use_id":null}""" + "\n")

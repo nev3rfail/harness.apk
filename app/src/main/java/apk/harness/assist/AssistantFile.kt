@@ -1,8 +1,6 @@
 package apk.harness.assist
 
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import org.json.JSONObject
 
 enum class ScreenContext(val value: String) { Ask("ask"), Always("always") }
@@ -50,10 +48,10 @@ fun decodeAssistant(text: String): AssistantSettings {
 fun readAssistant(file: File): AssistantSettings =
     runCatching { decodeAssistant(file.readText()) }.getOrDefault(AssistantSettings())
 
-/** Written through a temporary file and a move, so a reader sees the old file or the new one. */
+/** Written through a temporary file and a rename, so a reader sees the old file or the new one. */
 fun writeAssistant(file: File, settings: AssistantSettings) {
     file.parentFile?.mkdirs()
     val temporary = File(file.parentFile, "${file.name}.tmp")
     temporary.writeText(encodeAssistant(settings))
-    Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    check(temporary.renameTo(file)) { "$temporary was not renamed over $file" }
 }

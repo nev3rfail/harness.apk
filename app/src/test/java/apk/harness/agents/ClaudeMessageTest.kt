@@ -63,6 +63,16 @@ class ClaudeMessageTest {
     }
 
     @Test
+    fun `an image's data is what java's encoder writes, padding included`() {
+        for (size in listOf(0, 1, 2, 3, 1000)) {
+            val bytes = ByteArray(size) { (it * 37).toByte() }
+            val file = folder.newFile("$size.png").apply { writeBytes(bytes) }
+            val data = content(write(listOf("x"), HeadlessImage(file, "image/png"))).getJSONObject(1).getJSONObject("source").getString("data")
+            assertEquals("$size bytes", Base64.getEncoder().encodeToString(bytes), data)
+        }
+    }
+
+    @Test
     fun `an image with no text writes no text block`() {
         val a = folder.newFile("a.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
         val blocks = content(write(listOf(""), HeadlessImage(a, "image/jpeg")))
