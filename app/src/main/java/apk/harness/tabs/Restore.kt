@@ -15,9 +15,9 @@ data class RestorePlan(
 /**
  * The plan for [saved], decided before anything starts.
  *
- * - A directory outside the app is kept dormant when it cannot be started: with
- *   no all-files access it is not looked at, since without the grant it may read
- *   as absent, and one that is missing may be storage that is not mounted yet.
+ * - A directory outside the app is kept dormant when it cannot be started:
+ *   without the storage permission it is not looked at, since it may read as
+ *   absent, and one that is missing may be storage that is not mounted yet.
  * - A directory inside the app that is gone is dropped. Its conversation is still
  *   in the history.
  * - A conversation [live] names -- an agent from an earlier screen may still be
@@ -78,8 +78,8 @@ const val EXTRA_SESSION = "apk.harness.extra.SESSION"
  *
  * The directory must be an absolute path with no `..` segment, and a session
  * must be a session id. Whether the directory exists is asked afterwards, with
- * the all-files grant in hand, since without it a path in shared storage may not
- * resolve.
+ * the storage permission in hand, since without it a path in shared storage may
+ * not resolve.
  */
 fun openRequest(action: String?, directory: String?, session: String?): OpenRequest? {
     if (action != ACTION_OPEN) return null
