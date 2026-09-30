@@ -766,22 +766,30 @@ private fun HarnessScreen(
     // writes into shared storage and reads back only what it wrote, so a folder
     // someone else filled reads as empty.
     //
-    // Asked for on the way to the picker rather than at launch, most sessions
-    // never leaving the agent's own home. An agent forked before the grant keeps
-    // the view it was forked with, which costs nothing: what follows the grant is
-    // a new agent in a new tab.
+    // Asked for on the way to such a folder rather than at launch, most sessions
+    // never leaving the agent's own home. What was on its way there is held, and
+    // goes on only when the grant is there. An agent forked before the grant
+    // keeps the view it was forked with, which costs nothing: what follows the
+    // grant is a new agent in a new tab.
+    val openFolder = {
+        if (runCatching { folderPicker.launch(null) }.isFailure) {
+            Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
+        }
+    }
+    var awaitingStorage by remember { mutableStateOf<(() -> Unit)?>(null) }
     val storagePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { _ ->
+        // A screen recreated while the dialog was up holds nothing, and the
+        // folder picker is what it was most likely on its way to.
+        val next = awaitingStorage ?: openFolder
+        awaitingStorage = null
         // The platform is asked again rather than the result being read. A
         // request the operator never answered -- a back press, a system dialog
         // taking the screen -- arrives as an empty answer, and an empty answer
         // is one every permission in it passes.
         when {
-            holdsStorage(context) ->
-                if (runCatching { folderPicker.launch(null) }.isFailure) {
-                    Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
-                }
+            holdsStorage(context) -> next()
 
             // Refused twice is refused for good: the platform stops drawing the
             // dialog, so a control that only asks again is one that does
@@ -794,6 +802,23 @@ private fun HarnessScreen(
 
             else -> Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
         }
+    }
+    val withStorage = { then: () -> Unit ->
+        if (holdsStorage(context)) {
+            then()
+        } else {
+            awaitingStorage = then
+            if (runCatching { storagePermission.launch(STORAGE) }.isFailure) {
+                awaitingStorage = null
+                Toast.makeText(context, NO_STORAGE, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    // The app's own directories need no grant, so a tab reopened in one of them
+    // goes straight on.
+    val ownData = remember { bothSpellings(context, context.dataDir) }
+    val reopen = { directory: File, then: () -> Unit ->
+        if (outsideApp(directory.path, ownData)) withStorage(then) else then()
     }
 
     // Files are copied into the project the drawer is showing, and named in the
@@ -1160,9 +1185,10 @@ private fun HarnessScreen(
                     // filed, and the home is a directory that exists.
                     onOpenChat = { project: Project, chat: Chat ->
                         close()
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                tabs.resume(chat, File(project.path ?: agentHome.path))
+                        val directory = File(project.path ?: agentHome.path)
+                        reopen(directory) {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { tabs.resume(chat, directory) }
                             }
                         }
                     },
@@ -1189,12 +1215,12 @@ private fun HarnessScreen(
 
                             else -> {
                                 close()
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        tabs.continueHere(
-                                            chat,
-                                            File(project.path ?: agentHome.path),
-                                        )
+                                val directory = File(project.path ?: agentHome.path)
+                                reopen(directory) {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            tabs.continueHere(chat, directory)
+                                        }
                                     }
                                 }
                             }
@@ -1207,11 +1233,11 @@ private fun HarnessScreen(
                         // A project naming no directory draws no way to start a
                         // conversation in it, so this is a guard rather than a
                         // path anyone takes.
-                        val directory = project.path ?: return@SessionTree
+                        val directory = File(project.path ?: return@SessionTree)
                         close()
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                tabs.start(File(directory), project.name)
+                        reopen(directory) {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { tabs.start(directory, project.name) }
                             }
                         }
                     },
@@ -1219,12 +1245,7 @@ private fun HarnessScreen(
                     // other control that puts a conversation on the screen.
                     onOpenFolder = {
                         close()
-                        val launch =
-                            if (holdsStorage(context)) ({ folderPicker.launch(null) })
-                            else ({ storagePermission.launch(STORAGE) })
-                        if (runCatching { launch() }.isFailure) {
-                            Toast.makeText(context, NO_PICKER, Toast.LENGTH_LONG).show()
-                        }
+                        withStorage(openFolder)
                     },
                     onDismiss = close,
                 )
