@@ -27,7 +27,6 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       name: ${{ steps.tag.outputs.name }}
-      code: ${{ steps.tag.outputs.code }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -56,26 +55,20 @@ jobs:
       # from the run's ref, which is the branch the workflow was dispatched on.
       # First, so a malformed name fails before the toolchains and the two Zig
       # cross-compiles.
-      - name: Read the tag and derive the version
+      - name: Read the tag and derive the version name
         id: tag
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # The encoding gives minor and patch two digits each, so a wider
-          # component would collide: 1.100.0 and 2.0.0 both encode to 20000.
           # Leading zeros are refused so a tag has one spelling.
           printf '%s' "$TAG" \
-              | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$' || {
-            echo "$TAG is not vMAJOR.MINOR.PATCH with minor and patch under 100" >&2
+              | grep -qE '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || {
+            echo "$TAG is not vMAJOR.MINOR.PATCH" >&2
             exit 1
           }
-          IFS=. read -r MAJ MIN PAT <<<"${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "name=${TAG#v}" >> "$GITHUB_OUTPUT"
-          # 10# keeps the arithmetic base-ten whatever the pattern above admits,
-          # so loosening the pattern cannot silently turn a component octal.
-          echo "code=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))" >> "$GITHUB_OUTPUT"
 
       # The release body comes from the tag object's message. On a lightweight
       # tag %(contents:...) resolves against the commit instead, which would
@@ -178,12 +171,11 @@ jobs:
       - name: Assemble the unsigned release
         env:
           VERSION_NAME: ${{ needs.guard.outputs.name }}
-          VERSION_CODE: ${{ needs.guard.outputs.code }}
         run: |
           set -euo pipefail
           ./gradlew :app:assembleRelease :app:testDebugUnitTest \
               -PskipNativeBuild=true -PskipLoaderBuild=true \
-              -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
+              -PversionName="$VERSION_NAME"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

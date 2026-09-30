@@ -4,6 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun headCommitMinutes(): Int {
+    val committed = runCatching {
+        providers.exec {
+            commandLine("git", "log", "-1", "--format=%ct")
+            workingDir = rootProject.projectDir
+        }.standardOutput.asText.get().trim().toLong()
+    }.getOrElse {
+        throw GradleException("No head commit time for versionCode; pass -PversionCode", it)
+    }
+    return ((committed - 1577836800L) / 60).toInt()
+}
+
 android {
     namespace = "apk.harness"
     compileSdk = 35
@@ -21,9 +33,11 @@ android {
         // directory, which is where the agent binary is staged. 28 is the last
         // level that allows it, and is where Termux sits for the same reason.
         targetSdk = 28
-        // A release's identity is its tag, passed in by the workflow that
-        // builds it. A build given neither property keeps these values.
-        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
+        // The head commit's committer time in minutes since 2020-01-01 UTC, so
+        // every later head builds a higher code on any branch, after a pick or an
+        // amend too. -PversionCode overrides it. The name is the release tag's,
+        // passed in by the workflow that builds it.
+        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: headCommitMinutes()
         versionName = (findProperty("versionName") as String?) ?: "0.1.0"
 
         // The privacy policy the app links to. Empty for local and PR builds,
