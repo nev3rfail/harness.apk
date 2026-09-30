@@ -35,6 +35,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,6 +54,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.app.ActivityCompat
 import androidx.core.content.PermissionChecker
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStateAtLeast
@@ -639,8 +641,26 @@ private fun HarnessScreen(
     val views = remember { mutableStateMapOf<Long, GhosttyGLSurfaceView>() }
     val view = views[activeKey]
 
+    // A sticky modifier is held by the terminal it applies to; this pair is what
+    // the toolbar shows of the active terminal's. Every latch is dropped when the
+    // app leaves the screen, when another tab comes up and when a terminal is
+    // made, so what the toolbar shows is always what the next key gets.
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
+    val dropModifiers = {
+        views.values.forEach { it.ctrlPending = false; it.altPending = false }
+        ctrlActive = false
+        altActive = false
+    }
+    LaunchedEffect(activeKey) { dropModifiers() }
+    val screenLifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(screenLifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) dropModifiers()
+        }
+        screenLifecycle.addObserver(observer)
+        onDispose { screenLifecycle.removeObserver(observer) }
+    }
     val surface by surfaces.visible.collectAsState()
     val documentOwner by surfaces.owner.collectAsState()
     val parked by surfaces.parked.collectAsState()
@@ -874,6 +894,7 @@ private fun HarnessScreen(
                             scrollbackBytes = scrollbackBytes,
                             capture = capture,
                             onCreated = { created ->
+                                dropModifiers()
                                 views[tab.key] = created
                                 onViewCreated(tab.key, created)
                             },
@@ -932,12 +953,16 @@ private fun HarnessScreen(
                 },
                 onShowKeyboard = { view?.showKeyboard() },
                 onToggleCtrl = {
-                    ctrlActive = !ctrlActive
-                    view?.ctrlPending = ctrlActive
+                    view?.let {
+                        it.ctrlPending = !it.ctrlPending
+                        ctrlActive = it.ctrlPending
+                    }
                 },
                 onToggleAlt = {
-                    altActive = !altActive
-                    view?.altPending = altActive
+                    view?.let {
+                        it.altPending = !it.altPending
+                        altActive = it.altPending
+                    }
                 },
                 ctrlActive = ctrlActive,
                 altActive = altActive,
