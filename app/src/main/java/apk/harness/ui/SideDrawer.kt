@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -120,8 +121,10 @@ fun SideDrawer(
         // it, that size is the whole display, while a dialog's window is still
         // fitted inside the system bars, so the drawer's bottom rows would lie
         // past the window's end. The window is let over the bars to match;
-        // below Android 15 both sizes exclude the bars already.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+        // below Android 15, or targeting below it, both sizes exclude the bars
+        // already.
+        val target = LocalContext.current.applicationInfo.targetSdkVersion
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && target >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
             val window = (LocalView.current.parent as DialogWindowProvider).window
             LaunchedEffect(window) {
                 window.attributes = window.attributes.apply {
