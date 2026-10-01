@@ -1,8 +1,10 @@
 package apk.harness.assist
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,13 +23,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
@@ -35,9 +42,12 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import apk.harness.agents.BACKENDS
 import apk.harness.ui.MarkdownDocument
+import kotlinx.coroutines.delay
 
 /** What the panel asks of whatever hosts it: the session window or AskActivity. */
 interface PanelHost {
@@ -67,12 +77,15 @@ fun AskPanel(state: PanelState, host: PanelHost) {
         )
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = sheet),
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         ) {
-            Column(Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Column(
+                Modifier.navigationBarsPadding().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(TITLE, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text(TITLE, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                     IconButton(onClick = { if (!state.escalating) host.dismiss() }) {
                         Icon(Icons.Default.Close, contentDescription = CLOSE)
                     }
@@ -129,6 +142,7 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
         }
     }
 
+    if (state.listening) NyanCat()
     LazyColumn(state = list, modifier = threadModifier) {
         items(turns.size) { index ->
             TurnView(turns[index], onContinue = { state.escalate(host) }, openLink = { state.openLink(host, it) })
@@ -136,13 +150,7 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
         item { Spacer(Modifier.height(1.dp)) }
     }
     StatusLine(state, host)
-    if (host.inSession) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = state.screenText, onClick = { state.chip(host, text = true, shot = false) }, label = { Text(SCREEN_TEXT) })
-            FilterChip(selected = state.screenshot, onClick = { state.chip(host, text = false, shot = true) }, label = { Text(SCREENSHOT) })
-        }
-        if (state.nothingCame) Text(NOTHING_CAME, style = MaterialTheme.typography.bodySmall)
-    }
+    if (host.inSession && state.nothingCame) Text(NOTHING_CAME, style = MaterialTheme.typography.bodySmall)
     state.quote?.let { quote ->
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
             // The message carries the same cut; the panel lays out no more than it.
@@ -185,6 +193,16 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
         state.focusField = false
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
+        if (host.inSession) {
+            // The wider label sets the column's width, and both chips take it.
+            Column(
+                Modifier.width(IntrinsicSize.Max).padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Toggle(state.screenText, SCREEN_TEXT) { state.chip(host, text = true, shot = false) }
+                Toggle(state.screenshot, SCREENSHOT) { state.chip(host, text = false, shot = true) }
+            }
+        }
         OutlinedTextField(
             value = state.field,
             onValueChange = { typed ->
@@ -194,9 +212,14 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
             },
             modifier = Modifier.weight(1f).focusRequester(focus),
             maxLines = 5,
+            shape = RoundedCornerShape(16.dp),
         )
         IconButton(onClick = { state.mic(host) }) {
-            Icon(if (state.listening) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = MIC)
+            Icon(
+                if (state.listening) Icons.Default.MicOff else Icons.Default.Mic,
+                contentDescription = MIC,
+                tint = if (state.listening) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+            )
         }
         IconButton(onClick = state::send, enabled = state.canSend) {
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = SEND)
@@ -213,6 +236,53 @@ private fun Body(state: PanelState, host: PanelHost, threadModifier: Modifier, l
     }
     if (state.escalating) Text(OPENING, modifier = Modifier.padding(vertical = 8.dp))
     else TextButton(onClick = { state.escalate(host) }) { Text(CONTINUE) }
+}
+
+@Composable
+private fun Toggle(selected: Boolean, label: String, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+        modifier = Modifier.fillMaxWidth().height(28.dp),
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    )
+}
+
+/**
+ * The frames in `assets/nyan/`, one every [NYAN_STEP_MS] while shown, at the
+ * largest whole-number scale that fits the row, so every art pixel is the same
+ * number of screen pixels.
+ */
+@Composable
+private fun NyanCat() {
+    val assets = LocalContext.current.assets
+    val frames = remember {
+        assets.list(NYAN)!!.sorted().map { name ->
+            assets.open("$NYAN/$name").use { BitmapFactory.decodeStream(it) }.asImageBitmap()
+        }
+    }
+    var frame by remember { mutableIntStateOf(0) }
+    LaunchedEffect(frames) {
+        while (true) {
+            delay(NYAN_STEP_MS)
+            frame = (frame + 1) % frames.size
+        }
+    }
+    Canvas(Modifier.fillMaxWidth().height(NYAN_HEIGHT)) {
+        val image = frames[frame]
+        val scale = minOf(size.width.toInt() / image.width, size.height.toInt() / image.height).coerceAtLeast(1)
+        val drawn = IntSize(image.width * scale, image.height * scale)
+        drawImage(
+            image,
+            dstOffset = IntOffset((size.width.toInt() - drawn.width) / 2, (size.height.toInt() - drawn.height) / 2),
+            dstSize = drawn,
+            filterQuality = FilterQuality.None,
+        )
+    }
 }
 
 @Composable
@@ -254,6 +324,9 @@ private fun StatusLine(state: PanelState, host: PanelHost) {
 }
 
 private const val SHEET_SHARE = 0.75f
+private const val NYAN = "nyan"
+private const val NYAN_STEP_MS = 70L
+private val NYAN_HEIGHT = 72.dp
 /** The panel's share the attachments and refusals take at most. */
 private const val LIST_SHARE = 1f / 3
 private const val REMOVE = "Remove"
