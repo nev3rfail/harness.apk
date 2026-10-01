@@ -127,11 +127,11 @@ class AskActivity : ComponentActivity(), PanelHost {
      * check the platform makes for `FLAG_GRANT_READ_URI_PERMISSION` does not
      * ask whether the sender may read a URI this app can already open, so the
      * app asks: from Android 15, whether [intentCaller], the app that delivered
-     * the intent in hand, may read the URI itself. Android 11 to 14 name no
+     * the intent in hand, may read the URI itself. Android 7 to 14 name no
      * sender the app can trust, so there a stream whose provider this app could
      * open without a grant is refused: its read would be this app's, whatever
      * the sender may read, and so is one whose provider does not resolve. On
-     * Android 11 to 14 that includes MediaStore.
+     * Android 7 to 14 that includes MediaStore.
      */
     private fun senderAccess(): (Uri) -> String? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) callerAccess(intentCaller)

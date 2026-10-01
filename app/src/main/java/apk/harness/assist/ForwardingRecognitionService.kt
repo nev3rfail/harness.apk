@@ -9,7 +9,7 @@ import android.util.Log
 
 /**
  * The recognition service the assistant role requires beside the voice
- * interaction service. Enabled on Android 11 only, where picking the assistant
+ * interaction service. Enabled on Android 7 to 11, where picking the assistant
  * also makes it the device's speech recognizer: it passes each listen to
  * [forwardTarget] and every answer back, keeping nothing.
  */
