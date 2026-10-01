@@ -81,10 +81,14 @@ private fun result(event: JSONObject, interruptSent: Boolean): HeadlessEvent {
 /** Shown for a failed turn whose result names nothing. */
 private const val UNNAMED_ERROR = "The agent reported an error."
 
-/** What the result of a run with no account signed in says. */
-private const val SIGNED_OUT = "Not logged in"
+/**
+ * What the result of a run says when the sign-in is missing or no longer works:
+ * "Not logged in" and "Login expired" ask for `/login`, and a refresh the
+ * server refused fails to authenticate.
+ */
+private val SIGNED_OUT = listOf("/login", "Failed to authenticate")
 
-private fun saysSignedOut(message: String) = message.contains(SIGNED_OUT, ignoreCase = true)
+private fun saysSignedOut(message: String) = SIGNED_OUT.any { message.contains(it, ignoreCase = true) }
 
 // The field a person would name the call by, for the tools that have one;
 // otherwise the input's first text.

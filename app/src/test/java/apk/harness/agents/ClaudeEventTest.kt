@@ -133,6 +133,23 @@ class ClaudeEventTest {
     }
 
     @Test
+    fun `a result saying the sign-in expired is signed out`() {
+        // Written by the Redmi's agent with a sign-in whose refresh was refused.
+        val expired = parse("""{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","terminal_reason":"api_error","session_id":"$id"}""") as Finished
+        assertTrue(expired.signedOut)
+        assertEquals(listOf("Failed to authenticate: OAuth session expired and could not be refreshed"), expired.errors)
+        // Shown in a tab for the same state.
+        val tab = parse("""{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"Login expired · Please run /login","session_id":"$id"}""") as Finished
+        assertTrue(tab.signedOut)
+    }
+
+    @Test
+    fun `another failed result is not signed out`() {
+        val failed = parse("""{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"API Error: 529 Overloaded","session_id":"$id"}""") as Finished
+        assertFalse(failed.signedOut)
+    }
+
+    @Test
     fun `hook events and unknown types are ignored`() {
         assertEquals(Ignored, parse("""{"type":"system","subtype":"hook_started","hook_id":"c1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"$id"}"""))
         assertEquals(Ignored, parse("""{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}"""))
